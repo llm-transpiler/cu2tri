@@ -1,6 +1,6 @@
 [submodule "repo/cuda-samples"]
-	path = repo/cuda-samples
+	path = third_party/NVIDIA/cuda-samples
 	url = https://github.com/NVIDIA/cuda-samples.git
 [submodule "repo/NVIDIA/cutlass"]
-	path = repo/NVIDIA/cutlass
+	path = third_party/NVIDIA/cutlass
 	url = https://github.com/NVIDIA/cutlass.git
