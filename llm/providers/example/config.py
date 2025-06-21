@@ -3,7 +3,7 @@ import dotenv
 
 dotenv.load_dotenv()
 
-from llm.providers import get_config_manager, get_provider_manager, PlatformConfig
+from llm.providers import get_config_manager, get_provider_manager, PlatformConfig, registry_list_models
 
 # 配置管理
 config_manager = get_config_manager()
@@ -18,10 +18,7 @@ provider_manager = get_provider_manager()
 provider_manager.load_from_config_manager()
 
 async def main():
-    # 初始化并使用
-    await provider_manager.initialize_provider("openrouter")
-    provider = provider_manager.get_initialized_provider("openrouter")
-    print(await provider.list_models())
+    print(registry_list_models())
 
 if __name__ == "__main__":
     import asyncio

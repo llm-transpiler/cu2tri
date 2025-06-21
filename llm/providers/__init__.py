@@ -42,6 +42,15 @@ from .factory import (
     ProviderFactory, ProviderManager, get_provider_manager
 )
 
+# 注册中心
+from .registry import (
+    ProviderRegistry, get_provider_registry,
+    get_platform_info as registry_get_platform_info, 
+    list_platforms as registry_list_platforms, 
+    list_models as registry_list_models, 
+    # recommend_model
+)
+
 # 具体实现（自动注册）
 from . import impl
 
@@ -74,6 +83,10 @@ __all__ = [
     
     # === 工厂管理 ===
     'ProviderFactory', 'ProviderManager', 'get_provider_manager',
+    
+    # === 注册中心 ===
+    'ProviderRegistry', 'get_provider_registry', #'recommend_model',
+    'registry_get_platform_info', 'registry_list_platforms', 'registry_list_models',
     
     # === 兼容性 ===
     'FileManager', 'Message', 'ChatHistory',

@@ -8,7 +8,8 @@ import logging
 import asyncio
 
 from .config import PlatformConfig, ConfigManager, get_config_manager
-from .types import PlatformType, get_platform_info
+from .types import PlatformType
+from .registry import get_provider_registry
 from .base import Provider
 
 class ProviderFactory:
@@ -29,7 +30,7 @@ class ProviderFactory:
             platform_type = PlatformType(platform_type)
         
         cls._PROVIDER_CLASSES[platform_type] = provider_class
-        logging.getLogger(__name__).info(f"已注册提供商: {platform_type.value} -> {provider_class.__name__}")
+        logging.getLogger(__name__).info(f"Registered provider: {platform_type.value} -> {provider_class.__name__}")
     
     @classmethod
     def get_provider_class(cls, platform_type: Union[str, PlatformType]) -> Optional[Type[Provider]]:
@@ -43,9 +44,27 @@ class ProviderFactory:
         return cls._PROVIDER_CLASSES.get(platform_type)
     
     @classmethod
-    def list_supported_providers(self) -> List[PlatformType]:
+    def list_supported_providers(cls) -> List[PlatformType]:
         """列出支持的提供商类型"""
-        return list(self._PROVIDER_CLASSES.keys())
+        return list(cls._PROVIDER_CLASSES.keys())
+    
+    @classmethod
+    def list_available_platforms(cls) -> List[PlatformType]:
+        """列出所有可用的平台类型（从注册中心获取）"""
+        registry = get_provider_registry()
+        return registry.list_platforms()
+    
+    @classmethod
+    def get_platform_info(cls, platform_type: PlatformType):
+        """获取平台信息"""
+        registry = get_provider_registry()
+        return registry.get_platform_info(platform_type)
+    
+    @classmethod
+    def get_supported_models(cls, platform_type: PlatformType, vendor=None) -> List[str]:
+        """获取平台支持的模型列表"""
+        registry = get_provider_registry()
+        return registry.get_models_by_platform(platform_type, vendor)
     
     @classmethod
     def create_provider(cls, config: PlatformConfig, logger: Optional[logging.Logger] = None) -> Provider:
@@ -66,12 +85,12 @@ class ProviderFactory:
             try:
                 platform_type = PlatformType(platform_type)
             except ValueError:
-                raise ValueError(f"不支持的平台类型: {platform_type}")
+                raise ValueError(f"Unsupported platform type: {platform_type}")
         
         provider_class = cls.get_provider_class(platform_type)
         if provider_class is None:
             supported = [pt.value for pt in cls.list_supported_providers()]
-            raise ValueError(f"不支持的平台类型: {platform_type}, 支持的类型: {supported}")
+            raise ValueError(f"Unsupported platform type: {platform_type}, supported types: {supported}")
         
         if logger is None:
             logger = logging.getLogger(f"{__name__}.{platform_type}")
@@ -87,7 +106,7 @@ class ProviderFactory:
         
         config = config_manager.get_config(config_name)
         if config is None:
-            raise ValueError(f"配置未找到: {config_name}")
+            raise ValueError(f"Configuration not found: {config_name}")
         
         return cls.create_provider(config)
 
@@ -98,6 +117,7 @@ class ProviderManager:
                  logger: Optional[logging.Logger] = None):
         self.config_manager = config_manager or get_config_manager()
         self.logger = logger or logging.getLogger(__name__)
+        self.registry = get_provider_registry()
         self._providers: Dict[str, Provider] = {}
         self._initialized_providers: Dict[str, Provider] = {}
     
@@ -113,9 +133,9 @@ class ProviderManager:
         try:
             provider = ProviderFactory.create_provider(config, self.logger)
             self._providers[name] = provider
-            self.logger.info(f"添加提供商: {name} ({config.platform_type})")
+            self.logger.info(f"Added provider: {name} ({config.platform_type})")
         except Exception as e:
-            self.logger.error(f"添加提供商失败 {name}: {e}")
+            self.logger.error(f"Failed to add provider {name}: {e}")
             raise
     
     def get_provider(self, name: str) -> Optional[Provider]:
@@ -144,7 +164,7 @@ class ProviderManager:
         # 异步关闭提供商
         asyncio.create_task(self._safe_close_provider(provider, name))
         
-        self.logger.info(f"移除提供商: {name}")
+        self.logger.info(f"Removed provider: {name}")
         return True
     
     async def _safe_close_provider(self, provider: Provider, name: str):
@@ -152,7 +172,7 @@ class ProviderManager:
         try:
             await provider.close()
         except Exception as e:
-            self.logger.warning(f"关闭提供商时出错 {name}: {e}")
+            self.logger.warning(f"Error closing provider {name}: {e}")
     
     # ============ 初始化管理 ============
     
@@ -160,7 +180,7 @@ class ProviderManager:
         """初始化单个提供商"""
         provider = self._providers.get(name)
         if provider is None:
-            self.logger.error(f"提供商不存在: {name}")
+            self.logger.error(f"Provider does not exist: {name}")
             return False
         
         if name in self._initialized_providers:
@@ -169,10 +189,10 @@ class ProviderManager:
         try:
             await provider.initialize()
             self._initialized_providers[name] = provider
-            self.logger.info(f"提供商初始化成功: {name}")
+            self.logger.info(f"Provider initialized successfully: {name}")
             return True
         except Exception as e:
-            self.logger.error(f"提供商初始化失败 {name}: {e}")
+            self.logger.error(f"Provider initialization failed {name}: {e}")
             return False
     
     # ============ 配置管理 ============
@@ -188,9 +208,43 @@ class ProviderManager:
                     self.add_provider(config.name, config)
                     loaded_count += 1
                 except Exception as e:
-                    self.logger.error(f"加载配置失败 {config.name}: {e}")
+                    self.logger.error(f"Failed to load configuration for {config.name}: {e}")
         
-        self.logger.info(f"从配置管理器加载了 {loaded_count} 个提供商配置")
+        self.logger.info(f"Loaded {loaded_count} provider configurations from config manager")
+    
+    # ============ 注册中心访问方法 ============
+    
+    def get_platform_info(self, platform_type: PlatformType):
+        """获取平台信息"""
+        return self.registry.get_platform_info(platform_type)
+    
+    def list_available_platforms(self, category=None) -> List[PlatformType]:
+        """列出可用的平台"""
+        return self.registry.list_platforms(category)
+    
+    def list_available_models(self, platform_type=None, vendor=None, thinking_only=False) -> List[str]:
+        """列出可用的模型"""
+        return self.registry.list_models(vendor, platform_type, thinking_only)
+    
+    def recommend_model(self, requirements: Dict[str, Any]) -> Optional[str]:
+        """推荐模型"""
+        return self.registry.recommend_model(requirements)
+    
+    def get_thinking_models(self, platform_type=None) -> List[str]:
+        """获取思维链模型"""
+        return self.registry.get_thinking_models(platform_type)
+    
+    def get_vision_models(self, platform_type=None) -> List[str]:
+        """获取视觉模型"""
+        return self.registry.get_vision_models(platform_type)
+    
+    def get_platform_summary(self, platform_type: PlatformType) -> Dict[str, Any]:
+        """获取平台摘要"""
+        return self.registry.get_platform_summary(platform_type)
+    
+    def get_registry_statistics(self) -> Dict[str, Any]:
+        """获取注册中心统计信息"""
+        return self.registry.get_statistics()
     
     # ============ 生命周期管理 ============
     
@@ -199,14 +253,14 @@ class ProviderManager:
         if not self._initialized_providers:
             return
         
-        self.logger.info(f"开始关闭 {len(self._initialized_providers)} 个活跃提供商")
+        self.logger.info(f"Starting to close {len(self._initialized_providers)} active providers")
         
         # 并发关闭所有提供商
         tasks = [provider.close() for provider in self._initialized_providers.values()]
         await asyncio.gather(*tasks, return_exceptions=True)
         
         self._initialized_providers.clear()
-        self.logger.info("所有提供商已关闭")
+        self.logger.info("All providers have been closed")
     
     # ============ 工具方法 ============
     
