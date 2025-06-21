@@ -1,17 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-具体的LLM提供商实现 - 简化版本
+具体的LLM提供商实现模块
 """
-from typing import List, AsyncGenerator
+import asyncio
 import logging
+from typing import AsyncGenerator, Dict, Any, List, Optional
 
 from .base import (
-    Provider, OpenAICompatibleProvider,
     ChatRequest, ChatResponse, StreamChunk, ChatMessage,
-    ProviderError, AuthenticationError
+    OpenAICompatibleProvider, ProviderError, AuthenticationError, ValidationError,
+    Provider,
 )
-from .factory import ProviderFactory
 from .types import PlatformType
+# 导入工厂类
+from .factory import (
+    ProviderFactory,
+)
 
 # ============ 聚合平台实现 ============
 
@@ -38,7 +42,7 @@ class ZhipuProvider(OpenAICompatibleProvider):
     pass
 
 class GoogleProvider(Provider):
-    """Google genai官方API提供商"""
+    """Google genai官方API提供商 - 支持思考功能"""
     
     def __init__(self, config, logger=None):
         super().__init__(config, logger)
@@ -64,90 +68,180 @@ class GoogleProvider(Provider):
         self._types = types
         self.logger.debug("Google genai client initialized successfully")
     
-    def _prepare_contents(self, messages: List[ChatMessage]) -> List[any]:
-        """准备Google genai格式的内容"""
-        contents = []
-        for msg in messages:
-            # Google genai使用 "model" 而不是 "assistant"
-            role = "model" if msg.role == "assistant" else msg.role
-            contents.append(self._types.Content(
-                role=role,
-                parts=[self._types.Part.from_text(msg.content)]
-            ))
-        return contents
+    def _get_generate_config(self, request: ChatRequest) -> Any:
+        """获取生成配置，包含思考功能"""
+        config = self._types.GenerateContentConfig()
+        
+        # 设置基本参数
+        if request.max_tokens:
+            config.max_output_tokens = request.max_tokens
+        if request.temperature is not None:
+            config.temperature = request.temperature
+        
+        # 设置思考功能
+        if request.include_thinking or isinstance(request.thinking_budget, int):
+            config.thinking_config = self._types.ThinkingConfig(
+                thinking_budget=request.thinking_budget or -1,
+                include_thoughts=True
+            )
+        
+        return config
     
     async def chat(self, request: ChatRequest) -> ChatResponse:
         """发送聊天请求"""
         async with self.ensure_initialized():
             errors = self.validate_request(request)
             if errors:
-                raise ProviderError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
+                raise ValidationError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
             
             try:
-                contents = self._prepare_contents(request.messages)
-                
-                # 构建配置
-                config = self._types.GenerateContentConfig()
-                if request.max_tokens:
-                    config.max_output_tokens = request.max_tokens
-                if request.temperature is not None:
-                    config.temperature = request.temperature
-                
-                response = await self._client.aio.models.generate_content(
-                    model=request.model,
-                    contents=contents,
-                    config=config
-                )
-                
-                return ChatResponse(
-                    content=response.text or "",
-                    model=request.model,
-                    finish_reason="stop"
-                )
+                if request.include_thinking:
+                    # 使用流式方式处理思考功能
+                    return await self._chat_with_thinking(request)
+                else:
+                    # 使用标准方式
+                    contents = request.messages.to_native_format()
+                    config = self._get_generate_config(request)
+                    
+                    response = await self._client.aio.models.generate_content(
+                        model=request.model,
+                        contents=contents,
+                        config=config
+                    )
+                    
+                    return ChatResponse(
+                        content="<answer>" + (response.text or "") + "</answer>\n",
+                        model=request.model,
+                        finish_reason="stop"
+                    )
                 
             except Exception as e:
                 self.logger.error(f"Google genai request failed: {e}")
-                raise self._convert_exception(e)
+                raise self.convert_exception(e)
+    
+    async def _chat_with_thinking(self, request: ChatRequest) -> ChatResponse:
+        """使用思考功能的聊天请求"""
+        contents = request.messages.to_native_format()
+        config = self._get_generate_config(request)
+        
+        thoughts = ""
+        answer = ""
+        
+        for chunk in self._client.models.generate_content_stream(
+            model=request.model,
+            contents=contents,
+            config=config,
+        ):
+            for part in chunk.candidates[0].content.parts:
+                if not part.text:
+                    continue
+                elif part.thought:
+                    thoughts += part.text
+                else:
+                    answer += part.text
+        
+        return ChatResponse(
+            content=answer,
+            model=request.model,
+            finish_reason="stop",
+            thoughts=thoughts if thoughts else ""
+        )
     
     async def stream_chat(self, request: ChatRequest) -> AsyncGenerator[StreamChunk, None]:
         """流式聊天请求"""
         async with self.ensure_initialized():
             errors = self.validate_request(request)
             if errors:
-                raise ProviderError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
+                raise ValidationError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
             
             try:
-                contents = self._prepare_contents(request.messages)
-                
-                # 构建配置
-                config = self._types.GenerateContentConfig()
-                if request.max_tokens:
-                    config.max_output_tokens = request.max_tokens
-                if request.temperature is not None:
-                    config.temperature = request.temperature
-                
-                async for chunk in self._client.aio.models.generate_content_stream(
-                    model=request.model,
-                    contents=contents,
-                    config=config
-                ):
-                    if chunk.candidates and chunk.candidates[0].content.parts: # type: ignore
-                        for part in chunk.candidates[0].content.parts: # type: ignore
-                            if part.text:
-                                yield StreamChunk(content=part.text)
-                                
+                if request.include_thinking:
+                    # 使用思考功能的流式处理
+                    async for chunk in self._stream_with_thinking(request):
+                        yield chunk
+                else:
+                    # 标准流式处理
+                    contents = request.messages.to_native_format()
+                    config = self._get_generate_config(request)
+                    
+                    async for chunk in self._client.aio.models.generate_content_stream(
+                        model=request.model,
+                        contents=contents,
+                        config=config
+                    ):
+                        if chunk.candidates and chunk.candidates[0].content.parts: # type: ignore
+                            for part in chunk.candidates[0].content.parts: # type: ignore
+                                if part.text:
+                                    yield StreamChunk(
+                                        content=part.text,
+                                        content_type="answer"
+                                    )
+                                    
             except Exception as e:
                 self.logger.error(f"Google genai stream request failed: {e}")
-                raise self._convert_exception(e)
+                raise self.convert_exception(e)
     
-    def _convert_exception(self, e: Exception) -> ProviderError:
-        """转换异常为统一错误类型"""
-        error_str = str(e).lower()
+    async def _stream_with_thinking(self, request: ChatRequest) -> AsyncGenerator[StreamChunk, None]:
+        """支持思考功能的流式处理"""
+        contents = request.messages.to_native_format()
+        config = self._get_generate_config(request)
         
-        if "unauthorized" in error_str or "invalid api key" in error_str:
-            return AuthenticationError(f"Authentication failed: {e}", self.platform_type)
-        else:
-            return ProviderError(f"Request failed: {e}", self.platform_type)
+        thoughts_started = False
+        answer_started = False
+        
+        for chunk in self._client.models.generate_content_stream(
+            model=request.model,
+            contents=contents,
+            config=config,
+        ):
+            for part in chunk.candidates[0].content.parts:
+                if not part.text:
+                    continue
+                elif part.thought:
+                    if not thoughts_started:
+                        yield StreamChunk(
+                            content="<thought>"+(part.text or ""),
+                            content_type="thought_start"
+                        )
+                        thoughts_started = True
+                    
+                    yield StreamChunk(
+                        content=part.text or "",
+                        content_type="thought"
+                    )
+                else:
+                    if thoughts_started and not answer_started:
+                        yield StreamChunk(
+                            content="</thought>\n<answer>"+(part.text or ""),
+                            content_type="thought_end"
+                        )
+                        answer_started = True
+                    
+                    yield StreamChunk(
+                        content=part.text or "",
+                        content_type="answer"
+                    )
+        
+        # 如果有思考内容但没有输出结束标记
+        if thoughts_started and not answer_started:
+            yield StreamChunk(
+                content="</thought>\n<answer>",
+                content_type="thought_end"
+            )
+        
+        # 标记结束
+        yield StreamChunk(
+            content="</answer>\n",
+            finish_reason="stop",
+            content_type="end"
+        )
+
+    async def stream_chat_completion(self, request: ChatRequest) -> str:
+        """流式聊天请求，返回完整内容"""
+        response = ""
+        async for chunk in self.stream_chat(request):
+            response += chunk.content
+        return response
 
 # ============ 本地部署实现 ============
 
