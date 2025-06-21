@@ -1,91 +1,108 @@
 # -*- coding: utf-8 -*-
 """
-LLM提供商模块 - 三层架构
-平台 → 厂商 → 模型的优雅分级设计
+LLM提供商集成模块
+提供统一的多平台LLM服务接口，支持流式对话和异步操作
 """
 
-# 核心类型定义
-from .types import (
-    PlatformType, PlatformCategory, PlatformInfo,
-    VendorType, ModelSpec, SDKType,
-)
+# 导入基础类型和接口
+from .types import PlatformType, ModelSpec, PlatformInfo
 
-# 配置系统
-from .config import (
-    ConfigManager, PlatformConfig, LLMConfig,
-    DEFAULT_TIMEOUT, DEFAULT_MAX_RETRIES, get_config_manager
-)
-
-# 基础接口
+# 导入核心基类
 from .base import (
-    # 统一数据模型
-    ChatMessage, ChatRequest, ChatResponse, StreamChunk,
-    # Provider基类
-    Provider, OpenAICompatibleProvider,
-    # 异常类
+    Provider,
+    Message, ChatMessage, ChatHistory, FileManager,
+    ChatRequest, ChatResponse, StreamChunk,
     ProviderError, AuthenticationError, RateLimitError, 
-    ModelNotFoundError, ValidationError, NetworkError, ServiceUnavailableError,
-    # 工具类
-    RequestValidator, ExceptionConverter,
-    # 兼容性接口
-    FileManager, Message, ChatHistory
+    ModelNotFoundError, ValidationError, NetworkError, ServiceUnavailableError
 )
 
-# 工厂和管理器
-from .factory import (
-    ProviderFactory, ProviderManager, get_provider_manager
+# 导入具体实现
+from .impl import (
+    OpenAICompatibleProvider,
+    OpenAIProvider, OpenRouterProvider,
+    DeepSeekProvider, GoogleProvider,
 )
 
-# 注册中心
+# 导入配置管理
+from .config import (
+    PlatformConfig, ConfigManager, get_config_manager,
+    DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT
+)
+
+# 导入注册中心
 from .registry import (
-    ProviderRegistry, get_provider_registry,
-    # 便捷函数
-    get_platform_info, list_platforms, list_models,
-    # 注册表
-    PLATFORM_REGISTRY, VENDOR_MODEL_REGISTRY, SDK_REGISTRY
+    ProviderRegistry,
+    get_provider_registry,
 )
 
-# 具体实现（自动注册）
-from . import impl
+# 导入工厂类
+from .factory import (
+    ProviderFactory, ProviderManager, get_provider_manager, get_provider
+)
 
-# 历史兼容
-from ..history.parts import Part, TextPart, ThoughtPart, ContentPart, FilePart, ImagePart
+# 多模态支持
+from .multimodal import (
+    GeminiMessage, GeminiChatHistory, GeminiFileManager,
+    OpenRouterMessage, OpenRouterChatHistory, OpenRouterFileManager,
+    OpenAIMessage, OpenAIChatHistory,
+)
 
-# 导出所有公共接口
+# 便捷函数
+def create_provider(platform_type, api_key=None, api_base=None, **kwargs) -> Provider:
+    """便捷创建提供商函数"""
+    config = PlatformConfig(
+        platform_type=platform_type,
+        api_key=api_key,
+        api_base=api_base,
+        **kwargs
+    )
+    return ProviderFactory.create_provider(config)
+
+# 版本信息
+__version__ = "1.0.0"
+
+# 平台类型快速访问
+PLATFORM_TYPES = PlatformType
+
+# 公开的API
 __all__ = [
-    # === 核心类型 ===
-    'PlatformType', 'PlatformCategory', 'PlatformInfo',
-    'VendorType', 'ModelSpec', 'SDKType',
+    # 核心类型
+    'PlatformType', 'ModelSpec', 'PlatformInfo',
     
-    # === 注册表 ===
-    'PLATFORM_REGISTRY', 'VENDOR_MODEL_REGISTRY', 'SDK_REGISTRY',
-    
-    # === 配置系统 ===
-    'ConfigManager', 'PlatformConfig', 'LLMConfig',
-    'DEFAULT_TIMEOUT', 'DEFAULT_MAX_RETRIES', 'get_config_manager',
-    
-    # === 统一接口 ===
-    'ChatMessage', 'ChatRequest', 'ChatResponse', 'StreamChunk',
+    # 基础类
     'Provider', 'OpenAICompatibleProvider',
+    'Message', 'ChatMessage', 'ChatHistory', 'FileManager',
+    'ChatRequest', 'ChatResponse', 'StreamChunk',
     
-    # === 工具类 ===
-    'RequestValidator', 'ExceptionConverter',
-    
-    # === 异常处理 ===
+    # 异常类
     'ProviderError', 'AuthenticationError', 'RateLimitError',
     'ModelNotFoundError', 'ValidationError', 'NetworkError', 'ServiceUnavailableError',
     
-    # === 工厂管理 ===
+    # 提供商实现
+    'OpenAIProvider', 'GoogleProvider', 'OpenRouterProvider',
+    'DeepSeekProvider',
+    
+    # 配置管理
+    'PlatformConfig', 'ConfigManager', 'get_config_manager',
+    'DEFAULT_MAX_TOKENS', 'DEFAULT_TEMPERATURE', 'DEFAULT_TIMEOUT',
+    
+    # 注册中心
+    'ProviderRegistry', 'get_provider_registry',
+    
+    # 工厂类
     'ProviderFactory', 'ProviderManager', 'get_provider_manager',
     
-    # === 注册中心 ===
-    'ProviderRegistry', 'get_provider_registry',
-    'get_platform_info', 'list_platforms', 'list_models',
+    # 便捷函数
+    'get_provider',
     
-    # === 兼容性 ===
-    'FileManager', 'Message', 'ChatHistory',
-    'Part', 'TextPart', 'ThoughtPart', 'ContentPart', 'FilePart', 'ImagePart',
-]
-
-# 模块版本
-__version__ = "1.0.0" 
+    # 便捷函数
+    'create_provider',
+    
+    # 多模态支持
+    'GeminiMessage', 'GeminiChatHistory', 'GeminiFileManager',
+    'OpenRouterMessage', 'OpenRouterChatHistory', 'OpenRouterFileManager',
+    'OpenAIMessage', 'OpenAIChatHistory',
+    
+    # 快捷访问
+    'PLATFORM_TYPES',
+] 

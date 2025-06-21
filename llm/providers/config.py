@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-LLM提供商配置系统 - 简化版本
+LLM提供商配置系统 - 基于注册中心的版本
 """
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Any, Union
@@ -40,6 +40,7 @@ class PlatformConfig:
     temperature: Optional[float] = None          # 默认温度
     max_tokens: Optional[int] = None            # 默认最大token数
     top_p: Optional[float] = None               # 默认top_p
+    other_params: Optional[Dict[str, Any]] = None # 其他参数
     
     # ============ 特性配置 ============
     supports_streaming: bool = True              # 是否支持流式输出
@@ -193,32 +194,283 @@ class ConfigManager:
         """列出所有平台配置"""
         return list(self.config.platforms.values())
     
-    def generate_sample_config(self):
-        """生成示例配置"""
-        # 添加一些示例平台配置
-        self.set_config("openai", PlatformConfig(
-            platform_type="openai",
-            api_key="your-openai-api-key",
-            preferred_models=["gpt-4o", "gpt-4o-mini"],
-            temperature=0.7,
-            max_tokens=4096
+    def generate_default_config(self):
+        """根据注册中心生成完整的示例配置"""
+        import dotenv
+        dotenv.load_dotenv()
+        from .registry import get_provider_registry
+        
+        registry = get_provider_registry()
+        
+        # ============ 官方平台配置 ============
+        
+        # OpenAI 官方
+        self.set_config("openai_official", PlatformConfig(
+            platform_type=PlatformType.OPENAI_OFFICIAL,
+            enabled=False,  # 默认禁用，需要用户填入API密钥
+            api_key="your-openai-api-key-here",
+            preferred_models=["gpt-o3-mini", "gpt-4.1", "gpt-4o", "gpt-4o-mini"],
+            model_aliases={
+                "gpt-4": "gpt-4o",
+                "gpt-4-turbo": "gpt-4o",
+                "gpt-3.5-turbo": "gpt-4o-mini"
+            },
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=DEFAULT_MAX_TOKENS,
+            supports_vision=True,
+            supports_function_calling=True,
+            custom_headers={"User-Agent": "monocases-llm-client/1.0"}
         ))
         
+        # Google 官方 (Gemini)
+        self.set_config("google_official", PlatformConfig(
+            platform_type=PlatformType.GOOGLE_OFFICIAL,
+            enabled=False,
+            api_key="your-google-genai-api-key-here",
+            preferred_models=["gemini-2.5-pro", "gemini-2.5-flash"],
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=DEFAULT_MAX_TOKENS,
+            supports_vision=True,
+            supports_function_calling=True,
+            custom_params={"safety_settings": "BLOCK_NONE"}
+        ))
+        
+        # Anthropic 官方 (Claude)
+        self.set_config("anthropic_official", PlatformConfig(
+            platform_type=PlatformType.ANTHROPIC_OFFICIAL,
+            enabled=False,
+            api_key="your-anthropic-api-key-here",
+            preferred_models=["claude-4-sonnet", "claude-4-opus"],
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=DEFAULT_MAX_TOKENS,
+            supports_vision=True,
+            supports_function_calling=True,
+        ))
+        
+        # DeepSeek 官方
+        self.set_config("deepseek_official", PlatformConfig(
+            platform_type=PlatformType.DEEPSEEK_OFFICIAL,
+            enabled=False,
+            api_key="your-deepseek-api-key-here",
+            preferred_models=["deepseek-r1-0528", "deepseek-v3-0324"],
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=DEFAULT_MAX_TOKENS,
+        ))
+        
+        # 智谱AI 官方
+        self.set_config("zhipu_official", PlatformConfig(
+            platform_type=PlatformType.ZHIPU_OFFICIAL,
+            enabled=False,
+            api_key="your-zhipu-api-key-here",
+            preferred_models=["glm-4-plus", "glm-4-flash"],
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=DEFAULT_MAX_TOKENS,
+        ))
+        
+        # ============ 聚合平台配置 ============
+        
+        # OpenRouter 聚合平台
         self.set_config("openrouter", PlatformConfig(
-            platform_type="openrouter", 
-            api_key="your-openrouter-api-key",
-            preferred_models=["openai/gpt-4o", "deepseek/deepseek-r1-0528:free"],
+            platform_type=PlatformType.OPENROUTER,
+            enabled=True,
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            preferred_models=[
+                # DeepSeek 免费模型
+                "deepseek/deepseek-r1-0528:free",
+                "deepseek/deepseek-chat-v3-0324:free"
+                # OpenAI 模型
+                # "openai/gpt-4o",
+                # "openai/gpt-4o-mini", 
+                # "openai/gpt-o3-mini",
+                # Google 模型
+                "google/gemini-2.5-pro",
+                # "google/gemini-2.5-flash",
+                # Anthropic 模型
+                "anthropic/claude-4-sonnet",
+            ],
+            model_aliases={
+                "gpt-4": "openai/gpt-4o",
+                "claude": "anthropic/claude-4-sonnet",
+                "gemini": "google/gemini-2.5-flash",
+                "deepseek": "deepseek/deepseek-r1-0528:free"
+            },
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=DEFAULT_MAX_TOKENS,
+            supports_function_calling=True,
         ))
         
-        # 设置默认值
-        self.config.default_platform = "openai"
-        self.config.default_model = "gpt-4o-mini"
-        self.config.fallback_models = ["gpt-4o-mini", "deepseek/deepseek-r1-0528:free"]
+        # ============ 本地平台配置 ============
+        
+        # vLLM 本地推理
+        self.set_config("vllm_local", PlatformConfig(
+            platform_type=PlatformType.VLLM,
+            enabled=False,  # 默认禁用，需要本地启动服务
+            api_base="http://localhost:8000/v1",
+            preferred_models=["custom-model"],  # 用户需要根据实际部署的模型修改
+            temperature=DEFAULT_TEMPERATURE,
+            max_tokens=DEFAULT_MAX_TOKENS,
+            timeout=600,  # 本地推理可能需要更长时间
+            custom_params={"local_deployment": True}
+        ))
+        
+        # ============ 全局配置 ============
+        
+        # 设置默认配置 - 优先级：本地免费 > 聚合平台 > 官方平台
+        thinking_models = registry.get_thinking_models()
+        free_models = [model for model in thinking_models if ":free" in model]
+        
+        if free_models:
+            self.config.default_platform = "openrouter"
+            self.config.default_model = free_models[0]  # deepseek/deepseek-r1-0528:free
+        else:
+            self.config.default_platform = "openai_official"
+            self.config.default_model = "gpt-4o-mini"
+        
+        # 设置备选模型列表 - 按成本和性能平衡
+        self.config.fallback_models = [
+            # 免费模型优先
+            "deepseek/deepseek-r1-0528:free",
+            "deepseek/deepseek-chat-v3-0324:free",
+            # 高性价比模型
+            "gpt-4o-mini",
+            "gemini-2.5-flash",
+            # 高性能模型
+            "gpt-o3-mini",
+            "claude-4-sonnet",
+            "gemini-2.5-pro",
+        ]
+        
+        # 日志级别
+        self.config.log_level = "INFO"
+        
+        self.logger.info("Generated comprehensive sample configuration based on registry data")
+        self.logger.info(f"Default platform: {self.config.default_platform}")
+        self.logger.info(f"Default model: {self.config.default_model}")
+        self.logger.info(f"Configured platforms: {list(self.config.platforms.keys())}")
+    
+    def generate_minimal_config(self):
+        import dotenv
+        dotenv.load_dotenv()
+        """生成最小化配置 - 只包含最常用的平台"""
+        # 只配置最常用的几个平台
+        self.set_config("openrouter", PlatformConfig(
+            platform_type=PlatformType.OPENROUTER,
+            enabled=True,
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            preferred_models=["deepseek/deepseek-r1-0528:free", "openai/gpt-4o-mini"],
+            temperature=DEFAULT_TEMPERATURE
+        ))
+        
+        self.set_config("google_official", PlatformConfig(
+            platform_type=PlatformType.GOOGLE_OFFICIAL,
+            enabled=False,
+            api_key=os.getenv("GENAI_API_KEY"),
+            preferred_models=["gemini-2.5-pro", "gemini-2.5-flash"],
+            temperature=DEFAULT_TEMPERATURE
+        ))
+        
+        self.config.default_platform = "openrouter"
+        self.config.default_model = "deepseek/deepseek-r1-0528:free"
+        self.config.fallback_models = ["deepseek/deepseek-r1-0528:free", "deepseek/deepseek-chat-v3-0324:free"]
+
+    def auto_initialize_from_registry(self):
+        """从注册中心自动初始化所有平台配置"""
+        import dotenv
+        dotenv.load_dotenv()
+        
+        from .registry import get_provider_registry
+        registry = get_provider_registry()
+        
+        # 清空现有配置
+        self.config.platforms = {}
+        
+        # 为每个平台创建基础配置
+        for platform_type in registry.list_platforms():
+            platform_info = registry.get_platform_info(platform_type)
+            if not platform_info:
+                continue
+            
+            # 配置名称
+            config_name = platform_info.name.lower().replace(' ', '_').replace('.', '_').replace('-', '_').replace('/', '_').replace(':', '_')
+            
+            api_key = os.getenv(platform_info.api_key_name)
+            
+            # 获取该平台的推荐模型
+            thinking_models = registry.get_thinking_models(platform_type)
+            all_models = registry.get_models_by_platform(platform_type)
+            
+            # 选择首选模型（优先免费模型）
+            preferred_models = []
+            free_models = [m for m in all_models if ':free' in m]
+            if free_models:
+                preferred_models.extend(free_models[:3])
+            else:
+                preferred_models.extend(thinking_models[:2])
+                preferred_models.extend([m for m in all_models if m not in preferred_models][:3])
+            
+            # 创建配置
+            config = PlatformConfig(
+                platform_type=platform_type,
+                enabled=bool(api_key),  # 有API密钥就启用
+                api_key=api_key,
+                preferred_models=preferred_models,
+                temperature=DEFAULT_TEMPERATURE,
+                max_tokens=DEFAULT_MAX_TOKENS,
+            )
+            
+            self.set_config(config_name, config)
+        
+        # # 设置默认配置
+        # self._set_auto_defaults()
+        
+        self.logger.info(f"Initialized {len(self.config.platforms)} platform configurations from registry")
+    
+    # def _set_auto_defaults(self):
+    #     """自动设置默认配置"""
+    #     from .registry import get_provider_registry
+    #     registry = get_provider_registry()
+        
+    #     # 查找最优默认平台和模型
+    #     enabled_configs = [(name, config) for name, config in self.config.platforms.items() if config.enabled]
+        
+    #     if enabled_configs:
+    #         # 优先选择有免费模型的平台
+    #         free_platform = None
+    #         for name, config in enabled_configs:
+    #             if any(':free' in model for model in config.preferred_models):
+    #                 free_platform = name
+    #                 break
+            
+    #         if free_platform:
+    #             self.config.default_platform = free_platform
+    #             config = self.config.platforms[free_platform]
+    #             free_model = next((m for m in config.preferred_models if ':free' in m), None)
+    #             self.config.default_model = free_model or config.preferred_models[0]
+    #         else:
+    #             # 选择第一个启用的平台
+    #             name, config = enabled_configs[0]
+    #             self.config.default_platform = name
+    #             self.config.default_model = config.preferred_models[0] if config.preferred_models else None
+        
+    #     # 设置备选模型
+    #     all_free_models = []
+    #     all_thinking_models = []
+        
+    #     for config in self.config.platforms.values():
+    #         if config.enabled:
+    #             for model in config.preferred_models:
+    #                 if ':free' in model and model not in all_free_models:
+    #                     all_free_models.append(model)
+    #                 elif 'thinking' in model.lower() and model not in all_thinking_models:
+    #                     all_thinking_models.append(model)
+        
+    #     self.config.fallback_models = all_free_models[:3] + all_thinking_models[:3]
 
 # 全局配置管理器实例
 _global_config_manager = None
 
-def get_config_manager(config_path: Optional[str] = None) -> ConfigManager:
+def get_config_manager(config_path: Optional[str] = None, 
+                      auto_init_from_registry: bool = True) -> ConfigManager:
     """获取配置管理器实例"""
     global _global_config_manager
     
@@ -227,5 +479,9 @@ def get_config_manager(config_path: Optional[str] = None) -> ConfigManager:
     
     if _global_config_manager is None:
         _global_config_manager = ConfigManager()
+        
+        # 如果配置文件不存在，自动从注册中心初始化
+        if auto_init_from_registry and not os.path.exists(_global_config_manager.config_path):
+            _global_config_manager.auto_initialize_from_registry()
     
     return _global_config_manager 

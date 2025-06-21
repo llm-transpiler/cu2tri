@@ -170,6 +170,7 @@ class PlatformInfo:
     name: str
     description: str
     requires_api_key: bool = True
+    api_key_name: str = None
     # supports_streaming: bool = True
     # supports_multimodal: bool = False
     http_base_url: Optional[str] = None

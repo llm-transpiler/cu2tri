@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 class ConversationTree:
     
-    def __init__(self, message_cls: "Message", history_cls: "ChatHistory", 
+    def __init__(self, message_cls: "Message" , history_cls: "ChatHistory", 
                  system_prompt: Optional[str] = "You are a helpful assistant.", file_manager: Optional["FileManager"] = None, 
                  logger: Optional[logging.Logger] = None):
         self.id = str(uuid.uuid4())  # 添加树的唯一标识符

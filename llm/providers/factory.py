@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-LLM提供商工厂类 - 简化版本
+LLM提供商工厂类 - 基于注册中心的版本
 支持动态创建和管理各种类型的提供商
 """
 from typing import Dict, List, Optional, Type, Union, Any
@@ -9,14 +9,69 @@ import asyncio
 
 from .config import PlatformConfig, ConfigManager, get_config_manager
 from .types import PlatformType
-from .registry import get_provider_registry
+from .registry import get_provider_registry, PLATFORM_REGISTRY
 from .base import Provider
 
 class ProviderFactory:
-    """LLM提供商工厂类 - 负责创建和注册提供商"""
+    """LLM提供商工厂类 - 基于注册中心的提供商创建"""
     
-    # 提供商类型到实现类的映射
+    # 提供商类型到实现类的映射 - 基于 PLATFORM_REGISTRY 自动初始化
     _PROVIDER_CLASSES: Dict[PlatformType, Type[Provider]] = {}
+    _initialized = False
+    
+    @classmethod
+    def _initialize_provider_classes(cls):
+        """根据PLATFORM_REGISTRY初始化提供商类映射"""
+        if cls._initialized:
+            return
+            
+        logger = logging.getLogger(__name__)
+        
+        # 尝试导入所有可用的提供商实现
+        provider_mappings = {}
+        
+        try:
+            from .impl import OpenAIProvider
+            # OpenAI兼容的平台都可以使用 OpenAIProvider
+            openai_compatible_platforms = [
+                PlatformType.OPENAI_OFFICIAL,
+                PlatformType.DEEPSEEK_OFFICIAL, 
+                PlatformType.OPENROUTER,
+                PlatformType.VLLM,
+            ]
+            for platform in openai_compatible_platforms:
+                if platform in PLATFORM_REGISTRY:
+                    provider_mappings[platform] = OpenAIProvider
+        except ImportError:
+            logger.warning("OpenAIProvider not available")
+        
+        try:
+            from .impl import GoogleProvider
+            if PlatformType.GOOGLE_OFFICIAL in PLATFORM_REGISTRY:
+                provider_mappings[PlatformType.GOOGLE_OFFICIAL] = GoogleProvider
+        except ImportError:
+            logger.warning("GoogleProvider not available")
+        
+        try:
+            from .impl import AnthropicProvider
+            if PlatformType.ANTHROPIC_OFFICIAL in PLATFORM_REGISTRY:
+                provider_mappings[PlatformType.ANTHROPIC_OFFICIAL] = AnthropicProvider
+        except ImportError:
+            logger.warning("AnthropicProvider not available")
+        
+        try:
+            from .impl import ZhipuProvider
+            if PlatformType.ZHIPU_OFFICIAL in PLATFORM_REGISTRY:
+                provider_mappings[PlatformType.ZHIPU_OFFICIAL] = ZhipuProvider
+        except ImportError:
+            logger.warning("ZhipuProvider not available")
+        
+        cls._PROVIDER_CLASSES.update(provider_mappings)
+        cls._initialized = True
+        
+        logger.info(f"Initialized {len(cls._PROVIDER_CLASSES)} provider classes from registry")
+        for platform, provider_class in cls._PROVIDER_CLASSES.items():
+            logger.debug(f"  {platform.value} -> {provider_class.__name__}")
     
     @classmethod
     def register_provider(cls, platform_type: Union[str, PlatformType], provider_class: Type[Provider]) -> None:
@@ -30,6 +85,8 @@ class ProviderFactory:
     @classmethod
     def get_provider_class(cls, platform_type: Union[str, PlatformType]) -> Optional[Type[Provider]]:
         """获取提供商类"""
+        cls._initialize_provider_classes()  # 确保已初始化
+        
         if isinstance(platform_type, str):
             try:
                 platform_type = PlatformType(platform_type)
@@ -41,7 +98,20 @@ class ProviderFactory:
     @classmethod
     def list_supported_providers(cls) -> List[PlatformType]:
         """列出支持的提供商类型"""
+        cls._initialize_provider_classes()
         return list(cls._PROVIDER_CLASSES.keys())
+    
+    @classmethod
+    def list_registered_platforms(cls) -> List[PlatformType]:
+        """列出注册中心中的所有平台"""
+        return list(PLATFORM_REGISTRY.keys())
+    
+    @classmethod
+    def list_available_platforms(cls) -> List[PlatformType]:
+        """列出既在注册中心又有提供商实现的平台"""
+        cls._initialize_provider_classes()
+        return [platform for platform in cls._PROVIDER_CLASSES.keys() 
+                if platform in PLATFORM_REGISTRY]
     
     @classmethod
     def create_provider(cls, config: PlatformConfig, logger: Optional[logging.Logger] = None) -> Provider:
@@ -55,8 +125,13 @@ class ProviderFactory:
         
         provider_class = cls.get_provider_class(platform_type)
         if provider_class is None:
-            supported = [pt.value for pt in cls.list_supported_providers()]
-            raise ValueError(f"Unsupported platform type: {platform_type}, supported types: {supported}")
+            available = [pt.value for pt in cls.list_available_platforms()]
+            registered = [pt.value for pt in cls.list_registered_platforms()]
+            raise ValueError(
+                f"No provider implementation for platform: {platform_type}. "
+                f"Available platforms: {available}. "
+                f"Registered platforms: {registered}"
+            )
         
         if logger is None:
             logger = logging.getLogger(f"{__name__}.{platform_type}")
@@ -77,7 +152,7 @@ class ProviderFactory:
         return cls.create_provider(config)
 
 class ProviderManager:
-    """提供商管理器 - 简化版本"""
+    """提供商管理器 - 基于注册中心的版本"""
     
     def __init__(self, config_manager: Optional[ConfigManager] = None, 
                  logger: Optional[logging.Logger] = None):
@@ -102,10 +177,6 @@ class ProviderManager:
     def get_provider(self, name: str) -> Optional[Provider]:
         """获取提供商实例"""
         return self._providers.get(name)
-    
-    def get_initialized_provider(self, name: str) -> Optional[Provider]:
-        """获取已初始化的提供商实例"""
-        return self._initialized_providers.get(name)
     
     def list_providers(self, initialized_only: bool = False) -> List[str]:
         """列出提供商名称"""
@@ -155,6 +226,13 @@ class ProviderManager:
         except Exception as e:
             self.logger.error(f"Provider initialization failed {name}: {e}")
             return False
+    
+    async def initialize_all_providers(self) -> Dict[str, bool]:
+        """初始化所有提供商"""
+        results = {}
+        for name in self._providers:
+            results[name] = await self.initialize_provider(name)
+        return results
     
     # ============ 配置管理 ============
     
@@ -239,4 +317,8 @@ def get_provider_manager(config_path: Optional[str] = None) -> ProviderManager:
         _default_manager = ProviderManager(config_manager)
         _default_manager.load_from_config_manager()
     
-    return _default_manager 
+    return _default_manager
+
+def get_provider(platform_type: PlatformType) -> Provider:
+    """获取提供商实例"""
+    return get_provider_manager().get_provider(platform_type)

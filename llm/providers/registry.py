@@ -20,6 +20,7 @@ PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
         description="OpenRouter aggregation platform supporting multi-vendor models",
         http_base_url="https://openrouter.ai/api/v1",
         base_url="https://openrouter.ai/api/v1",
+        api_key_name="OPENROUTER_API_KEY",
         supported_vendors={
             VendorType.OPENAI, VendorType.DEEPSEEK, VendorType.OPENROUTER_DEEPSEEK,
             VendorType.GOOGLE,VendorType.ANTHROPIC
@@ -36,6 +37,7 @@ PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
         description="OpenAI官方API",
         http_base_url="https://api.openai.com/v1",
         base_url="https://api.openai.com/v1",
+        api_key_name="OPENAI_API_KEY",
         supported_vendors={VendorType.OPENAI},
         supported_sdks={SDKType.OPENAI},
         model_name_format="{model}"
@@ -48,6 +50,7 @@ PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
         description="Anthropic官方API (Claude)",
         http_base_url="https://api.anthropic.com/v1/", # https://docs.anthropic.com/en/api/overview#curl
         base_url="https://api.anthropic.com/v1/", # https://docs.anthropic.com/en/api/openai-sdk#getting-started-with-the-openai-sdk
+        api_key_name="ANTHROPIC_API_KEY",
         supported_vendors={VendorType.ANTHROPIC},
         supported_sdks={SDKType.ANTHROPIC, SDKType.OPENAI},
         model_name_format="{model}"
@@ -60,6 +63,7 @@ PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
         description="Google genai official API",
         http_base_url="https://generativelanguage.googleapis.com/v1beta", # https://ai.google.dev/gemini-api/docs/quickstart#rest
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/", # https://ai.google.dev/gemini-api/docs/openai?hl=zh-cn
+        api_key_name="GOOGLE_API_KEY",
         supported_vendors={VendorType.GOOGLE},
         supported_sdks={SDKType.GENAI, SDKType.OPENAI},
         model_name_format="{model}"
@@ -72,6 +76,7 @@ PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
         description="DeepSeek official API",
         http_base_url="https://api.deepseek.com", # https://api-docs.deepseek.com/zh-cn/
         base_url="https://api.deepseek.com", # https://api-docs.deepseek.com/zh-cn/
+        api_key_name="DEEPSEEK_API_KEY",
         supported_vendors={VendorType.DEEPSEEK},
         supported_sdks={SDKType.OPENAI},
         model_name_format="{model}"
@@ -84,6 +89,7 @@ PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
         description="智谱AI官方API",
         http_base_url="https://open.bigmodel.cn/api/paas/v4/",
         base_url="https://open.bigmodel.cn/api/paas/v4/",
+        api_key_name="ZHIPU_API_KEY",
         supported_vendors={VendorType.ZHIPU},
         supported_sdks={SDKType.OPENAI},
         model_name_format="{model}"
@@ -97,6 +103,7 @@ PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
         description="vLLM local inference server",
         http_base_url="http://localhost:8000/v1",
         base_url="http://localhost:8000/v1",
+        api_key_name="VLLM_API_KEY",
         supported_vendors=set(),  # vLLM 可以运行任何厂商的模型
         supported_sdks={SDKType.OPENAI, SDKType.VLLM},
         model_name_format="{model}"
@@ -261,6 +268,27 @@ class ProviderRegistry:
         
         total_models = sum(len(models) for models in VENDOR_MODEL_REGISTRY.values())
         self.logger.info(f"Registered {total_models} models")
+        
+        # 动态填充每个平台的 supported_models
+        self._populate_platform_models()
+    
+    def _populate_platform_models(self):
+        """动态填充每个平台的supported_models字段"""
+        for platform_type, platform_info in PLATFORM_REGISTRY.items():
+            models = set()
+            
+            # 遍历所有厂商模型，找到该平台支持的模型
+            for vendor_type, vendor_models in VENDOR_MODEL_REGISTRY.items():
+                if vendor_type in platform_info.supported_vendors:
+                    for spec in vendor_models:
+                        # 格式化模型名称
+                        formatted_name = platform_info.model_name_format.format(
+                            vendor=str(spec.vendor),
+                            model=spec.name
+                        )
+                        models.add(formatted_name)
+            
+            platform_info.supported_models = models
     
     # ============ 平台信息查询 ============
     
@@ -488,3 +516,10 @@ def list_models(vendor: Optional[VendorType] = None,
                thinking_only: bool = False) -> List[str]:
     """列出模型"""
     return get_provider_registry().list_models(vendor, platform_type, thinking_only)
+
+__all__ = [
+    "get_provider_registry",
+    "get_platform_info",
+    "list_platforms",
+    "list_models",
+]
