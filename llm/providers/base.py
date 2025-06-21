@@ -12,9 +12,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-from .config import PlatformConfig, PlatformType, ModelSpec
+from .types import PlatformType, ModelSpec
 from ..history.parts import Part
-from time import time
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import PlatformConfig
+import time
 
 # ============ 兼容性接口 ============
 
@@ -167,7 +171,7 @@ class Provider(ABC):
     提供统一的接口和生命周期管理
     """
     
-    def __init__(self, config: PlatformConfig, logger: Optional[logging.Logger] = None):
+    def __init__(self, config: 'PlatformConfig', logger: Optional[logging.Logger] = None):
         self.config = config
         self.logger = logger or logging.getLogger(f"{__name__}.{config.platform_type}")
         self._client = None
@@ -353,10 +357,11 @@ class OpenAICompatibleProvider(Provider):
         
         # 获取平台信息以设置正确的base_url
         from .types import get_platform_info
+        from .config import DEFAULT_TIMEOUT
         platform_info = get_platform_info(self.platform_type)
         
         client_kwargs = {
-            "timeout": getattr(self.config, 'timeout', 300),
+            "timeout": getattr(self.config, 'timeout', DEFAULT_TIMEOUT),
         }
         
         # 设置API Key

@@ -21,7 +21,7 @@ from .types import (
 
 # 配置系统
 from .config import (
-    ConfigManager, PlatformConfig, VendorConfig, ModelConfig, LLMConfig,
+    ConfigManager, PlatformConfig, LLMConfig,
     DEFAULT_TIMEOUT, DEFAULT_MAX_RETRIES, get_config_manager
 )
 
@@ -61,7 +61,7 @@ __all__ = [
     'get_platforms_by_category', 'get_vendors_by_platform',
     
     # === 配置系统 ===
-    'ConfigManager', 'PlatformConfig', 'VendorConfig', 'ModelConfig', 'LLMConfig',
+    'ConfigManager', 'PlatformConfig', 'LLMConfig',
     'DEFAULT_TIMEOUT', 'DEFAULT_MAX_RETRIES', 'get_config_manager',
     
     # === 统一接口 ===

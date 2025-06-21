@@ -21,6 +21,12 @@ class PlatformCategory(str, Enum):
     OFFICIAL = "official"           # 官方平台 - 厂商自有API
     LOCAL = "local"                 # 本地平台 - 本地推理服务
     CUSTOM = "custom"               # 自定义平台 - 用户自定义
+    
+    def __str__(self) -> str:
+        return self.value
+
+    def __repr__(self) -> str:
+        return self.value
 
 class PlatformType(str, Enum):
     """部署平台/公司, 付费入口"""
@@ -68,6 +74,12 @@ class SDKType(str, Enum):
     GENAI = "genai"
     
     VLLM = "vllm"
+    
+    def __str__(self) -> str:
+        return self.value
+
+    def __repr__(self) -> str:
+        return self.value
 
 # ============ 第二层：厂商类型 ============
 
