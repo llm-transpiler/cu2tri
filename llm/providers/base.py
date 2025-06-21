@@ -1,0 +1,487 @@
+# -*- coding: utf-8 -*-
+"""
+提供商基类模块
+定义所有API提供商共用的抽象基类，支持三层架构（平台→厂商→模型）
+"""
+import uuid
+from abc import ABC, abstractmethod
+from typing import List, Any, Optional, Dict, AsyncGenerator
+import asyncio
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from contextlib import asynccontextmanager
+
+from .config import PlatformConfig, PlatformType, ModelSpec
+from ..history.parts import Part
+from time import time
+
+# ============ 兼容性接口 ============
+
+class FileManager(ABC):
+    """文件处理管理器基类"""
+    @abstractmethod
+    def process(self, file_path: str) -> Part:
+        pass
+
+class Message(ABC):
+    """消息基类（兼容性接口）"""
+    def __init__(self, role: str, parts: List[Part], id_: Optional[str] = None):
+        self.id = id_ if id_ else str(uuid.uuid4())
+        self.role = role
+        self.parts = parts
+    
+    @abstractmethod
+    def to_native_format(self) -> Any:
+        pass
+
+class ChatHistory(ABC):
+    """聊天历史基类（兼容性接口）"""
+    def __init__(self, messages: List[Message], id_: Optional[str] = None):
+        self.messages = messages
+        self.id = id_ if id_ else str(uuid.uuid4())
+    
+    def to_native_format(self) -> List[Any]:
+        return [message.to_native_format() for message in self.messages if message.to_native_format()]
+    
+    def simple_print(self) -> str:
+        messages = self.to_native_format()
+        result = ""
+        for msg in messages:
+            role = msg.get('role', 'unknown')
+            content = msg.get('content', '❌ No content')
+            if isinstance(content, list) and content:
+                content = content[0].get('text', str(content))
+            result += f"[{role.upper()}] {content}\n"
+        return result
+
+# ============ 统一数据模型 ============
+
+@dataclass
+class ChatMessage:
+    """聊天消息统一数据模型"""
+    role: str  # user, assistant, system
+    content: str
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    timestamp: str = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    def __post_init__(self):
+        if not isinstance(self.metadata, dict):
+            self.metadata = {}
+
+@dataclass
+class ChatRequest:
+    """聊天请求统一数据模型"""
+    messages: List[ChatMessage]
+    model: Optional[str] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    frequency_penalty: Optional[float] = None # 控制模型重复使用相同词汇/短语的倾向, 设置为 0.5 可以让模型生成更多样化的词汇，避免啰嗦, 设置为 -0.5 可能让模型在某些上下文中保持一致的术语使用
+    presence_penalty: Optional[float] = None # 控制模型引入新话题/概念的倾向
+    stream: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        if not isinstance(self.metadata, dict):
+            self.metadata = {}
+        if not self.messages:
+            raise ValueError("Messages list cannot be empty")
+
+@dataclass
+class ChatResponse:
+    """聊天响应统一数据模型"""
+    content: str
+    model: str
+    usage: Optional[Dict[str, Any]] = None
+    finish_reason: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    processing_time: Optional[float] = None
+    
+    def __post_init__(self):
+        if not isinstance(self.metadata, dict):
+            self.metadata = {}
+
+@dataclass
+class StreamChunk:
+    """流式响应块统一数据模型"""
+    content: str
+    finish_reason: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        if not isinstance(self.metadata, dict):
+            self.metadata = {}
+
+# ============ 异常处理 ============
+
+class ProviderError(Exception):
+    """提供商错误基类"""
+    def __init__(self, message: str, platform_type: Optional[PlatformType] = None, 
+                 error_code: Optional[str] = None, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.platform_type = platform_type.value if platform_type else "unknown"
+        self.error_code = error_code or ""
+        self.details = details or {}
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        return {
+            "error_type": self.__class__.__name__,
+            "message": str(self),
+            "platform_type": self.platform_type,
+            "error_code": self.error_code,
+            "details": self.details
+        }
+
+class AuthenticationError(ProviderError):
+    """认证错误"""
+    pass
+
+class RateLimitError(ProviderError):
+    """限流错误"""
+    pass
+
+class ModelNotFoundError(ProviderError):
+    """模型未找到错误"""
+    pass
+
+class ValidationError(ProviderError):
+    """验证错误"""
+    pass
+
+class NetworkError(ProviderError):
+    """网络错误"""
+    pass
+
+class ServiceUnavailableError(ProviderError):
+    """服务不可用错误"""
+    pass
+
+# ============ Provider基类设计 ============
+
+class Provider(ABC):
+    """统一的LLM提供商抽象基类
+    
+    支持三层架构：平台 → 厂商 → 模型
+    提供统一的接口和生命周期管理
+    """
+    
+    def __init__(self, config: PlatformConfig, logger: Optional[logging.Logger] = None):
+        self.config = config
+        self.logger = logger or logging.getLogger(f"{__name__}.{config.platform_type}")
+        self._client = None
+        self._initialized = False
+        self._closed = False
+    
+    @property
+    def platform_type(self) -> PlatformType:
+        """获取平台类型"""
+        return self.config.platform_type
+    
+    @property
+    def name(self) -> str:
+        """获取提供商名称"""
+        return getattr(self.config, 'name', f"{self.platform_type}")
+    
+    @property
+    def is_initialized(self) -> bool:
+        """检查是否已初始化"""
+        return self._initialized and not self._closed
+    
+    @property
+    def is_closed(self) -> bool:
+        """检查是否已关闭"""
+        return self._closed
+    
+    # ============ 生命周期管理 ============
+    
+    async def initialize(self) -> None:
+        """初始化提供商（异步）"""
+        if self._initialized and not self._closed:
+            return
+        
+        if self._closed:
+            raise ProviderError(f"Provider {self.name}:{self.platform_type} is closed, cannot be re-initialized")
+        
+        try:
+            await self._initialize_client()
+            self._initialized = True
+            self._closed = False
+            self.logger.info(f"Provider {self.name} initialized successfully")
+        except Exception as e:
+            self.logger.error(f"Provider {self.name} initialization failed: {e}")
+            raise ProviderError(f"Provider {self.name}:{self.platform_type} initialization failed: {e}") from e
+    
+    @abstractmethod
+    async def _initialize_client(self) -> None:
+        """初始化客户端（子类实现）"""
+        pass
+    
+    async def close(self) -> None:
+        """关闭连接和清理资源"""
+        if self._closed:
+            return
+        
+        try:
+            await self._cleanup_client()
+            self._closed = True
+            self._initialized = False
+            self.logger.info(f"Provider {self.name} closed successfully")
+        except Exception as e:
+            self.logger.warning(f"Provider {self.name} cleanup failed: {e}")
+    
+    async def _cleanup_client(self) -> None:
+        """清理客户端资源（子类可重写）"""
+        if hasattr(self, '_client') and self._client:
+            if hasattr(self._client, 'close'):
+                if asyncio.iscoroutinefunction(self._client.close):
+                    await self._client.close()
+                else:
+                    self._client.close()
+    
+    @asynccontextmanager
+    async def ensure_initialized(self):
+        """确保初始化的上下文管理器"""
+        if not self.is_initialized:
+            await self.initialize()
+        try:
+            yield self
+        finally:
+            pass  # 保持连接，不自动关闭
+    
+    # ============ 核心接口 ============
+    
+    @abstractmethod
+    async def chat(self, request: ChatRequest) -> ChatResponse:
+        """发送聊天请求"""
+        pass
+    
+    @abstractmethod
+    async def stream_chat(self, request: ChatRequest) -> AsyncGenerator[StreamChunk, None]:
+        """流式聊天请求"""
+        pass
+    
+    # ============ 可选接口 ============
+    
+    async def list_models(self) -> List[str]:
+        """列出可用模型（可选实现）"""
+        from .types import get_supported_models
+        try:
+            return get_supported_models(self.platform_type)
+        except:
+            return []
+    
+    async def get_model_info(self, model: str) -> ModelSpec:
+        """获取模型信息（可选实现）"""
+        from .types import get_model_spec
+        spec = get_model_spec(model)
+        return spec
+    
+    # ============ 验证和健康检查 ============
+    def validate_request(self, request: ChatRequest) -> List[str]:
+        """验证请求（可重写）"""
+        errors = []
+        
+        if not request.messages:
+            errors.append("Messages list cannot be empty")
+        
+        # 设置默认模型
+        if request.model is None:
+            default_model = getattr(self.config, 'preferred_models', [])
+            if default_model:
+                request.model = default_model[0]
+            else:
+                errors.append("Model name must be specified")
+        
+        # 设置默认参数
+        if request.max_tokens is None:
+            request.max_tokens = getattr(self.config, 'max_tokens', 4096 * 4)
+        
+        if request.temperature is None:
+            request.temperature = getattr(self.config, 'temperature', 0.3)
+        
+        # 验证参数范围
+        if request.temperature is not None and not (0 <= request.temperature <= 2):
+            errors.append("Temperature must be between 0 and 2")
+        
+        if request.max_tokens is not None and request.max_tokens <= 0:
+            errors.append("Max tokens must be greater than 0")
+        
+        return errors
+    
+    async def health_check(self) -> bool:
+        """健康检查"""
+        try:
+            async with self.ensure_initialized():
+                # 发送简单请求测试连接
+                test_request = ChatRequest(
+                    messages=[ChatMessage(role="user", content="Hello")],
+                    max_tokens=1
+                )
+                await self.chat(test_request)
+                return True
+        except Exception as e:
+            self.logger.warning(f"Health check failed: {e}")
+            return False
+    
+    # ============ 工具方法 ============
+    
+    def __str__(self) -> str:
+        return f"{self.__class__.__name__}({self.name})"
+    
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(platform_type='{self.platform_type}', name='{self.name}', initialized={self.is_initialized})"
+
+# ============ OpenAI兼容提供商基类 ============
+
+class OpenAICompatibleProvider(Provider):
+    """OpenAI兼容的提供商基类
+    
+    大多数聚合平台和本地推理服务都兼容OpenAI API
+    """
+    
+    async def _initialize_client(self) -> None:
+        """初始化OpenAI兼容客户端"""
+        try:
+            import openai
+        except ImportError:
+            raise ProviderError(
+                "需要安装openai库: pip install openai",
+                self.platform_type
+            )
+        
+        # 获取平台信息以设置正确的base_url
+        from .types import get_platform_info
+        platform_info = get_platform_info(self.platform_type)
+        
+        client_kwargs = {
+            "timeout": getattr(self.config, 'timeout', 300),
+        }
+        
+        # 设置API Key
+        if getattr(self.config, 'api_key', None):
+            client_kwargs["api_key"] = self.config.api_key
+        else:
+            # 某些本地服务可能不需要API Key
+            client_kwargs["api_key"] = "dummy-key"
+        
+        # 设置base_url
+        base_url = getattr(self.config, 'api_base', None)
+        if not base_url and platform_info:
+            base_url = platform_info.base_url or platform_info.http_base_url
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        
+        self._client = openai.AsyncOpenAI(**client_kwargs)
+        self.logger.debug(f"OpenAI client initialized: base_url={client_kwargs.get('base_url', "https://api.openai.com/v1")}")
+    
+    def _prepare_messages(self, messages: List[ChatMessage]) -> List[Dict[str, str]]:
+        """准备OpenAI格式的消息"""
+        return [
+            {"role": msg.role, "content": msg.content}
+            for msg in messages
+        ]
+    
+    def _prepare_request_params(self, request: ChatRequest) -> Dict[str, Any]:
+        """准备请求参数"""
+        params = {
+            "model": request.model,
+            "messages": self._prepare_messages(request.messages),
+            "stream": request.stream,
+        }
+        
+        if request.max_tokens is not None:
+            params["max_tokens"] = request.max_tokens
+        if request.temperature is not None:
+            params["temperature"] = request.temperature
+        if request.top_p is not None:
+            params["top_p"] = request.top_p
+        if request.frequency_penalty is not None:
+            params["frequency_penalty"] = request.frequency_penalty
+        if request.presence_penalty is not None:
+            params["presence_penalty"] = request.presence_penalty
+        
+        return params
+    
+    async def chat(self, request: ChatRequest) -> ChatResponse:
+        """发送聊天请求"""
+        async with self.ensure_initialized():
+            # 验证请求
+            errors = self.validate_request(request)
+            if errors:
+                raise ValidationError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
+            
+            start_time = time.time()
+            
+            try:
+                params = self._prepare_request_params(request)
+                params["stream"] = False
+                
+                response = await self._client.chat.completions.create(**params)
+                
+                processing_time = time.time() - start_time
+                
+                return ChatResponse(
+                    content=response.choices[0].message.content or "",
+                    model=response.model,
+                    usage=response.usage.model_dump() if response.usage else None,
+                    finish_reason=response.choices[0].finish_reason,
+                    processing_time=processing_time
+                )
+                
+            except Exception as e:
+                self.logger.error(f"Chat request failed: {e}")
+                raise self._convert_exception(e)
+    
+    async def stream_chat(self, request: ChatRequest) -> AsyncGenerator[StreamChunk, None]:
+        """流式聊天请求"""
+        async with self.ensure_initialized():
+            # 验证请求
+            errors = self.validate_request(request)
+            if errors:
+                raise ValidationError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
+            
+            try:
+                params = self._prepare_request_params(request)
+                params["stream"] = True
+                
+                stream = await self._client.chat.completions.create(**params)
+                
+                async for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield StreamChunk(
+                            content=chunk.choices[0].delta.content,
+                            finish_reason=chunk.choices[0].finish_reason
+                        )
+                        
+            except Exception as e:
+                self.logger.error(f"Stream request failed: {e}")
+                raise self._convert_exception(e)
+    
+    def _convert_exception(self, e: Exception) -> ProviderError:
+        """Convert exceptions to unified error types"""
+        error_str = str(e).lower()
+        
+        if "unauthorized" in error_str or "invalid api key" in error_str or "401" in error_str:
+            return AuthenticationError(f"Authentication failed: {e}", self.platform_type)
+        elif "rate limit" in error_str or "429" in error_str:
+            return RateLimitError(f"Rate limit exceeded: {e}", self.platform_type)
+        elif "model" in error_str and ("not found" in error_str or "404" in error_str):
+            return ModelNotFoundError(f"Model not found: {e}", self.platform_type)
+        elif "timeout" in error_str or "connection" in error_str:
+            return NetworkError(f"Network error: {e}", self.platform_type)
+        elif "500" in error_str or "502" in error_str or "503" in error_str:
+            return ServiceUnavailableError(f"Service unavailable: {e}", self.platform_type)
+        else:
+            return ProviderError(f"Request failed: {e}", self.platform_type)
+    
+    async def list_models(self) -> List[str]:
+        try:
+            async with self.ensure_initialized():
+                models = await self._client.models.list()
+                return [model.id for model in models.data]
+        except Exception as e:
+            self.logger.warning(f"Failed to get model list: {e}")
+            # 回退到从types.py获取支持的模型
+            return await super().list_models()

@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "--M", "16384",
+                "--N", "16384",
+                "--K", "8192",
+                "--i", "10",
+                "--wmma"
+            ]
+        }
+    ]
+}

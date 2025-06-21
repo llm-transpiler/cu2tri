@@ -1,0 +1,13 @@
+*/build
+**/build
+*/build_*/
+**/build_*/
+build/*
+build_*/
+**__pycache__**
+dev_debug/
+dev/
+*/dev/*
+*logs/*
+.env
+*deprecated*
