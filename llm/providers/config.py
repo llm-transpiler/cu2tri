@@ -14,6 +14,8 @@ from .types import PlatformType
 DEFAULT_TIMEOUT = 300
 DEFAULT_MAX_RETRIES = 5
 DEFAULT_CONFIG_PATH = "llm_providers_config.yaml"
+DEFAULT_MAX_TOKENS = 4096 * 4
+DEFAULT_TEMPERATURE = 0.3
 
 @dataclass
 class PlatformConfig:
@@ -88,7 +90,7 @@ class PlatformConfig:
         
         # 从types.py获取默认的base_url
         try:
-            from .types import get_platform_info
+            from .registry import get_platform_info
             platform_type = PlatformType(str(self.platform_type))
             platform_info = get_platform_info(platform_type)
             return platform_info.base_url if platform_info else None

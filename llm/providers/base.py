@@ -67,7 +67,7 @@ class ChatMessage:
     role: str  # user, assistant, system
     content: str
     metadata: Dict[str, Any] = field(default_factory=dict)
-    timestamp: str = datetime.now().strftime('%Y%m%d_%H%M%S')
+    timestamp: str = field(default_factory=lambda: datetime.now().strftime('%Y%m%d_%H%M%S'))
     
     def __post_init__(self):
         if not isinstance(self.metadata, dict):
@@ -116,6 +116,9 @@ class StreamChunk:
     def __post_init__(self):
         if not isinstance(self.metadata, dict):
             self.metadata = {}
+    
+    def __str__(self) -> str:
+        return self.content
 
 # ============ 异常处理 ============
 
@@ -162,14 +165,82 @@ class ServiceUnavailableError(ProviderError):
     """服务不可用错误"""
     pass
 
+# ============ 统一工具方法 ============
+
+class RequestValidator:
+    """请求验证器"""
+    
+    @staticmethod
+    def validate_and_prepare_request(request: ChatRequest, config: 'PlatformConfig') -> List[str]:
+        """验证并准备请求"""
+        errors = []
+        
+        if not request.messages:
+            errors.append("Messages list cannot be empty")
+        
+        # 设置默认值
+        RequestValidator._set_default_values(request, config)
+        
+        # 验证参数范围
+        errors.extend(RequestValidator._validate_parameters(request))
+        
+        return errors
+    
+    @staticmethod
+    def _set_default_values(request: ChatRequest, config: 'PlatformConfig'):
+        """设置默认值"""
+        if request.model is None:
+            preferred_models = getattr(config, 'preferred_models', [])
+            if preferred_models:
+                request.model = preferred_models[0]
+        from .config import DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE
+        if request.max_tokens is None:
+            request.max_tokens = getattr(config, 'max_tokens', DEFAULT_MAX_TOKENS)
+        
+        if request.temperature is None:
+            request.temperature = getattr(config, 'temperature', DEFAULT_TEMPERATURE)
+    
+    @staticmethod
+    def _validate_parameters(request: ChatRequest) -> List[str]:
+        """验证参数范围"""
+        errors = []
+        
+        if request.model is None:
+            errors.append("Model name must be specified")
+        
+        if request.temperature is not None and not (0 <= request.temperature <= 2):
+            errors.append("Temperature must be between 0 and 2")
+        
+        if request.max_tokens is not None and request.max_tokens <= 0:
+            errors.append("Max tokens must be greater than 0")
+        
+        return errors
+
+class ExceptionConverter:
+    """异常转换器"""
+    
+    @staticmethod
+    def convert_to_provider_error(e: Exception, platform_type: PlatformType) -> ProviderError:
+        """将异常转换为统一的Provider错误"""
+        error_str = str(e).lower()
+        
+        if "unauthorized" in error_str or "invalid api key" in error_str or "401" in error_str:
+            return AuthenticationError(f"Authentication failed: {e}", platform_type)
+        elif "rate limit" in error_str or "429" in error_str:
+            return RateLimitError(f"Rate limit exceeded: {e}", platform_type)
+        elif "not found" in error_str or "404" in error_str or "model" in error_str:
+            return ModelNotFoundError(f"Model not found: {e}", platform_type)
+        elif "timeout" in error_str or "network" in error_str:
+            return NetworkError(f"Network error: {e}", platform_type)
+        elif "503" in error_str or "service unavailable" in error_str:
+            return ServiceUnavailableError(f"Service unavailable: {e}", platform_type)
+        else:
+            return ProviderError(f"Request failed: {e}", platform_type)
+
 # ============ Provider基类设计 ============
 
 class Provider(ABC):
-    """统一的LLM提供商抽象基类
-    
-    支持三层架构：平台 → 厂商 → 模型
-    提供统一的接口和生命周期管理
-    """
+    """统一的LLM提供商抽象基类"""
     
     def __init__(self, config: 'PlatformConfig', logger: Optional[logging.Logger] = None):
         self.config = config
@@ -269,56 +340,33 @@ class Provider(ABC):
     # ============ 可选接口 ============
     
     async def list_models(self) -> List[str]:
-        """列出可用模型（可选实现）"""
-        from .types import get_supported_models
+        """列出可用模型"""
+        from .registry import get_provider_registry
         try:
-            return get_supported_models(self.platform_type)
+            registry = get_provider_registry()
+            return registry.get_models_by_platform(self.platform_type)
         except:
             return []
     
-    async def get_model_info(self, model: str) -> ModelSpec:
-        """获取模型信息（可选实现）"""
-        from .types import get_model_spec
-        spec = get_model_spec(model)
-        return spec
+    async def get_model_info(self, model: str) -> Optional[ModelSpec]:
+        """获取模型信息"""
+        from .registry import get_provider_registry
+        try:
+            registry = get_provider_registry()
+            return registry.get_model_spec(model)
+        except:
+            return None
     
     # ============ 验证和健康检查 ============
+    
     def validate_request(self, request: ChatRequest) -> List[str]:
-        """验证请求（可重写）"""
-        errors = []
-        
-        if not request.messages:
-            errors.append("Messages list cannot be empty")
-        
-        # 设置默认模型
-        if request.model is None:
-            default_model = getattr(self.config, 'preferred_models', [])
-            if default_model:
-                request.model = default_model[0]
-            else:
-                errors.append("Model name must be specified")
-        
-        # 设置默认参数
-        if request.max_tokens is None:
-            request.max_tokens = getattr(self.config, 'max_tokens', 4096 * 4)
-        
-        if request.temperature is None:
-            request.temperature = getattr(self.config, 'temperature', 0.3)
-        
-        # 验证参数范围
-        if request.temperature is not None and not (0 <= request.temperature <= 2):
-            errors.append("Temperature must be between 0 and 2")
-        
-        if request.max_tokens is not None and request.max_tokens <= 0:
-            errors.append("Max tokens must be greater than 0")
-        
-        return errors
+        """验证请求"""
+        return RequestValidator.validate_and_prepare_request(request, self.config)
     
     async def health_check(self) -> bool:
         """健康检查"""
         try:
             async with self.ensure_initialized():
-                # 发送简单请求测试连接
                 test_request = ChatRequest(
                     messages=[ChatMessage(role="user", content="Hello")],
                     max_tokens=1
@@ -330,6 +378,10 @@ class Provider(ABC):
             return False
     
     # ============ 工具方法 ============
+    
+    def convert_exception(self, e: Exception) -> ProviderError:
+        """转换异常"""
+        return ExceptionConverter.convert_to_provider_error(e, self.platform_type)
     
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.name})"
@@ -350,43 +402,33 @@ class OpenAICompatibleProvider(Provider):
         try:
             import openai
         except ImportError:
-            raise ProviderError(
-                "需要安装openai库: pip install openai",
-                self.platform_type
-            )
+            raise ProviderError("Need to install openai library: pip install openai", self.platform_type)
         
-        # 获取平台信息以设置正确的base_url
-        from .types import get_platform_info
+        # 获取配置
         from .config import DEFAULT_TIMEOUT
-        platform_info = get_platform_info(self.platform_type)
         
         client_kwargs = {
             "timeout": getattr(self.config, 'timeout', DEFAULT_TIMEOUT),
+            "api_key": getattr(self.config, 'api_key', "dummy-key"),
         }
         
-        # 设置API Key
-        if getattr(self.config, 'api_key', None):
-            client_kwargs["api_key"] = self.config.api_key
-        else:
-            # 某些本地服务可能不需要API Key
-            client_kwargs["api_key"] = "dummy-key"
-        
         # 设置base_url
-        base_url = getattr(self.config, 'api_base', None)
-        if not base_url and platform_info:
-            base_url = platform_info.base_url or platform_info.http_base_url
-        if base_url:
-            client_kwargs["base_url"] = base_url
+        if hasattr(self.config, 'api_base') and self.config.api_base:
+            client_kwargs["base_url"] = self.config.api_base
+        else:
+            # 从注册中心获取默认base_url
+            from .registry import get_provider_registry
+            registry = get_provider_registry()
+            platform_info = registry.get_platform_info(self.platform_type)
+            if platform_info and platform_info.base_url:
+                client_kwargs["base_url"] = platform_info.base_url
         
         self._client = openai.AsyncOpenAI(**client_kwargs)
-        self.logger.debug(f"OpenAI client initialized: base_url={client_kwargs.get('base_url', "https://api.openai.com/v1")}")
+        self.logger.debug(f"OpenAI client initialized: base_url={client_kwargs.get('base_url', 'https://api.openai.com/v1')}")
     
     def _prepare_messages(self, messages: List[ChatMessage]) -> List[Dict[str, str]]:
         """准备OpenAI格式的消息"""
-        return [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
-        ]
+        return [{"role": msg.role, "content": msg.content} for msg in messages]
     
     def _prepare_request_params(self, request: ChatRequest) -> Dict[str, Any]:
         """准备请求参数"""
@@ -396,23 +438,18 @@ class OpenAICompatibleProvider(Provider):
             "stream": request.stream,
         }
         
-        if request.max_tokens is not None:
-            params["max_tokens"] = request.max_tokens
-        if request.temperature is not None:
-            params["temperature"] = request.temperature
-        if request.top_p is not None:
-            params["top_p"] = request.top_p
-        if request.frequency_penalty is not None:
-            params["frequency_penalty"] = request.frequency_penalty
-        if request.presence_penalty is not None:
-            params["presence_penalty"] = request.presence_penalty
+        # 添加可选参数
+        optional_params = ['max_tokens', 'temperature', 'top_p', 'frequency_penalty', 'presence_penalty']
+        for param in optional_params:
+            value = getattr(request, param, None)
+            if value is not None:
+                params[param] = value
         
         return params
     
     async def chat(self, request: ChatRequest) -> ChatResponse:
         """发送聊天请求"""
         async with self.ensure_initialized():
-            # 验证请求
             errors = self.validate_request(request)
             if errors:
                 raise ValidationError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
@@ -424,7 +461,6 @@ class OpenAICompatibleProvider(Provider):
                 params["stream"] = False
                 
                 response = await self._client.chat.completions.create(**params)
-                
                 processing_time = time.time() - start_time
                 
                 return ChatResponse(
@@ -437,12 +473,33 @@ class OpenAICompatibleProvider(Provider):
                 
             except Exception as e:
                 self.logger.error(f"Chat request failed: {e}")
-                raise self._convert_exception(e)
+                raise self.convert_exception(e)
     
+    async def stream_chat_completion(self, request: ChatRequest) -> str:
+        """流式聊天请求（返回完整内容）"""
+        async with self.ensure_initialized():
+            errors = self.validate_request(request)
+            if errors:
+                raise ValidationError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
+            
+            try:
+                params = self._prepare_request_params(request)
+                params["stream"] = True
+                
+                stream = await self._client.chat.completions.create(**params)
+                content = ""
+                async for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        content += chunk.choices[0].delta.content
+                return content
+                
+            except Exception as e:
+                self.logger.error(f"Stream request failed: {e}")
+                raise self.convert_exception(e)
+
     async def stream_chat(self, request: ChatRequest) -> AsyncGenerator[StreamChunk, None]:
         """流式聊天请求"""
         async with self.ensure_initialized():
-            # 验证请求
             errors = self.validate_request(request)
             if errors:
                 raise ValidationError(f"Request validation failed: {', '.join(errors)}", self.platform_type)
@@ -462,31 +519,4 @@ class OpenAICompatibleProvider(Provider):
                         
             except Exception as e:
                 self.logger.error(f"Stream request failed: {e}")
-                raise self._convert_exception(e)
-    
-    def _convert_exception(self, e: Exception) -> ProviderError:
-        """Convert exceptions to unified error types"""
-        error_str = str(e).lower()
-        
-        if "unauthorized" in error_str or "invalid api key" in error_str or "401" in error_str:
-            return AuthenticationError(f"Authentication failed: {e}", self.platform_type)
-        elif "rate limit" in error_str or "429" in error_str:
-            return RateLimitError(f"Rate limit exceeded: {e}", self.platform_type)
-        elif "model" in error_str and ("not found" in error_str or "404" in error_str):
-            return ModelNotFoundError(f"Model not found: {e}", self.platform_type)
-        elif "timeout" in error_str or "connection" in error_str:
-            return NetworkError(f"Network error: {e}", self.platform_type)
-        elif "500" in error_str or "502" in error_str or "503" in error_str:
-            return ServiceUnavailableError(f"Service unavailable: {e}", self.platform_type)
-        else:
-            return ProviderError(f"Request failed: {e}", self.platform_type)
-    
-    async def list_models(self) -> List[str]:
-        try:
-            async with self.ensure_initialized():
-                models = await self._client.models.list()
-                return [model.id for model in models.data]
-        except Exception as e:
-            self.logger.warning(f"Failed to get model list: {e}")
-            # 回退到从types.py获取支持的模型
-            return await super().list_models()
+                raise self.convert_exception(e)

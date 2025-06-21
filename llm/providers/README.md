@@ -42,15 +42,20 @@ llm/providers/
 ### 基本使用
 
 ```python
+import os
+import dotenv
+
+dotenv.load_dotenv()
+
 from llm.providers import (
     PlatformConfig, PlatformType, 
-    ProviderFactory, get_config_manager
+    ProviderFactory
 )
 
 # 1. 创建配置
 config = PlatformConfig(
-    platform_type=PlatformType.OPENAI_OFFICIAL,
-    api_key="your-api-key",
+    platform_type=PlatformType.OPENROUTER,
+    api_key=os.getenv("OPENROUTER_API_KEY"),
     preferred_models=["gpt-4o", "gpt-4o-mini"],
     temperature=0.7,
     max_tokens=4096
@@ -59,22 +64,32 @@ config = PlatformConfig(
 # 2. 创建提供商
 provider = ProviderFactory.create_provider(config)
 
-# 3. 初始化并使用
-await provider.initialize()
+async def main():
+    # 3. 初始化并使用
+    await provider.initialize()
 
-# 4. 发送请求
-from llm.providers import ChatMessage, ChatRequest
-request = ChatRequest(
-    messages=[ChatMessage(role="user", content="Hello!")],
-    model="gpt-4o-mini"
-)
+    # 4. 发送请求
+    from llm.providers import ChatMessage, ChatRequest
+    request = ChatRequest(
+        messages=[ChatMessage(role="user", content="Hello!")],
+        model="gpt-4o-mini"
+    )
 
-response = await provider.chat(request)
-print(response.content)
+    response = await provider.chat(request)
+    print(response.content)
 
-# 5. 流式请求
-async for chunk in provider.stream_chat(request):
-    print(chunk.content, end="")
+    # 5. 流式请求
+    async for chunk in provider.stream_chat(request):
+        print(chunk, end="", flush=True)
+    print()
+    
+    # 流式请求, 一次性全部返回
+    response = await provider.stream_chat_completion(request)
+    print(response)
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
 ```
 
 ### 使用配置管理器
@@ -97,6 +112,30 @@ provider_manager.load_from_config_manager()
 # 初始化并使用
 await provider_manager.initialize_provider("openai")
 provider = provider_manager.get_initialized_provider("openai")
+```
+
+### 查询可用的平台和模型
+
+```python
+from llm.providers import get_provider_registry, PlatformType, VendorType
+
+# 获取注册中心
+registry = get_provider_registry()
+
+# 查看所有可用平台
+print("可用平台:", [p.value for p in registry.list_platforms()])
+
+# 查看支持思维链的模型
+thinking_models = registry.get_thinking_models()
+print("思维链模型:", thinking_models[:5])  # 显示前5个
+
+# 查看特定平台的模型
+openrouter_models = registry.list_models(platform_type=PlatformType.OPENROUTER)
+print("OpenRouter模型:", openrouter_models[:5])  # 显示前5个
+
+# 获取统计信息
+stats = registry.get_statistics()
+print(f"总计: {stats['total_platforms']}个平台, {stats['total_models']}个模型")
 ```
 
 ## 🔧 配置系统
@@ -218,6 +257,70 @@ class Provider(ABC):
     def validate_request(request: ChatRequest) -> List[str]
 ```
 
+## 🗂️ 注册中心系统
+
+### 统一的信息查询
+
+```python
+from llm.providers import get_provider_registry, PlatformType, VendorType, PlatformCategory
+
+# 获取注册中心
+registry = get_provider_registry()
+
+# 查询平台信息
+platforms = registry.list_platforms()
+official_platforms = registry.list_platforms(PlatformCategory.OFFICIAL)
+platform_info = registry.get_platform_info(PlatformType.OPENROUTER)
+
+# 查询模型信息
+all_models = registry.list_models()
+deepseek_models = registry.list_models(vendor=VendorType.DEEPSEEK)
+openrouter_models = registry.list_models(platform_type=PlatformType.OPENROUTER)
+
+# 查询特定能力的模型
+thinking_models = registry.get_thinking_models()
+vision_models = registry.get_vision_models()
+function_calling_models = registry.get_function_calling_models()
+
+# 获取统计信息
+stats = registry.get_statistics()
+summary = registry.get_platform_summary(PlatformType.GOOGLE_OFFICIAL)
+```
+
+### 便捷函数
+
+```python
+from llm.providers.registry import (
+    get_platform_info, list_platforms, list_models
+)
+
+# 直接使用便捷函数
+platform_info = get_platform_info(PlatformType.DEEPSEEK_OFFICIAL)
+official_platforms = list_platforms(PlatformCategory.OFFICIAL)
+thinking_models = list_models(thinking_only=True)
+```
+
+### 与工厂管理器整合
+
+注册中心与工厂管理器无缝整合，提供统一的访问体验：
+
+```python
+from llm.providers import get_provider_manager
+
+manager = get_provider_manager()
+
+# 通过管理器访问注册中心功能
+platforms = manager.list_available_platforms()
+models = manager.list_available_models(platform_type=PlatformType.OPENROUTER)
+thinking_models = manager.get_thinking_models()
+vision_models = manager.get_vision_models()
+
+# 获取平台详细信息
+platform_info = manager.get_platform_info(PlatformType.GOOGLE_OFFICIAL)
+summary = manager.get_platform_summary(PlatformType.OPENROUTER)
+stats = manager.get_registry_statistics()
+```
+
 ## 🏭 工厂模式
 
 ### ProviderFactory
@@ -231,6 +334,11 @@ provider = ProviderFactory.create_provider(config)
 
 # 从配置名创建
 provider = ProviderFactory.create_from_config_name("openai")
+
+# 查询可用平台和模型
+platforms = ProviderFactory.list_available_platforms()
+platform_info = ProviderFactory.get_platform_info(PlatformType.OPENAI_OFFICIAL)
+models = ProviderFactory.get_supported_models(PlatformType.OPENROUTER)
 ```
 
 ### ProviderManager
@@ -246,6 +354,12 @@ await manager.initialize_provider("openai")
 
 # 获取提供商
 provider = manager.get_initialized_provider("openai")
+
+# 注册中心功能
+platforms = manager.list_available_platforms()
+thinking_models = manager.get_thinking_models()
+vision_models = manager.get_vision_models()
+stats = manager.get_registry_statistics()
 
 # 生命周期管理
 async with manager:
@@ -397,8 +511,10 @@ from llm.providers import Message, ChatHistory, Part
 
 - [ ] 支持更多LLM平台
 - [ ] 函数调用功能增强
+- [ ] 模型智能推荐系统
+- [ ] 性能监控和分析
+- [ ] 自动故障转移
 - [ ] 多模态能力扩展
-- [ ] 性能监控和指标
 - [ ] 缓存和批处理优化
 
 ---

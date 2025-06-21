@@ -6,17 +6,8 @@ LLM提供商模块 - 三层架构
 
 # 核心类型定义
 from .types import (
-    # 平台相关
-    PlatformType, PlatformCategory, PlatformInfo, PLATFORM_REGISTRY,
-    # 厂商相关  
-    VendorType, VENDOR_MODEL_REGISTRY,
-    # 模型相关
-    ModelSpec,
-    # SDK相关
-    SDKType, SDK_REGISTRY,
-    # 工具函数
-    get_platform_info, get_model_spec, get_supported_models,
-    get_platforms_by_category, get_vendors_by_platform
+    PlatformType, PlatformCategory, PlatformInfo,
+    VendorType, ModelSpec, SDKType,
 )
 
 # 配置系统
@@ -27,12 +18,15 @@ from .config import (
 
 # 基础接口
 from .base import (
-    # 新统一接口
+    # 统一数据模型
     ChatMessage, ChatRequest, ChatResponse, StreamChunk,
+    # Provider基类
     Provider, OpenAICompatibleProvider,
     # 异常类
     ProviderError, AuthenticationError, RateLimitError, 
-    ModelNotFoundError, ValidationError,
+    ModelNotFoundError, ValidationError, NetworkError, ServiceUnavailableError,
+    # 工具类
+    RequestValidator, ExceptionConverter,
     # 兼容性接口
     FileManager, Message, ChatHistory
 )
@@ -45,10 +39,10 @@ from .factory import (
 # 注册中心
 from .registry import (
     ProviderRegistry, get_provider_registry,
-    get_platform_info as registry_get_platform_info, 
-    list_platforms as registry_list_platforms, 
-    list_models as registry_list_models, 
-    # recommend_model
+    # 便捷函数
+    get_platform_info, list_platforms, list_models,
+    # 注册表
+    PLATFORM_REGISTRY, VENDOR_MODEL_REGISTRY, SDK_REGISTRY
 )
 
 # 具体实现（自动注册）
@@ -60,14 +54,11 @@ from ..history.parts import Part, TextPart, ThoughtPart, ContentPart, FilePart, 
 # 导出所有公共接口
 __all__ = [
     # === 核心类型 ===
-    'PlatformType', 'PlatformCategory', 'PlatformInfo', 'PLATFORM_REGISTRY',
-    'VendorType', 'VENDOR_MODEL_REGISTRY',
-    'ModelSpec',
-    'SDKType', 'SDK_REGISTRY',
+    'PlatformType', 'PlatformCategory', 'PlatformInfo',
+    'VendorType', 'ModelSpec', 'SDKType',
     
-    # === 工具函数 ===
-    'get_platform_info', 'get_model_spec', 'get_supported_models',
-    'get_platforms_by_category', 'get_vendors_by_platform',
+    # === 注册表 ===
+    'PLATFORM_REGISTRY', 'VENDOR_MODEL_REGISTRY', 'SDK_REGISTRY',
     
     # === 配置系统 ===
     'ConfigManager', 'PlatformConfig', 'LLMConfig',
@@ -77,16 +68,19 @@ __all__ = [
     'ChatMessage', 'ChatRequest', 'ChatResponse', 'StreamChunk',
     'Provider', 'OpenAICompatibleProvider',
     
+    # === 工具类 ===
+    'RequestValidator', 'ExceptionConverter',
+    
     # === 异常处理 ===
     'ProviderError', 'AuthenticationError', 'RateLimitError',
-    'ModelNotFoundError', 'ValidationError',
+    'ModelNotFoundError', 'ValidationError', 'NetworkError', 'ServiceUnavailableError',
     
     # === 工厂管理 ===
     'ProviderFactory', 'ProviderManager', 'get_provider_manager',
     
     # === 注册中心 ===
-    'ProviderRegistry', 'get_provider_registry', #'recommend_model',
-    'registry_get_platform_info', 'registry_list_platforms', 'registry_list_models',
+    'ProviderRegistry', 'get_provider_registry',
+    'get_platform_info', 'list_platforms', 'list_models',
     
     # === 兼容性 ===
     'FileManager', 'Message', 'ChatHistory',

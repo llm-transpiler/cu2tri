@@ -8,50 +8,278 @@ from dataclasses import dataclass
 
 from .types import (
     PlatformType, PlatformInfo, VendorType, ModelSpec, PlatformCategory, SDKType,
-    PLATFORM_REGISTRY, VENDOR_MODEL_REGISTRY, SDK_REGISTRY,
-    get_platform_info as _get_platform_info,
-    get_model_spec as _get_model_spec,
-    get_supported_models as _get_supported_models,
-    get_platforms_by_category as _get_platforms_by_category,
-    get_vendors_by_platform as _get_vendors_by_platform,
 )
+
+# 平台注册表
+PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
+    # ============ 聚合平台 ============
+    PlatformType.OPENROUTER: PlatformInfo(
+        type_=PlatformType.OPENROUTER,
+        category=PlatformCategory.AGGREGATOR,
+        name="OpenRouter",
+        description="OpenRouter aggregation platform supporting multi-vendor models",
+        http_base_url="https://openrouter.ai/api/v1",
+        base_url="https://openrouter.ai/api/v1",
+        supported_vendors={
+            VendorType.OPENAI, VendorType.DEEPSEEK, VendorType.OPENROUTER_DEEPSEEK,
+            VendorType.GOOGLE,VendorType.ANTHROPIC
+        },
+        supported_sdks={SDKType.OPENAI},
+        model_name_format="{vendor}/{model}"
+    ),
+    
+    # ============ 模型厂商官方部署平台 ============
+    PlatformType.OPENAI_OFFICIAL: PlatformInfo(
+        type_=PlatformType.OPENAI_OFFICIAL,
+        category=PlatformCategory.OFFICIAL,
+        name="OpenAI Official",
+        description="OpenAI官方API",
+        http_base_url="https://api.openai.com/v1",
+        base_url="https://api.openai.com/v1",
+        supported_vendors={VendorType.OPENAI},
+        supported_sdks={SDKType.OPENAI},
+        model_name_format="{model}"
+    ),
+    
+    PlatformType.ANTHROPIC_OFFICIAL: PlatformInfo(
+        type_=PlatformType.ANTHROPIC_OFFICIAL,
+        category=PlatformCategory.OFFICIAL,
+        name="Anthropic Official",
+        description="Anthropic官方API (Claude)",
+        http_base_url="https://api.anthropic.com/v1/", # https://docs.anthropic.com/en/api/overview#curl
+        base_url="https://api.anthropic.com/v1/", # https://docs.anthropic.com/en/api/openai-sdk#getting-started-with-the-openai-sdk
+        supported_vendors={VendorType.ANTHROPIC},
+        supported_sdks={SDKType.ANTHROPIC, SDKType.OPENAI},
+        model_name_format="{model}"
+    ),
+    
+    PlatformType.GOOGLE_OFFICIAL: PlatformInfo(
+        type_=PlatformType.GOOGLE_OFFICIAL,
+        category=PlatformCategory.OFFICIAL,
+        name="Google Official",
+        description="Google genai official API",
+        http_base_url="https://generativelanguage.googleapis.com/v1beta", # https://ai.google.dev/gemini-api/docs/quickstart#rest
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/", # https://ai.google.dev/gemini-api/docs/openai?hl=zh-cn
+        supported_vendors={VendorType.GOOGLE},
+        supported_sdks={SDKType.GENAI, SDKType.OPENAI},
+        model_name_format="{model}"
+    ),
+    
+    PlatformType.DEEPSEEK_OFFICIAL: PlatformInfo(
+        type_=PlatformType.DEEPSEEK_OFFICIAL,
+        category=PlatformCategory.OFFICIAL,
+        name="DeepSeek Official",
+        description="DeepSeek official API",
+        http_base_url="https://api.deepseek.com", # https://api-docs.deepseek.com/zh-cn/
+        base_url="https://api.deepseek.com", # https://api-docs.deepseek.com/zh-cn/
+        supported_vendors={VendorType.DEEPSEEK},
+        supported_sdks={SDKType.OPENAI},
+        model_name_format="{model}"
+    ),
+    
+    PlatformType.ZHIPU_OFFICIAL: PlatformInfo(
+        type_=PlatformType.ZHIPU_OFFICIAL,
+        category=PlatformCategory.OFFICIAL,
+        name="Zhipu AI Official",
+        description="智谱AI官方API",
+        http_base_url="https://open.bigmodel.cn/api/paas/v4/",
+        base_url="https://open.bigmodel.cn/api/paas/v4/",
+        supported_vendors={VendorType.ZHIPU},
+        supported_sdks={SDKType.OPENAI},
+        model_name_format="{model}"
+    ),
+    
+    # ============ 本地平台 ============
+    PlatformType.VLLM: PlatformInfo(
+        type_=PlatformType.VLLM,
+        category=PlatformCategory.LOCAL,
+        name="vLLM",
+        description="vLLM local inference server",
+        http_base_url="http://localhost:8000/v1",
+        base_url="http://localhost:8000/v1",
+        supported_vendors=set(),  # vLLM 可以运行任何厂商的模型
+        supported_sdks={SDKType.OPENAI, SDKType.VLLM},
+        model_name_format="{model}"
+    ),
+}
+
+# SDKType -> PlatformType
+SDK_REGISTRY: Dict[SDKType, List[PlatformType]] = {
+    SDKType.OPENAI: [PlatformType.OPENAI_OFFICIAL, PlatformType.ANTHROPIC_OFFICIAL, PlatformType.GOOGLE_OFFICIAL, PlatformType.DEEPSEEK_OFFICIAL, PlatformType.OPENROUTER],
+    SDKType.ANTHROPIC: [PlatformType.ANTHROPIC_OFFICIAL],
+    SDKType.GENAI: [PlatformType.GOOGLE_OFFICIAL],
+    SDKType.VLLM: [PlatformType.VLLM],
+}
+
+# ================== Per vendor ==================
+
+GEMINI_MODEL_REGISTRY: List[ModelSpec] = [
+    ModelSpec(
+        name="gemini-2.5-pro",
+        vendor=VendorType.GOOGLE,
+        is_thinking=True,
+        input_token_limit=1048576, # 1M
+        output_token_limit=65536, # 66K
+        supports_streaming_output=True,
+        supports_picture_input=True,
+        supports_structured_output=True,
+        supports_pdf_input=True,
+        supports_audio_input=True,
+        supports_video_input=True,
+        supports_function_calling_input=True,
+    ),
+    ModelSpec(
+        name="gemini-2.5-flash",
+        vendor=VendorType.GOOGLE,
+        is_thinking=True,
+        input_token_limit=1048576, # 1M
+        output_token_limit=65536, # 66K
+        supports_streaming_output=True,
+        supports_picture_input=True,
+        supports_structured_output=True,
+        supports_pdf_input=True,
+        supports_audio_input=True,
+        supports_video_input=False,
+        supports_function_calling_input=True,
+    ),
+]
+
+OPENAI_MODEL_REGISTRY: List[ModelSpec] = [
+    ModelSpec(
+        name="gpt-o3-mini",
+        vendor=VendorType.OPENAI,
+        is_thinking=True,
+        supports_picture_input=True
+    ),
+    ModelSpec(
+        name="gpt-o3",
+        vendor=VendorType.OPENAI,
+        is_thinking=True,
+        supports_picture_input=True
+    ),
+    ModelSpec(
+        name="gpt-4.1",
+        vendor=VendorType.OPENAI,
+        is_thinking=True,
+        supports_picture_input=True
+    ),
+    ModelSpec(
+        name="gpt-4o",
+        vendor=VendorType.OPENAI,
+        supports_picture_input=True,
+        aliases=["gpt-4-omni"]
+    ),
+    ModelSpec(
+        name="gpt-4o-mini",
+        vendor=VendorType.OPENAI,
+        supports_picture_input=True,
+        aliases=["gpt-4-omni-mini"]
+    ),
+]
+
+ANTHROPIC_MODEL_REGISTRY: List[ModelSpec] = [
+    ModelSpec(
+        name="claude-4-sonnet",
+        vendor=VendorType.ANTHROPIC,
+        is_thinking=True,
+        supports_picture_input=True,
+    ),
+    ModelSpec(
+        name="claude-4-opus",
+        vendor=VendorType.ANTHROPIC,
+        is_thinking=True,
+        supports_picture_input=True,
+    ),
+]
+
+DEEPSEEK_MODEL_REGISTRY: List[ModelSpec] = [
+    ModelSpec(
+        name="deepseek-r1-0528",
+        vendor=VendorType.DEEPSEEK,
+        is_thinking=True,
+    ),
+    ModelSpec(
+        name="deepseek-v3-0324",
+        vendor=VendorType.DEEPSEEK,
+    ),
+]
+
+# VendorType -> List[ModelSpec]
+OPENROUTER_EXCLUSIVE_MODEL_REGISTRY: List[ModelSpec] = [
+    ModelSpec(
+        name="deepseek-r1-0528:free",
+        vendor=VendorType.OPENROUTER_DEEPSEEK,
+    ),
+    ModelSpec(
+        name="deepseek-chat-v3-0324:free",
+        vendor=VendorType.OPENROUTER_DEEPSEEK,
+    ),
+]
+
+# 构建厂商模型注册表
+def _build_vendor_model_registry() -> Dict[VendorType, List[ModelSpec]]:
+    """
+    构建厂商模型注册表
+    return {
+        VendorType.OPENAI: OPENAI_MODEL_REGISTRY,
+        VendorType.ANTHROPIC: ANTHROPIC_MODEL_REGISTRY,
+        VendorType.GOOGLE: GEMINI_MODEL_REGISTRY,
+        VendorType.DEEPSEEK: DEEPSEEK_MODEL_REGISTRY,
+        VendorType.OPENROUTER_DEEPSEEK: OPENROUTER_EXCLUSIVE_MODEL_REGISTRY,
+    }
+    """
+    registry = {}
+    model_lists = [
+        OPENAI_MODEL_REGISTRY,
+        ANTHROPIC_MODEL_REGISTRY,
+        GEMINI_MODEL_REGISTRY,
+        DEEPSEEK_MODEL_REGISTRY,
+        OPENROUTER_EXCLUSIVE_MODEL_REGISTRY,
+    ]
+    
+    for model_list in model_lists:
+        for spec in model_list:
+            if spec.vendor not in registry:
+                registry[spec.vendor] = []
+            registry[spec.vendor].append(spec)
+    
+    return registry
+
+VENDOR_MODEL_REGISTRY = _build_vendor_model_registry()
+
 
 class ProviderRegistry:
     """LLM提供商注册中心 - 统一管理所有注册信息"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self._initialized = False
-    
-    def initialize(self):
-        """初始化注册中心"""
-        if self._initialized:
-            return
         
-        self.logger.info("初始化LLM提供商注册中心...")
-        self.logger.info(f"已注册 {len(PLATFORM_REGISTRY)} 个平台")
-        self.logger.info(f"已注册 {len(VENDOR_MODEL_REGISTRY)} 个厂商")
+        # 直接在构造函数中完成初始化
+        self.logger.info("Initializing LLM provider registry...")
+        self.logger.info(f"Registered {len(PLATFORM_REGISTRY)} platforms")
+        self.logger.info(f"Registered {len(VENDOR_MODEL_REGISTRY)} vendors")
         
         total_models = sum(len(models) for models in VENDOR_MODEL_REGISTRY.values())
-        self.logger.info(f"已注册 {total_models} 个模型")
-        
-        self._initialized = True
+        self.logger.info(f"Registered {total_models} models")
     
     # ============ 平台信息查询 ============
     
     def get_platform_info(self, platform_type: Union[str, PlatformType]) -> Optional[PlatformInfo]:
         """获取平台信息"""
-        return _get_platform_info(platform_type)
+        if platform_type is None:
+            return None
+        if isinstance(platform_type, str):
+            try:
+                platform_type = PlatformType(platform_type)
+            except ValueError:
+                return None
+        return PLATFORM_REGISTRY.get(platform_type)
     
     def list_platforms(self, category: Optional[PlatformCategory] = None) -> List[PlatformType]:
-        """列出平台类型
-        
-        Args:
-            category: 可选的平台类别筛选
-        """
+        """列出平台类型"""
         if category is None:
             return list(PLATFORM_REGISTRY.keys())
-        return _get_platforms_by_category(category)
+        return [info.type_ for info in PLATFORM_REGISTRY.values() if info.category == category]
     
     def get_platform_categories(self) -> List[PlatformCategory]:
         """获取所有平台类别"""
@@ -65,36 +293,40 @@ class ProviderRegistry:
     
     def get_model_spec(self, model_name: str, vendor: Optional[VendorType] = None) -> Optional[ModelSpec]:
         """获取模型规格"""
-        return _get_model_spec(model_name, vendor)
+        if not model_name:
+            return None
+        
+        # 如果指定了厂商，直接在该厂商下查找
+        if vendor and vendor in VENDOR_MODEL_REGISTRY:
+            for spec in VENDOR_MODEL_REGISTRY[vendor]:
+                if spec.name == model_name or model_name in spec.aliases:
+                    return spec
+        
+        # 在所有厂商中查找
+        for vendor_models in VENDOR_MODEL_REGISTRY.values():
+            for spec in vendor_models:
+                if spec.name == model_name or model_name in spec.aliases:
+                    return spec
+        
+        return None
     
     def list_vendors(self, platform_type: Optional[PlatformType] = None) -> List[VendorType]:
-        """列出厂商
-        
-        Args:
-            platform_type: 可选的平台类型筛选
-        """
+        """列出厂商"""
         if platform_type is None:
             return list(VENDOR_MODEL_REGISTRY.keys())
         
-        return list(_get_vendors_by_platform(platform_type))
+        platform_info = self.get_platform_info(platform_type)
+        return list(platform_info.supported_vendors) if platform_info else []
     
     def list_models(self, vendor: Optional[VendorType] = None, 
                    platform_type: Optional[PlatformType] = None,
                    thinking_only: bool = False) -> List[str]:
-        """列出模型
-        
-        Args:
-            vendor: 可选的厂商筛选
-            platform_type: 可选的平台类型筛选  
-            thinking_only: 仅返回思维链模型
-        """
-        models = []
-        
+        """列出模型"""
         if platform_type:
-            # 基于平台的格式化模型名称
-            return _get_supported_models(platform_type, vendor)
+            return self._get_platform_models(platform_type, vendor, thinking_only)
         
         # 原始模型名称
+        models = []
         vendor_models = VENDOR_MODEL_REGISTRY
         if vendor:
             vendor_models = {vendor: vendor_models.get(vendor, [])}
@@ -112,8 +344,37 @@ class ProviderRegistry:
         return VENDOR_MODEL_REGISTRY.get(vendor, [])
     
     def get_models_by_platform(self, platform_type: PlatformType, vendor: Optional[VendorType] = None) -> List[str]:
-        """获取指定平台支持的模型列表（格式化后的）"""
-        return _get_supported_models(platform_type, vendor)
+        """获取指定平台支持的模型列表"""
+        return self._get_platform_models(platform_type, vendor, False)
+    
+    def _get_platform_models(self, platform_type: PlatformType, vendor: Optional[VendorType] = None, thinking_only: bool = False) -> List[str]:
+        """获取平台支持的模型列表（内部方法）"""
+        platform_info = self.get_platform_info(platform_type)
+        if not platform_info:
+            return []
+        
+        models = []
+        for vendor_type, vendor_models in VENDOR_MODEL_REGISTRY.items():
+            # 检查厂商是否支持
+            if vendor_type not in platform_info.supported_vendors:
+                continue
+            
+            # 如果指定了厂商，检查是否匹配
+            if vendor and vendor_type != vendor:
+                continue
+            
+            for spec in vendor_models:
+                if thinking_only and not spec.is_thinking:
+                    continue
+                
+                # 格式化模型名称
+                formatted_name = platform_info.model_name_format.format(
+                    vendor=str(spec.vendor),
+                    model=spec.name
+                )
+                models.append(formatted_name)
+        
+        return sorted(models)
     
     # ============ 能力查询 ============
     
@@ -123,28 +384,14 @@ class ProviderRegistry:
     
     def get_vision_models(self, platform_type: Optional[PlatformType] = None) -> List[str]:
         """获取支持视觉的模型"""
-        models = []
-        for vendor_type, model_specs in VENDOR_MODEL_REGISTRY.items():
-            if platform_type:
-                platform_info = self.get_platform_info(platform_type)
-                if platform_info and vendor_type not in platform_info.supported_vendors:
-                    continue
-            
-            for spec in model_specs:
-                if spec.supports_picture_input:
-                    if platform_type:
-                        platform_info = self.get_platform_info(platform_type)
-                        formatted_name = platform_info.model_name_format.format(
-                            vendor=str(spec.vendor), model=spec.name
-                        )
-                        models.append(formatted_name)
-                    else:
-                        models.append(spec.name)
-        
-        return sorted(models)
+        return self._get_models_by_capability(platform_type, lambda spec: spec.supports_picture_input)
     
     def get_function_calling_models(self, platform_type: Optional[PlatformType] = None) -> List[str]:
         """获取支持函数调用的模型"""
+        return self._get_models_by_capability(platform_type, lambda spec: spec.supports_function_calling_input)
+    
+    def _get_models_by_capability(self, platform_type: Optional[PlatformType], capability_check) -> List[str]:
+        """根据能力获取模型列表（内部方法）"""
         models = []
         for vendor_type, model_specs in VENDOR_MODEL_REGISTRY.items():
             if platform_type:
@@ -153,7 +400,7 @@ class ProviderRegistry:
                     continue
             
             for spec in model_specs:
-                if spec.supports_function_calling_input:
+                if capability_check(spec):
                     if platform_type:
                         platform_info = self.get_platform_info(platform_type)
                         formatted_name = platform_info.model_name_format.format(
@@ -164,71 +411,6 @@ class ProviderRegistry:
                         models.append(spec.name)
         
         return sorted(models)
-    
-    # ============ 推荐和建议 ============
-    
-    # def recommend_model(self, requirements: Dict[str, Any]) -> Optional[str]:
-    #     """根据需求推荐模型
-        
-    #     Args:
-    #         requirements: 需求字典，可包含：
-    #             - platform: 平台类型
-    #             - thinking: 是否需要思维链
-    #             - vision: 是否需要视觉
-    #             - function_calling: 是否需要函数调用
-    #             - max_tokens: 最大token需求
-    #     """
-    #     platform_type = requirements.get('platform')
-    #     need_thinking = requirements.get('thinking', False)
-    #     need_vision = requirements.get('vision', False) 
-    #     need_function_calling = requirements.get('function_calling', False)
-    #     max_tokens_needed = requirements.get('max_tokens', 0)
-        
-    #     candidates = []
-        
-    #     for vendor_type, model_specs in VENDOR_MODEL_REGISTRY.items():
-    #         if platform_type:
-    #             platform_info = self.get_platform_info(platform_type)
-    #             if platform_info and vendor_type not in platform_info.supported_vendors:
-    #                 continue
-            
-    #         for spec in model_specs:
-    #             # 检查需求匹配
-    #             if need_thinking and not spec.is_thinking:
-    #                 continue
-    #             if need_vision and not spec.supports_picture_input:
-    #                 continue
-    #             if need_function_calling and not spec.supports_function_calling_input:
-    #                 continue
-    #             if max_tokens_needed > 0 and spec.output_token_limit and spec.output_token_limit < max_tokens_needed:
-    #                 continue
-                
-    #             # 计算得分（简单的启发式）
-    #             score = 0
-    #             if spec.is_thinking:
-    #                 score += 10
-    #             if spec.supports_picture_input:
-    #                 score += 5
-    #             if spec.supports_function_calling_input:
-    #                 score += 5
-    #             if spec.output_token_limit:
-    #                 score += min(spec.output_token_limit // 1000, 50)  # token限制也是加分项
-                
-    #             if platform_type:
-    #                 platform_info = self.get_platform_info(platform_type)
-    #                 formatted_name = platform_info.model_name_format.format(
-    #                     vendor=str(spec.vendor), model=spec.name
-    #                 )
-    #                 candidates.append((formatted_name, score))
-    #             else:
-    #                 candidates.append((spec.name, score))
-        
-    #     if not candidates:
-    #         return None
-        
-    #     # 返回得分最高的模型
-    #     candidates.sort(key=lambda x: x[1], reverse=True) # type: ignore
-    #     return candidates[0][0] # type: ignore
     
     def get_platform_summary(self, platform_type: PlatformType) -> Dict[str, Any]:
         """获取平台摘要信息"""
@@ -267,13 +449,9 @@ class ProviderRegistry:
         )
         
         vision_models = sum(
-            1 for models in VENDOR_MODEL_REGISTRY.values()
+            1 for models in VENDOR_MODEL_REGISTRY.values() 
             for spec in models if spec.supports_picture_input
         )
-        
-        platforms_by_category = {}
-        for category in self.get_platform_categories():
-            platforms_by_category[str(category)] = len(self.list_platforms(category))
         
         return {
             'total_platforms': total_platforms,
@@ -281,37 +459,32 @@ class ProviderRegistry:
             'total_models': total_models,
             'thinking_models': thinking_models,
             'vision_models': vision_models,
-            'platforms_by_category': platforms_by_category,
+            'platform_categories': len(self.get_platform_categories()),
+            'supported_sdks': len(SDK_REGISTRY),
         }
 
-# ============ 全局注册中心实例 ============
 
-_global_registry: Optional[ProviderRegistry] = None
+# 全局注册中心实例
+_global_registry = None
 
 def get_provider_registry() -> ProviderRegistry:
-    """获取全局提供商注册中心"""
+    """获取全局注册中心实例"""
     global _global_registry
     if _global_registry is None:
         _global_registry = ProviderRegistry()
-        _global_registry.initialize()
     return _global_registry
 
-# ============ 便捷函数 ============
-
+# 便捷函数 - 直接使用全局注册中心
 def get_platform_info(platform_type: Union[str, PlatformType]) -> Optional[PlatformInfo]:
-    """获取平台信息 - 便捷函数"""
+    """获取平台信息"""
     return get_provider_registry().get_platform_info(platform_type)
 
 def list_platforms(category: Optional[PlatformCategory] = None) -> List[PlatformType]:
-    """列出平台 - 便捷函数"""
+    """列出平台类型"""
     return get_provider_registry().list_platforms(category)
 
 def list_models(vendor: Optional[VendorType] = None, 
                platform_type: Optional[PlatformType] = None,
                thinking_only: bool = False) -> List[str]:
-    """列出模型 - 便捷函数"""
+    """列出模型"""
     return get_provider_registry().list_models(vendor, platform_type, thinking_only)
-
-# def recommend_model(requirements: Dict[str, Any]) -> Optional[str]:
-#     """推荐模型 - 便捷函数"""
-#     return get_provider_registry().recommend_model(requirements) 

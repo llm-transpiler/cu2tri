@@ -54,25 +54,7 @@ async def demo_registry_system():
     for model in vision_models[:10]:  # 只显示前10个
         print(f"   - {model}")
     
-    # 7. 模型推荐
-    print("\n7. 模型推荐:")
-    
-    # 推荐一个支持思维链的模型
-    # rec1 = registry.recommend_model({'thinking': True})
-    # print(f"   需要思维链功能 -> 推荐: {rec1}")
-    
-    # # 推荐一个支持视觉的模型
-    # rec2 = registry.recommend_model({'vision': True})
-    # print(f"   需要视觉功能 -> 推荐: {rec2}")
-    
-    # # 推荐OpenRouter平台上的思维链模型
-    # rec3 = registry.recommend_model({
-    #     'platform': PlatformType.OPENROUTER, 
-    #     'thinking': True
-    # })
-    # print(f"   OpenRouter + 思维链 -> 推荐: {rec3}")
-    
-    # 8. 获取平台摘要
+    # 7. 获取平台摘要
     print("\n8. 平台摘要 (Google Official):")
     summary = registry.get_platform_summary(PlatformType.GOOGLE_OFFICIAL)
     for key, value in summary.items():
@@ -92,12 +74,7 @@ async def demo_provider_manager_integration():
     for platform in platforms[:5]:  # 只显示前5个
         print(f"   - {platform.value}")
     
-    # # 2. 通过管理器获取模型推荐
-    # print("\n2. 通过管理器获取模型推荐:")
-    # rec = manager.recommend_model({'thinking': True, 'vision': True})
-    # print(f"   需要思维链+视觉 -> 推荐: {rec}")
-    
-    # 3. 通过管理器获取统计信息
+    # 2. 通过管理器获取统计信息
     print("\n3. 通过管理器获取统计信息:")
     stats = manager.get_registry_statistics()
     print(f"   总平台数: {stats['total_platforms']}")
@@ -129,11 +106,7 @@ def demo_direct_imports():
     deepseek_models = list_models(vendor=VendorType.DEEPSEEK)
     for model in deepseek_models:
         print(f"   - {model}")
-    
-    # # 4. 直接推荐模型
-    # print("\n4. 直接推荐模型:")
-    # rec = recommend_model({'platform': PlatformType.OPENAI_OFFICIAL, 'thinking': True})
-    # print(f"   OpenAI官方平台思维链模型 -> 推荐: {rec}")
+
 
 async def main():
     """主函数"""

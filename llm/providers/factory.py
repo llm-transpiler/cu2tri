@@ -20,12 +20,7 @@ class ProviderFactory:
     
     @classmethod
     def register_provider(cls, platform_type: Union[str, PlatformType], provider_class: Type[Provider]) -> None:
-        """注册新的提供商类型
-        
-        Args:
-            platform_type: 平台类型
-            provider_class: 提供商实现类
-        """
+        """注册新的提供商类型"""
         if isinstance(platform_type, str):
             platform_type = PlatformType(platform_type)
         
@@ -49,37 +44,8 @@ class ProviderFactory:
         return list(cls._PROVIDER_CLASSES.keys())
     
     @classmethod
-    def list_available_platforms(cls) -> List[PlatformType]:
-        """列出所有可用的平台类型（从注册中心获取）"""
-        registry = get_provider_registry()
-        return registry.list_platforms()
-    
-    @classmethod
-    def get_platform_info(cls, platform_type: PlatformType):
-        """获取平台信息"""
-        registry = get_provider_registry()
-        return registry.get_platform_info(platform_type)
-    
-    @classmethod
-    def get_supported_models(cls, platform_type: PlatformType, vendor=None) -> List[str]:
-        """获取平台支持的模型列表"""
-        registry = get_provider_registry()
-        return registry.get_models_by_platform(platform_type, vendor)
-    
-    @classmethod
     def create_provider(cls, config: PlatformConfig, logger: Optional[logging.Logger] = None) -> Provider:
-        """创建提供商实例
-        
-        Args:
-            config: 平台配置
-            logger: 日志记录器
-            
-        Returns:
-            Provider实例
-            
-        Raises:
-            ValueError: 不支持的平台类型
-        """
+        """创建提供商实例"""
         platform_type = config.platform_type
         if isinstance(platform_type, str):
             try:
@@ -124,12 +90,7 @@ class ProviderManager:
     # ============ 提供商管理 ============
     
     def add_provider(self, name: str, config: PlatformConfig) -> None:
-        """添加提供商
-        
-        Args:
-            name: 提供商名称
-            config: 平台配置
-        """
+        """添加提供商"""
         try:
             provider = ProviderFactory.create_provider(config, self.logger)
             self._providers[name] = provider
@@ -212,7 +173,7 @@ class ProviderManager:
         
         self.logger.info(f"Loaded {loaded_count} provider configurations from config manager")
     
-    # ============ 注册中心访问方法 ============
+    # ============ 注册中心访问方法（统一通过registry访问） ============
     
     def get_platform_info(self, platform_type: PlatformType):
         """获取平台信息"""
@@ -225,10 +186,6 @@ class ProviderManager:
     def list_available_models(self, platform_type=None, vendor=None, thinking_only=False) -> List[str]:
         """列出可用的模型"""
         return self.registry.list_models(vendor, platform_type, thinking_only)
-    
-    def recommend_model(self, requirements: Dict[str, Any]) -> Optional[str]:
-        """推荐模型"""
-        return self.registry.recommend_model(requirements)
     
     def get_thinking_models(self, platform_type=None) -> List[str]:
         """获取思维链模型"""
