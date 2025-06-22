@@ -156,20 +156,20 @@ class GPUAPIServer:
     async def lifespan(self, app: FastAPI):
         """FastAPI lifespan event handler"""
         # Startup
-        self.logger.info("Starting GPU Management API Server")
+        self.logger.info("[GPUAPIServer] Starting GPU Management API Server")
         
         # Initialize GPU manager
         self.gpu_manager = GPUManager(log_dir=str(self.log_dir), logger=self.logger)
         await self.gpu_manager.start()
-        self.logger.info("GPU Manager started successfully")
+        self.logger.info("[GPUAPIServer] GPU Manager started successfully")
         
         yield
         
         # Shutdown
-        self.logger.info("Shutting down GPU Management API Server")
+        self.logger.info("[GPUAPIServer] Shutting down GPU Management API Server")
         if self.gpu_manager:
             await self.gpu_manager.stop()
-            self.logger.info("GPU Manager stopped")
+            self.logger.info("[GPUAPIServer] GPU Manager stopped")
     
     def _setup_routes(self):
         """Setup API routes"""
@@ -193,7 +193,7 @@ class GPUAPIServer:
                 status = await self.gpu_manager.get_system_status()
                 return SystemStatusResponse(**status)
             except Exception as e:
-                self.logger.error(f"Failed to get system status: {e}")
+                self.logger.error(f"[GPUAPIServer] Failed to get system status: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/gpus", response_model=Dict[str, GPUStatusResponse])
@@ -209,7 +209,7 @@ class GPUAPIServer:
                     for gpu_id, info in gpu_status.items()
                 }
             except Exception as e:
-                self.logger.error(f"Failed to get GPU status: {e}")
+                self.logger.error(f"[GPUAPIServer] Failed to get GPU status: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/queue", response_model=Dict[str, Any])
@@ -221,7 +221,7 @@ class GPUAPIServer:
             try:
                 return await self.gpu_manager.get_queue_status()
             except Exception as e:
-                self.logger.error(f"Failed to get queue status: {e}")
+                self.logger.error(f"[GPUAPIServer] Failed to get queue status: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.post("/tasks/submit", response_model=Dict[str, str])
@@ -241,6 +241,10 @@ class GPUAPIServer:
                 async def execute_user_task():
                     """Dynamically import and execute user-defined task"""
                     import importlib
+                    # 强制重新加载模块以避免缓存
+                    import sys
+                    if request.module_path in sys.modules:
+                        importlib.reload(sys.modules[request.module_path])
                     
                     # Import the module
                     module = importlib.import_module(request.module_path)
@@ -293,7 +297,7 @@ class GPUAPIServer:
             except HTTPException:
                 raise
             except Exception as e:
-                self.logger.error(f"Failed to get task status: {e}")
+                self.logger.error(f"[GPUAPIServer] Failed to get task status: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.delete("/tasks/{task_id}", response_model=Dict[str, str])
@@ -312,7 +316,7 @@ class GPUAPIServer:
             except HTTPException:
                 raise
             except Exception as e:
-                self.logger.error(f"Failed to cancel task: {e}")
+                self.logger.error(f"[GPUAPIServer] Failed to cancel task: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.post("/gpus/set-visible", response_model=Dict[str, str])
@@ -326,7 +330,7 @@ class GPUAPIServer:
                 return {"status": "success", "visible_gpus": str(gpu_ids)}
                 
             except Exception as e:
-                self.logger.error(f"Failed to set visible GPUs: {e}")
+                self.logger.error(f"[GPUAPIServer] Failed to set visible GPUs: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
 
         @self.app.get("/health", response_model=Dict[str, str])

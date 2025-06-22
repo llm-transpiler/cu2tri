@@ -18,19 +18,19 @@ class GPUManager:
     
     def __init__(
         self,
-        refresh_interval_seconds: int = 10,
+        refresh_interval_seconds: int = 5,
         max_task_wait_minutes: int = 10,
         log_dir: Optional[str] = None,
-        max_tasks_per_gpu: int = 10,
+        max_tasks_total: int = 10,
         logger: logging.Logger = None#logging.getLogger(__name__)
     ):
-        self.refresh_interval = refresh_interval_seconds
         self.max_task_wait_minutes = max_task_wait_minutes
+        self.refresh_interval_seconds = refresh_interval_seconds
         self.log_dir = log_dir
         self.logger = logger if logger is not None else logging.getLogger(__name__)
         # 防止日志向上传播，避免重复
         self.logger.propagate = False
-        self.max_tasks_per_gpu = max_tasks_per_gpu
+        self.max_tasks_total = max_tasks_total
         # Task queue - will be initialized after self is created
         self.task_queue = None
         
@@ -48,12 +48,12 @@ class GPUManager:
         # Initialize task queue with reference to self
         self.task_queue = TaskQueue(max_wait_time_minutes=max_task_wait_minutes, gpu_manager=self, logger=self.logger)
         
-        self.logger.info(f"GPUManager initialized with refresh interval {refresh_interval_seconds}s")
+        self.logger.info(f"[GPUManager] Initialized with refresh interval {refresh_interval_seconds}s")
     
     async def start(self) -> None:
         """Start the GPU manager and scheduler"""
         if self._running:
-            self.logger.warning("GPUManager is already running")
+            self.logger.warning("[GPUManager] Already running")
             return
         
         self._running = True
@@ -64,7 +64,7 @@ class GPUManager:
         # Start scheduler task
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
         
-        self.logger.info("GPUManager started")
+        self.logger.info("[GPUManager] Started")
     
     async def stop(self) -> None:
         """Stop the GPU manager and scheduler"""
@@ -80,7 +80,7 @@ class GPUManager:
             except asyncio.CancelledError:
                 pass
         
-        self.logger.info("GPUManager stopped")
+        self.logger.info("[GPUManager] Stopped")
     
     async def refresh_gpu_info(self) -> None:
         """Refresh GPU information from system"""
@@ -89,10 +89,10 @@ class GPUManager:
             self.gpu_infos = {gpu.device_id: gpu for gpu in gpu_infos}
             self.last_gpu_refresh = datetime.now()
             
-            self.logger.debug(f"Refreshed info for {len(self.gpu_infos)} GPUs")
+            self.logger.debug(f"[GPUManager] Refreshed info for {len(self.gpu_infos)} GPUs")
             
         except Exception as e:
-            self.logger.error(f"Failed to refresh GPU info: {e}")
+            self.logger.error(f"[GPUManager] Failed to refresh GPU info: {e}")
     
     async def submit_task(
         self,
@@ -104,7 +104,7 @@ class GPUManager:
         kwargs: dict = {},
         max_wait_time_minutes: Optional[int] = None,
         preferred_gpu_id: Optional[int] = None,
-        allow_fallback: bool = True,
+        allow_fallback: bool = False,
         require_same_gpu_type: bool = True
     ) -> str:
         """Submit a task for execution"""
@@ -160,7 +160,7 @@ class GPUManager:
                     'compute_capability': gpu_info.spec.compute_capability,
                     'tensor_cores': gpu_info.spec.tensor_cores,
                     'max_power_w': gpu_info.spec.max_power_w,
-                    'fp32_tflops': gpu_info.spec.fp32_tflops
+                    'fp32_tflops': gpu_info.spec.fp32_tflops,
                 }
             }
         
@@ -186,11 +186,11 @@ class GPUManager:
     def set_visible_gpus(self, gpu_ids: List[int]) -> None:
         """Set visible GPUs for the current process"""
         set_visible_gpus(gpu_ids)
-        self.logger.info(f"Set visible GPUs to: {gpu_ids}")
+        self.logger.info(f"[GPUManager] Set visible GPUs to: {gpu_ids}")
     
     async def _scheduler_loop(self) -> None:
         """Main scheduler loop"""
-        self.logger.info("Scheduler loop started")
+        self.logger.info("[GPUManager] Scheduler loop started")
         
         while self._running:
             try:
@@ -200,21 +200,21 @@ class GPUManager:
                 # Clean up expired tasks
                 expired_count = await self.task_queue.cleanup_expired_tasks()
                 if expired_count > 0:
-                    self.logger.info(f"Cleaned up {expired_count} expired tasks")
+                    self.logger.info(f"[GPUManager] Cleaned up {expired_count} expired tasks")
                 
                 # Schedule tasks on available GPUs
                 await self._schedule_tasks()
                 
                 # Wait before next iteration
-                await asyncio.sleep(self.refresh_interval)
+                await asyncio.sleep(self.refresh_interval_seconds)
                 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self.logger.error(f"Error in scheduler loop: {e}")
-                await asyncio.sleep(self.refresh_interval)
+                self.logger.error(f"[GPUManager] Error in scheduler loop: {e}")
+                await asyncio.sleep(self.refresh_interval_seconds)
         
-        self.logger.info("Scheduler loop stopped")
+        self.logger.info("[GPUManager] Scheduler loop stopped")
     
     async def _schedule_tasks(self) -> None:
         """Schedule tasks on available GPUs, prioritizing GPU preferences"""
@@ -235,7 +235,7 @@ class GPUManager:
                 
                 # 持续为这个GPU调度偏好任务
                 tasks_scheduled = 0
-                while tasks_scheduled < self.max_tasks_per_gpu:
+                while tasks_scheduled < self.max_tasks_total:
                     # Get next task that prefers this specific GPU
                     task = await self.task_queue.get_next_preferred_task_for_gpu(gpu_id)
                     
@@ -273,7 +273,7 @@ class GPUManager:
                 
                 # 持续为这个GPU调度任务
                 tasks_scheduled = 0
-                while tasks_scheduled < self.max_tasks_per_gpu:
+                while tasks_scheduled < self.max_tasks_total:
                     # Get next suitable task for this GPU (fallback tasks)
                     task = await self.task_queue.get_next_task_for_gpu(gpu_id, gpu_info.gpu_type)
                     
@@ -298,7 +298,7 @@ class GPUManager:
                         break  # Performance tasks are exclusive
                         
             except Exception as e:
-                self.logger.error(f"Error scheduling fallback tasks for GPU {gpu_id}: {e}")
+                self.logger.error(f"[GPUManager] Error scheduling fallback tasks for GPU {gpu_id}: {e}")
     
     async def _execute_task(self, task: Task) -> None:
         """Execute a task"""
@@ -307,7 +307,7 @@ class GPUManager:
             original_cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '')
             os.environ['CUDA_VISIBLE_DEVICES'] = str(task.gpu_id)
             
-            self.logger.info(f"Executing task {task.task_id} on GPU {task.gpu_id}")
+            self.logger.info(f"[GPUManager] Executing task {task.task_id} on GPU {task.gpu_id}")
             
             # Execute the task function
             result = await task.execute_func(*task.args, **task.kwargs)
@@ -317,7 +317,7 @@ class GPUManager:
             
         except Exception as e:
             error_msg = f"Task execution failed: {str(e)}"
-            self.logger.error(f"Task {task.task_id} failed: {error_msg}")
+            self.logger.error(f"[GPUManager] Task {task.task_id} failed: {error_msg}")
             
             # Mark task as failed
             await self.task_queue.complete_task(task.task_id, error=error_msg)

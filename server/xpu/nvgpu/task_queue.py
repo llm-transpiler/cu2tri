@@ -104,7 +104,7 @@ class TaskQueue:
         
         # Synchronization
         self._lock = asyncio.Lock()
-        self.logger.info("TaskQueue initialized")
+        self.logger.info("[TaskQueue] Initialized")
     
     async def submit_task(
         self,
@@ -139,11 +139,11 @@ class TaskQueue:
         async with self._lock:
             if task_type == TaskType.FUNCTIONAL:
                 self.functional_queue.append(task)
-                self.logger.info(f"Submitted functional task: {task_id} ({name})" + 
+                self.logger.info(f"[TaskQueue] Submitted functional task: {task_id} ({name})" + 
                            (f" preferred GPU {preferred_gpu_id}" if preferred_gpu_id is not None else ""))
             else:
                 self.performance_queue.append(task)
-                self.logger.info(f"Submitted performance task: {task_id} ({name})" + 
+                self.logger.info(f"[TaskQueue] Submitted performance task: {task_id} ({name})" + 
                            (f" preferred GPU {preferred_gpu_id}" if preferred_gpu_id is not None else ""))
         
         return task_id
@@ -198,7 +198,7 @@ class TaskQueue:
                     task.status = TaskStatus.CANCELLED
                     self.functional_queue.pop(i)
                     self.completed_tasks[task_id] = task
-                    self.logger.info(f"Cancelled functional task: {task_id}")
+                    self.logger.info(f"[TaskQueue] Cancelled functional task: {task_id}")
                     return True
             
             # Remove from performance queue
@@ -207,7 +207,7 @@ class TaskQueue:
                     task.status = TaskStatus.CANCELLED
                     self.performance_queue.pop(i)
                     self.completed_tasks[task_id] = task
-                    self.logger.info(f"Cancelled performance task: {task_id}")
+                    self.logger.info(f"[TaskQueue] Cancelled performance task: {task_id}")
                     return True
         
         return False
@@ -223,13 +223,13 @@ class TaskQueue:
             if not self.gpu_functional_tasks.get(gpu_id):  # No functional tasks running
                 for i, task in enumerate(self.performance_queue):
                     if not task.is_expired and task.preferred_gpu_id == gpu_id:
-                        self.logger.info(f"Found preferred performance task {task.task_id} for GPU {gpu_id}")
+                        self.logger.info(f"[TaskQueue] Found preferred performance task {task.task_id} for GPU {gpu_id}")
                         return self.performance_queue.pop(i)
             
             # Try functional tasks that prefer this GPU
             for i, task in enumerate(self.functional_queue):
                 if not task.is_expired and task.preferred_gpu_id == gpu_id:
-                    self.logger.info(f"Found preferred functional task {task.task_id} for GPU {gpu_id}")
+                    self.logger.info(f"[TaskQueue] Found preferred functional task {task.task_id} for GPU {gpu_id}")
                     return self.functional_queue.pop(i)
         
         return None
@@ -254,7 +254,7 @@ class TaskQueue:
                                 continue
                         
                         if task.preferred_gpu_id is not None:
-                            self.logger.info(f"Using fallback GPU {gpu_id} for performance task {task.task_id} (preferred: {task.preferred_gpu_id})")
+                            self.logger.info(f"[TaskQueue] Using fallback GPU {gpu_id} for performance task {task.task_id} (preferred: {task.preferred_gpu_id})")
                         return self.performance_queue.pop(i)
             
             # Try functional tasks that allow fallback
@@ -268,7 +268,7 @@ class TaskQueue:
                             continue
                     
                     if task.preferred_gpu_id is not None:
-                        self.logger.info(f"Using fallback GPU {gpu_id} for functional task {task.task_id} (preferred: {task.preferred_gpu_id})")
+                        self.logger.info(f"[TaskQueue] Using fallback GPU {gpu_id} for functional task {task.task_id} (preferred: {task.preferred_gpu_id})")
                     return self.functional_queue.pop(i)
         
         return None
@@ -284,18 +284,18 @@ class TaskQueue:
             
             if task.task_type == TaskType.PERFORMANCE:
                 self.gpu_performance_task[gpu_id] = task.task_id
-                self.logger.info(f"Started performance task {task.task_id} on GPU {gpu_id}")
+                self.logger.info(f"[TaskQueue] Started performance task {task.task_id} on GPU {gpu_id}")
             else:
                 if gpu_id not in self.gpu_functional_tasks:
                     self.gpu_functional_tasks[gpu_id] = []
                 self.gpu_functional_tasks[gpu_id].append(task.task_id)
-                self.logger.info(f"Started functional task {task.task_id} on GPU {gpu_id}")
+                self.logger.info(f"[TaskQueue] Started functional task {task.task_id} on GPU {gpu_id}")
     
     async def complete_task(self, task_id: str, result: Any = None, error: str = None) -> None:
         """Mark task as completed"""
         async with self._lock:
             if task_id not in self.running_tasks:
-                self.logger.warning(f"Attempted to complete non-running task: {task_id}")
+                self.logger.warning(f"[TaskQueue] Attempted to complete non-running task: {task_id}")
                 return
             
             task = self.running_tasks[task_id]
@@ -325,7 +325,7 @@ class TaskQueue:
             self.completed_tasks[task_id] = task
             
             status_str = "completed" if error is None else "failed"
-            self.logger.info(f"Task {task_id} {status_str} on GPU {gpu_id} after {task.execution_time_seconds:.2f}s")
+            self.logger.info(f"[TaskQueue] Task {task_id} {status_str} on GPU {gpu_id} after {task.execution_time_seconds:.2f}s")
     
     async def cleanup_expired_tasks(self) -> int:
         """Remove expired tasks from queues"""
@@ -346,7 +346,7 @@ class TaskQueue:
                 task.error = f"Task expired after waiting {task.wait_time_seconds:.1f} seconds"
                 self.completed_tasks[task.task_id] = task
                 expired_count += 1
-                self.logger.warning(f"Task {task.task_id} expired after {task.wait_time_seconds:.1f}s wait")
+                self.logger.warning(f"[TaskQueue] Task {task.task_id} expired after {task.wait_time_seconds:.1f}s wait")
         
         return expired_count
     
@@ -365,7 +365,7 @@ class TaskQueue:
     async def _is_same_gpu_type(self, gpu_id1: int, gpu_id2: int) -> bool:
         """Check if two GPUs have the same type"""
         if self.gpu_manager is None:
-            self.logger.warning("GPU manager not available for GPU type comparison, allowing fallback")
+            self.logger.warning("[TaskQueue] GPU manager not available for GPU type comparison, allowing fallback")
             return True
         
         try:
@@ -374,17 +374,17 @@ class TaskQueue:
             gpu_info2 = self.gpu_manager.gpu_infos.get(gpu_id2)
             
             if gpu_info1 is None or gpu_info2 is None:
-                self.logger.warning(f"GPU info not found for GPU {gpu_id1} or {gpu_id2}, allowing fallback")
+                self.logger.warning(f"[TaskQueue] GPU info not found for GPU {gpu_id1} or {gpu_id2}, allowing fallback")
                 return True
             
             same_type = gpu_info1.gpu_type == gpu_info2.gpu_type
             if not same_type:
-                self.logger.info(f"GPU type mismatch: GPU {gpu_id1} ({gpu_info1.gpu_type.value}) != GPU {gpu_id2} ({gpu_info2.gpu_type.value})")
+                self.logger.info(f"[TaskQueue] GPU type mismatch: GPU {gpu_id1} ({gpu_info1.gpu_type.value}) != GPU {gpu_id2} ({gpu_info2.gpu_type.value})")
             
             return same_type
             
         except Exception as e:
-            self.logger.error(f"Error comparing GPU types for GPU {gpu_id1} and {gpu_id2}: {e}")
+            self.logger.error(f"[TaskQueue] Error comparing GPU types for GPU {gpu_id1} and {gpu_id2}: {e}")
             return True  # Allow fallback on error
     
     async def _put_task_back(self, task: Task) -> None:
@@ -392,7 +392,7 @@ class TaskQueue:
         async with self._lock:
             if task.task_type == TaskType.FUNCTIONAL:
                 self.functional_queue.insert(0, task)  # 插入到队列前面，优先处理
-                self.logger.info(f"Put functional task {task.task_id} back to queue")
+                self.logger.info(f"[TaskQueue] Put functional task {task.task_id} back to queue")
             else:
                 self.performance_queue.insert(0, task)  # 插入到队列前面，优先处理
-                self.logger.info(f"Put performance task {task.task_id} back to queue") 
+                self.logger.info(f"[TaskQueue] Put performance task {task.task_id} back to queue") 
