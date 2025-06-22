@@ -14,7 +14,7 @@ from pathlib import Path
 
 from utils.set_env import PROJECT_ROOT
 
-from server.xpu.nvgpu.api_server import app
+from server.xpu.nvgpu.api_server import GPUAPIServer
 import uvicorn
 
 
@@ -24,17 +24,21 @@ def setup_logging(log_level: str = "INFO", log_file: str = None):
     
     # Create formatter
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        '[%(levelname)s] - %(message)s'
     )
+    
+    # Setup logger for this module only
+    logger = logging.getLogger(__name__)
+    logger.setLevel(level)
+    
+    # Clear any existing handlers
+    if logger.hasHandlers():
+        logger.handlers.clear()
     
     # Setup console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
-    
-    # Setup root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-    root_logger.addHandler(console_handler)
+    logger.addHandler(console_handler)
     
     # Setup file handler if specified
     if log_file:
@@ -43,9 +47,14 @@ def setup_logging(log_level: str = "INFO", log_file: str = None):
         
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
+        logger.addHandler(file_handler)
         
         print(f"Logging to file: {log_file}")
+    
+    # Don't propagate to avoid duplicate logs
+    logger.propagate = False
+    
+    return logger
 
 
 def parse_gpu_ids(gpu_str: str) -> list:
@@ -59,8 +68,9 @@ def parse_gpu_ids(gpu_str: str) -> list:
         raise ValueError(f"Invalid GPU IDs format: {gpu_str}")
 
 
-def main():
-    """Main function"""
+async def main():
+    """Async main function"""
+    # Parse arguments and setup logging first
     parser = argparse.ArgumentParser(
         description="GPU Management API Server",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -89,8 +99,8 @@ Examples:
     parser.add_argument(
         '--port', 
         type=int, 
-        default=8080,
-        help='Port to bind to (default: 8080)'
+        default=8081,
+        help='Port to bind to (default: 8081)'
     )
     parser.add_argument(
         '--workers', 
@@ -152,8 +162,7 @@ Examples:
     args = parser.parse_args()
     
     # Setup logging
-    setup_logging(args.log_level, args.log_file)
-    logger = logging.getLogger(__name__)
+    logger = setup_logging(args.log_level, args.log_file)
     
     # Set CUDA_VISIBLE_DEVICES if specified
     if args.gpus:
@@ -175,7 +184,7 @@ Examples:
     logger.info(f"Configuration:")
     logger.info(f"  Host: {args.host}")
     logger.info(f"  Port: {args.port}")
-    logger.info(f"  Workers: {args.workers}")
+    # logger.info(f"  Workers: {args.workers}")
     logger.info(f"  GPU refresh interval: {args.refresh_interval}s")
     logger.info(f"  Max task wait time: {args.max_wait_time} minutes")
     logger.info(f"  Log level: {args.log_level}")
@@ -183,15 +192,16 @@ Examples:
     
     # Start server
     try:
-        uvicorn.run(
-            "server.xpu.nvgpu.api_server:app",
+        server = GPUAPIServer(
             host=args.host,
             port=args.port,
-            workers=args.workers,
-            log_level=args.log_level.lower(),
-            reload=args.reload,
-            access_log=True
+            log_dir=str(log_dir),
+            logger=logger
         )
+        
+        logger.info("Starting server...")
+        await server.start()
+        
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
     except Exception as e:
@@ -200,4 +210,4 @@ Examples:
 
 
 if __name__ == "__main__":
-    main() 
+    asyncio.run(main()) 

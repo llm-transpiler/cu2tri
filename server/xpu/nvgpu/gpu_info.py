@@ -14,6 +14,7 @@ from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # 配置文件路径
 CONFIG_FILE = Path(__file__).parent / "config.yaml"

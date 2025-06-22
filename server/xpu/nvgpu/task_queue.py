@@ -9,12 +9,12 @@ import time
 import uuid
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Callable, Any, Awaitable
+from typing import Dict, List, Optional, Callable, Any, Awaitable, TYPE_CHECKING
 from datetime import datetime, timedelta
 import logging
 
-logger = logging.getLogger(__name__)
-
+if TYPE_CHECKING:
+    from .gpu_manager import GPUType
 
 class TaskType(Enum):
     """Task type enumeration"""
@@ -49,8 +49,10 @@ class Task:
     status: TaskStatus = TaskStatus.PENDING
     
     # Resource requirements
-    estimated_memory_mb: int = 0
-    max_wait_time_minutes: int = 30
+    max_wait_time_minutes: int = 10
+    preferred_gpu_id: Optional[int] = None
+    allow_fallback: bool = False
+    require_same_gpu_type: bool = True  # 要求fallback到相同类型的GPU
     
     # Results
     result: Any = None
@@ -81,8 +83,12 @@ class Task:
 class TaskQueue:
     """Task queue manager for GPU resource allocation"""
     
-    def __init__(self, max_wait_time_minutes: int = 30):
+    def __init__(self, max_wait_time_minutes: int = 30, gpu_manager=None, logger: logging.Logger = None):
         self.max_wait_time_minutes = max_wait_time_minutes
+        self.gpu_manager = gpu_manager  # Reference to GPU manager for GPU type queries
+        self.logger = logger or logging.getLogger(__name__)
+        # 防止日志向上传播，避免重复
+        self.logger.propagate = False
         
         # Task queues
         self.functional_queue: List[Task] = []
@@ -98,8 +104,7 @@ class TaskQueue:
         
         # Synchronization
         self._lock = asyncio.Lock()
-        
-        logger.info("TaskQueue initialized")
+        self.logger.info("TaskQueue initialized")
     
     async def submit_task(
         self,
@@ -109,12 +114,12 @@ class TaskQueue:
         execute_func: Callable[..., Awaitable[Any]],
         args: tuple = (),
         kwargs: dict = None,
-        estimated_memory_mb: int = 0,
-        max_wait_time_minutes: Optional[int] = None
+        max_wait_time_minutes: Optional[int] = None,
+        preferred_gpu_id: Optional[int] = None,
+        allow_fallback: bool = False,
+        require_same_gpu_type: bool = True
     ) -> str:
         """Submit a new task to the queue"""
-        if kwargs is None:
-            kwargs = {}
         
         task_id = str(uuid.uuid4())
         task = Task(
@@ -125,17 +130,21 @@ class TaskQueue:
             execute_func=execute_func,
             args=args,
             kwargs=kwargs,
-            estimated_memory_mb=estimated_memory_mb,
-            max_wait_time_minutes=max_wait_time_minutes or self.max_wait_time_minutes
+            max_wait_time_minutes=max_wait_time_minutes or self.max_wait_time_minutes,
+            preferred_gpu_id=preferred_gpu_id,
+            allow_fallback=allow_fallback,
+            require_same_gpu_type=require_same_gpu_type
         )
         
         async with self._lock:
             if task_type == TaskType.FUNCTIONAL:
                 self.functional_queue.append(task)
-                logger.info(f"Submitted functional task: {task_id} ({name})")
+                self.logger.info(f"Submitted functional task: {task_id} ({name})" + 
+                           (f" preferred GPU {preferred_gpu_id}" if preferred_gpu_id is not None else ""))
             else:
                 self.performance_queue.append(task)
-                logger.info(f"Submitted performance task: {task_id} ({name})")
+                self.logger.info(f"Submitted performance task: {task_id} ({name})" + 
+                           (f" preferred GPU {preferred_gpu_id}" if preferred_gpu_id is not None else ""))
         
         return task_id
     
@@ -173,8 +182,11 @@ class TaskQueue:
             'wait_time_seconds': task.wait_time_seconds,
             'execution_time_seconds': task.execution_time_seconds,
             'gpu_id': task.gpu_id,
+            'preferred_gpu_id': task.preferred_gpu_id,
+            'allow_fallback': task.allow_fallback,
+            'require_same_gpu_type': task.require_same_gpu_type,
             'error': task.error,
-            'estimated_memory_mb': task.estimated_memory_mb
+            'result': task.result
         }
     
     async def cancel_task(self, task_id: str) -> bool:
@@ -186,7 +198,7 @@ class TaskQueue:
                     task.status = TaskStatus.CANCELLED
                     self.functional_queue.pop(i)
                     self.completed_tasks[task_id] = task
-                    logger.info(f"Cancelled functional task: {task_id}")
+                    self.logger.info(f"Cancelled functional task: {task_id}")
                     return True
             
             # Remove from performance queue
@@ -195,42 +207,69 @@ class TaskQueue:
                     task.status = TaskStatus.CANCELLED
                     self.performance_queue.pop(i)
                     self.completed_tasks[task_id] = task
-                    logger.info(f"Cancelled performance task: {task_id}")
+                    self.logger.info(f"Cancelled performance task: {task_id}")
                     return True
         
         return False
     
-    async def get_next_task_for_gpu(self, gpu_id: int, gpu_available_memory_mb: int) -> Optional[Task]:
-        """Get next suitable task for the specified GPU"""
+    async def get_next_preferred_task_for_gpu(self, gpu_id: int) -> Optional[Task]:
+        """Get next task that specifically prefers this GPU"""
         async with self._lock:
             # Check if GPU is currently running a performance task
             if self.gpu_performance_task.get(gpu_id):
                 return None
             
-            # Try to get a performance task first (higher priority)
+            # Try performance tasks that prefer this GPU first
             if not self.gpu_functional_tasks.get(gpu_id):  # No functional tasks running
                 for i, task in enumerate(self.performance_queue):
-                    if not task.is_expired:
-                        self.performance_queue.pop(i)
-                        return task
+                    if not task.is_expired and task.preferred_gpu_id == gpu_id:
+                        self.logger.info(f"Found preferred performance task {task.task_id} for GPU {gpu_id}")
+                        return self.performance_queue.pop(i)
             
-            # Try to get a functional task
-            current_functional_tasks = self.gpu_functional_tasks.get(gpu_id, [])
-            current_memory_usage = sum(
-                self.running_tasks[tid].estimated_memory_mb 
-                for tid in current_functional_tasks 
-                if tid in self.running_tasks
-            )
-            
+            # Try functional tasks that prefer this GPU
             for i, task in enumerate(self.functional_queue):
-                if task.is_expired:
-                    continue
-                
-                # Check if there's enough memory
-                required_memory = task.estimated_memory_mb
-                if current_memory_usage + required_memory <= gpu_available_memory_mb * 0.67:
-                    self.functional_queue.pop(i)
-                    return task
+                if not task.is_expired and task.preferred_gpu_id == gpu_id:
+                    self.logger.info(f"Found preferred functional task {task.task_id} for GPU {gpu_id}")
+                    return self.functional_queue.pop(i)
+        
+        return None
+    
+    async def get_next_task_for_gpu(self, gpu_id: int, gpu_type: 'GPUType' = None) -> Optional[Task]:
+        """Get next suitable task for the specified GPU (fallback tasks only)"""
+        async with self._lock:
+            # Check if GPU is currently running a performance task
+            if self.gpu_performance_task.get(gpu_id):
+                return None
+            
+            # Only handle tasks that don't have specific GPU preference OR allow fallback
+            # Try performance tasks that allow fallback
+            if not self.gpu_functional_tasks.get(gpu_id):  # No functional tasks running
+                for i, task in enumerate(self.performance_queue):
+                    if not task.is_expired and (task.preferred_gpu_id is None or 
+                                              (task.preferred_gpu_id != gpu_id and task.allow_fallback)):
+                        # Check GPU type matching if required
+                        if task.preferred_gpu_id is not None and task.require_same_gpu_type and gpu_type is not None:
+                            # Need to check if fallback GPU has same type as preferred GPU
+                            if not await self._is_same_gpu_type(task.preferred_gpu_id, gpu_id):
+                                continue
+                        
+                        if task.preferred_gpu_id is not None:
+                            self.logger.info(f"Using fallback GPU {gpu_id} for performance task {task.task_id} (preferred: {task.preferred_gpu_id})")
+                        return self.performance_queue.pop(i)
+            
+            # Try functional tasks that allow fallback
+            for i, task in enumerate(self.functional_queue):
+                if not task.is_expired and (task.preferred_gpu_id is None or 
+                                          (task.preferred_gpu_id != gpu_id and task.allow_fallback)):
+                    # Check GPU type matching if required
+                    if task.preferred_gpu_id is not None and task.require_same_gpu_type and gpu_type is not None:
+                        # Need to check if fallback GPU has same type as preferred GPU
+                        if not await self._is_same_gpu_type(task.preferred_gpu_id, gpu_id):
+                            continue
+                    
+                    if task.preferred_gpu_id is not None:
+                        self.logger.info(f"Using fallback GPU {gpu_id} for functional task {task.task_id} (preferred: {task.preferred_gpu_id})")
+                    return self.functional_queue.pop(i)
         
         return None
     
@@ -245,18 +284,18 @@ class TaskQueue:
             
             if task.task_type == TaskType.PERFORMANCE:
                 self.gpu_performance_task[gpu_id] = task.task_id
-                logger.info(f"Started performance task {task.task_id} on GPU {gpu_id}")
+                self.logger.info(f"Started performance task {task.task_id} on GPU {gpu_id}")
             else:
                 if gpu_id not in self.gpu_functional_tasks:
                     self.gpu_functional_tasks[gpu_id] = []
                 self.gpu_functional_tasks[gpu_id].append(task.task_id)
-                logger.info(f"Started functional task {task.task_id} on GPU {gpu_id}")
+                self.logger.info(f"Started functional task {task.task_id} on GPU {gpu_id}")
     
     async def complete_task(self, task_id: str, result: Any = None, error: str = None) -> None:
         """Mark task as completed"""
         async with self._lock:
             if task_id not in self.running_tasks:
-                logger.warning(f"Attempted to complete non-running task: {task_id}")
+                self.logger.warning(f"Attempted to complete non-running task: {task_id}")
                 return
             
             task = self.running_tasks[task_id]
@@ -286,7 +325,7 @@ class TaskQueue:
             self.completed_tasks[task_id] = task
             
             status_str = "completed" if error is None else "failed"
-            logger.info(f"Task {task_id} {status_str} on GPU {gpu_id} after {task.execution_time_seconds:.2f}s")
+            self.logger.info(f"Task {task_id} {status_str} on GPU {gpu_id} after {task.execution_time_seconds:.2f}s")
     
     async def cleanup_expired_tasks(self) -> int:
         """Remove expired tasks from queues"""
@@ -307,7 +346,7 @@ class TaskQueue:
                 task.error = f"Task expired after waiting {task.wait_time_seconds:.1f} seconds"
                 self.completed_tasks[task.task_id] = task
                 expired_count += 1
-                logger.warning(f"Task {task.task_id} expired after {task.wait_time_seconds:.1f}s wait")
+                self.logger.warning(f"Task {task.task_id} expired after {task.wait_time_seconds:.1f}s wait")
         
         return expired_count
     
@@ -323,12 +362,37 @@ class TaskQueue:
                 'gpu_performance_task': dict(self.gpu_performance_task)
             }
     
+    async def _is_same_gpu_type(self, gpu_id1: int, gpu_id2: int) -> bool:
+        """Check if two GPUs have the same type"""
+        if self.gpu_manager is None:
+            self.logger.warning("GPU manager not available for GPU type comparison, allowing fallback")
+            return True
+        
+        try:
+            # Get GPU info from GPU manager
+            gpu_info1 = self.gpu_manager.gpu_infos.get(gpu_id1)
+            gpu_info2 = self.gpu_manager.gpu_infos.get(gpu_id2)
+            
+            if gpu_info1 is None or gpu_info2 is None:
+                self.logger.warning(f"GPU info not found for GPU {gpu_id1} or {gpu_id2}, allowing fallback")
+                return True
+            
+            same_type = gpu_info1.gpu_type == gpu_info2.gpu_type
+            if not same_type:
+                self.logger.info(f"GPU type mismatch: GPU {gpu_id1} ({gpu_info1.gpu_type.value}) != GPU {gpu_id2} ({gpu_info2.gpu_type.value})")
+            
+            return same_type
+            
+        except Exception as e:
+            self.logger.error(f"Error comparing GPU types for GPU {gpu_id1} and {gpu_id2}: {e}")
+            return True  # Allow fallback on error
+    
     async def _put_task_back(self, task: Task) -> None:
         """Put a task back to the appropriate queue"""
         async with self._lock:
             if task.task_type == TaskType.FUNCTIONAL:
                 self.functional_queue.insert(0, task)  # 插入到队列前面，优先处理
-                logger.info(f"Put functional task {task.task_id} back to queue")
+                self.logger.info(f"Put functional task {task.task_id} back to queue")
             else:
                 self.performance_queue.insert(0, task)  # 插入到队列前面，优先处理
-                logger.info(f"Put performance task {task.task_id} back to queue") 
+                self.logger.info(f"Put performance task {task.task_id} back to queue") 
