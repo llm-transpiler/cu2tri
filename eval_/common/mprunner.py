@@ -14,8 +14,8 @@ class SubProcResult(BaseModel):
 
 def mp_run(
     worker_func: Callable,
-    args: List[Any] = (),
-    kwargs: Dict[str, Any] = {},
+    args: list | tuple = (),
+    kwargs: dict = {},
     timeout: int = 300,
     SpecSubProcResult: BaseModel = SubProcResult,
 ) -> SubProcResult:
@@ -24,7 +24,8 @@ def mp_run(
         result_queue = multiprocessing.Queue()
         process = multiprocessing.Process(
             target=worker_func,
-            args=args + (result_queue,)
+            args=(result_queue, *args),
+            kwargs=kwargs
         )
         
         process.start()
