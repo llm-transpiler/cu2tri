@@ -14,7 +14,8 @@ class SubProcResult(BaseModel):
 
 def mp_run(
     worker_func: Callable,
-    args: List[Any],
+    args: List[Any] = (),
+    kwargs: Dict[str, Any] = {},
     timeout: int = 300,
     SpecSubProcResult: BaseModel = SubProcResult,
 ) -> SubProcResult:

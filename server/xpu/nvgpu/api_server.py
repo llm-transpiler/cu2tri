@@ -243,7 +243,7 @@ class GPUAPIServer:
                     import importlib
                     # 强制重新加载模块以避免缓存
                     import sys
-                    if request.module_path in sys.modules:
+                    if request.module_path in sys.modules: # important for hot-reload for task function
                         importlib.reload(sys.modules[request.module_path])
                     
                     # Import the module

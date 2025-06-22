@@ -98,10 +98,20 @@ def memory_intensive_task(memory_gb: float = 1.0) -> dict:
 
 
 def check_gpu_assignment() -> dict:
+    """Check which GPU this task is actually running on using subprocess"""
+    try:
+        from eval_.common.mprunner import mp_run
+        result = mp_run(check_gpu_assignment_inner)
+        logger.info(f"GPU assignment check result: {result}")
+        return result.result
+    except Exception as e:
+        logger.error(f"GPU assignment check failed: {e}")
+        return {"status": "failed", "error": str(e)}
+import multiprocessing
+def check_gpu_assignment_inner(result_queue: multiprocessing.Queue) -> dict:
     """Check which GPU this task is actually running on"""
     try:
         import torch
-        
         # Get CUDA_VISIBLE_DEVICES setting
         visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')
         logger.info(f"CUDA_VISIBLE_DEVICES: {visible_devices}") # 不知道为什么永远好像指向第一个DEVICE, 而且改了代码直接发起请求好像还是用的原来的代码
@@ -185,6 +195,7 @@ def check_gpu_assignment() -> dict:
         logger.info(f"Compute capability: {props.major}.{props.minor}")
         logger.info(f"device_name: {device_name}")
         logger.info(f"GPU assignment check: {result}")
+        result_queue.put(result)
         return result
         
     except Exception as e:
