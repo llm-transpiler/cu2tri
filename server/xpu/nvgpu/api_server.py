@@ -113,6 +113,12 @@ class GPUAPIServer:
             self.log_file = self.log_dir / f"gpu_resource_server_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         self.logger = logger or logging.getLogger(__name__)
         
+        # 确保日志目录存在
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # # 清理旧的时间戳命名的日志文件
+        # self._cleanup_old_log_files()
+        
         # 如果没有传入自定义logger，则配置日志
         if self.logger.hasHandlers():
             for handler in self.logger.handlers[:]:
@@ -127,11 +133,13 @@ class GPUAPIServer:
         # 添加控制台处理器
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
+        # console_handler.setLevel(self.log_level)
         self.logger.addHandler(console_handler)
         
         # 添加文件处理器
         file_handler = logging.FileHandler(self.log_file, mode='a')
         file_handler.setFormatter(formatter)
+        # file_handler.setLevel(self.log_level)
         self.logger.addHandler(file_handler)
         self.logger.setLevel(self.log_level)
         
@@ -151,6 +159,22 @@ class GPUAPIServer:
         
         # Setup routes
         self._setup_routes()
+    
+    def _cleanup_old_log_files(self, keep_days: int = 7):
+        """清理旧的时间戳命名的日志文件和空文件"""
+        import time
+        current_time = time.time()
+        cutoff_time = current_time - (keep_days * 24 * 3600)
+        
+        for log_file in self.log_dir.glob("gpu_resource_server_*.log"):
+            try:
+                # 删除旧的时间戳文件或空文件
+                file_stat = log_file.stat()
+                if file_stat.st_mtime < cutoff_time or file_stat.st_size == 0:
+                    log_file.unlink()
+                    print(f"Cleaned up old log file: {log_file.name}")
+            except Exception as e:
+                print(f"Failed to clean up log file {log_file.name}: {e}")
     
     @asynccontextmanager
     async def lifespan(self, app: FastAPI):
@@ -399,8 +423,8 @@ def create_app(log_dir: Optional[str] = None) -> FastAPI:
     return server.app
 
 
-# Default app instance
-app = create_app()
+## Default app instance
+# app = create_app() # bug here, 会导致反复生成新的log文件
 
 
 # Convenience function for running the server
