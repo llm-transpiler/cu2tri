@@ -10,16 +10,39 @@ from typing import List, Optional
 from utils.set_env import set_env
 
 
-def _get_cuda_compute_capability() -> str:
+def _get_cuda_compute_capability() -> int:
     """获取当前CUDA设备的计算能力"""
     try:
         if not os.environ.get("CUDA_VISIBLE_DEVICES"):
             set_env()
         import torch
         if torch.cuda.is_available():
-            device = torch.cuda.current_device()
-            major, minor = torch.cuda.get_device_capability(device)
-            return int(f"{major}{minor}")
+            device_count = torch.cuda.device_count()
+            available_devices = []
+            
+            cnt = 0
+            i = 0
+            compute_capability = set()
+            while len(available_devices) < device_count and cnt < 10:
+                try:
+                    props = torch.cuda.get_device_properties(i)
+                    # 尝试设置设备，如果失败则跳过
+                    torch.cuda.set_device(i)
+                    
+                    compute_capability.add(int(f"{props.major}{props.minor}"))
+                    available_devices.append(i)
+                    i = i + 1
+                    
+                except RuntimeError as e:
+                    # 设备不可用，跳过
+                    pass
+                cnt = cnt + 1
+            
+            if compute_capability:
+                # 返回最高的计算能力
+                return max(compute_capability)
+            else:
+                return 90  # 默认值
         else:
             return 90  # 默认值
     except Exception:
@@ -62,4 +85,3 @@ class EvalConfig:
 
 # 默认配置实例
 DEFAULT_CONFIG = EvalConfig()
-print(DEFAULT_CONFIG.cuda_arch_number)

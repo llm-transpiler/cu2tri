@@ -5,6 +5,9 @@ import signal
 import multiprocessing
 from pydantic import BaseModel, Field
 
+# 设置多进程启动方法为 spawn 以支持 CUDA
+multiprocessing.set_start_method('spawn', force=True)
+
 class SubProcResult(BaseModel):
     subproc_success: bool = False
     result: Any = None
@@ -20,7 +23,7 @@ def mp_run(
     result_queue = multiprocessing.Queue()
     process = multiprocessing.Process(
         target=worker_func,
-        args=args
+        args=args + (result_queue,)
     )
     
     process.start()

@@ -14,6 +14,14 @@ class CorrectnessResult(BaseModel):
     error: str = ""
     traceback: str = ""
 
+
+
+class PerformanceResult(BaseModel):
+    perf_time_ms: float = float('inf')
+    error: str = ""
+    traceback: str = ""
+
+
 def _compare_tensor_results(triton_result: torch.Tensor, torch_result: torch.Tensor, config: EvalConfig) -> CorrectnessResult:
     """比较两个结果的匹配度"""
     try:
