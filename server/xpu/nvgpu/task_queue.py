@@ -113,7 +113,7 @@ class TaskQueue:
         description: str,
         execute_func: Callable[..., Awaitable[Any]],
         args: tuple = (),
-        kwargs: dict = None,
+        kwargs: dict = {},
         max_wait_time_minutes: Optional[int] = None,
         preferred_gpu_id: Optional[int] = None,
         allow_fallback: bool = False,
