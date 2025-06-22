@@ -14,27 +14,32 @@ def print_gpu_status():
     
     available_devices = []
     
-    for i in range(device_count):
+    cnt = 0
+    i = 0
+    compute_capability = set()
+    while len(available_devices) < device_count and cnt < 10:
         try:
             props = torch.cuda.get_device_properties(i)
             # 尝试设置设备，如果失败则跳过
             torch.cuda.set_device(i)
-            mem_allocated = torch.cuda.memory_allocated(i) / 1024**3
-            mem_cached = torch.cuda.memory_reserved(i) / 1024**3
+            # mem_allocated = torch.cuda.memory_allocated(i) / 1024**3
+            # mem_cached = torch.cuda.memory_reserved(i) / 1024**3
             mem_total = props.total_memory / 1024**3
-            mem_free = mem_total - mem_cached
-            mem_usage_percent = (mem_cached / mem_total) * 100
+            # mem_free = mem_total - mem_cached
+            # mem_usage_percent = (mem_cached / mem_total) * 100
             
             print(f"\nGPU {i}: {props.name}")
+            compute_capability.add(int(f"{props.major}{props.minor}"))
             print(f"  Compute capability: {props.major}.{props.minor}")
             print(f"  Multi-processor count: {props.multi_processor_count}")
             print(f"  Total memory: {mem_total:.2f}GB")
-            print(f"  Allocated memory: {mem_allocated:.2f}GB")
-            print(f"  Cached memory: {mem_cached:.2f}GB")
-            print(f"  Free memory: {mem_free:.2f}GB")
-            print(f"  Memory usage: {mem_usage_percent:.1f}%")
+            # print(f"  Allocated memory: {mem_allocated:.2f}GB")
+            # print(f"  Cached memory: {mem_cached:.2f}GB")
+            # print(f"  Free memory: {mem_free:.2f}GB")
+            # print(f"  Memory usage: {mem_usage_percent:.1f}%")
             
             available_devices.append(i)
+            i = i + 1
             
             # 在当前设备上分配tensor并进行加法，检验当前GPU是否可用
             try:
@@ -52,6 +57,7 @@ def print_gpu_status():
             print(f"\nGPU {i}: {props.name} [UNAVAILABLE]")
             print(f"  Error: {str(e)}")
             print(f"  Status: Device is busy or inaccessible")
+        cnt = cnt + 1
     
     if available_devices:
         current_device = torch.cuda.current_device()
@@ -62,10 +68,10 @@ def print_gpu_status():
     
     print(f"CUDA version: {torch.version.cuda}")
     print(f"cuDNN version: {torch.backends.cudnn.version()}")
-
+    print(f"Compute capability: {sorted(list(compute_capability))}")
 
 if __name__ == "__main__":
     import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = "2,3,4,5"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 5"
     import torch
     print_gpu_status()
