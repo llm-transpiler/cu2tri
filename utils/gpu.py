@@ -20,6 +20,7 @@ def print_gpu_status():
     while len(available_devices) < device_count and cnt < 10:
         try:
             props = torch.cuda.get_device_properties(i)
+            print(f"GPU {i}: {props.name}")
             # 尝试设置设备，如果失败则跳过
             torch.cuda.set_device(i)
             # mem_allocated = torch.cuda.memory_allocated(i) / 1024**3
@@ -75,3 +76,15 @@ if __name__ == "__main__":
     # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 5"
     import torch
     print_gpu_status()
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    current_device = torch.cuda.current_device()
+    device_name = torch.cuda.get_device_name(current_device)
+    print(f"Current device: {current_device}, name: {device_name}") # 全是 5
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    current_device = torch.cuda.current_device()
+    device_name = torch.cuda.get_device_name(current_device)
+    print(f"Current device: {current_device}, name: {device_name}") # 全是 5
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    current_device = torch.cuda.current_device()
+    device_name = torch.cuda.get_device_name(current_device)
+    print(f"Current device: {current_device}, name: {device_name}") # 全是 5
