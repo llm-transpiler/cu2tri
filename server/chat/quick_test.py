@@ -169,7 +169,7 @@ class QuickTester:
         print(f"成功率: {successful/total*100:.1f}%")
         
         if successful > 0:
-            response_times = [r["response_time"] for r in results if r.get("success")]
+            response_times = [r["response_time"] for r in results if r.get("success")]  # type: ignore
             print(f"平均响应时间: {sum(response_times)/len(response_times):.2f}s")
             print(f"最快响应: {min(response_times):.2f}s")
             print(f"最慢响应: {max(response_times):.2f}s")

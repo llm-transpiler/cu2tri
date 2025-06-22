@@ -11,7 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import threading
 
-from .models import ChatRequest, ChatResponse, ErrorResponse
+from .deprecated.models import ChatRequest, ChatResponse, ErrorResponse
 
 @dataclass
 class QueueTask:

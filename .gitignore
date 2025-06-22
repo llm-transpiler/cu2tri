@@ -9,5 +9,6 @@ dev_debug/
 dev/
 */dev/*
 *logs/*
+**/logs/*
 .env
 *deprecated*

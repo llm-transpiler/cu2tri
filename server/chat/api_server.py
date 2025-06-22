@@ -3,18 +3,16 @@
 聊天服务HTTP API服务器
 提供REST接口访问聊天服务
 """
-import asyncio
 import logging
 from typing import Dict, Any, Optional
 import json
-import time
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 
 from .service import ChatService
-from .models import ChatRequest, ChatResponse, ErrorResponse, ModelName, ModelConfig, ModelProvider
+from .deprecated.models import ChatRequest, ErrorResponse, ModelName, ModelConfig, ModelProvider
 
 # Pydantic模型用于API
 class ChatRequestModel(BaseModel):
@@ -129,6 +127,152 @@ class ChatAPIServer:
                 raise
             except Exception as e:
                 self.logger.error(f"Chat endpoint error: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/stream_chat")
+        async def stream_chat_endpoint(request: ChatRequestModel):
+            """流式聊天接口 - 支持genai和其他provider的流式输出"""
+            try:
+                # 验证模型名称
+                try:
+                    model = ModelName(request.model)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported model: {request.model}"
+                    )
+                
+                # 创建聊天请求
+                chat_request = ChatRequest(
+                    conversation_id=request.conversation_id,
+                    message=request.message,
+                    model=model,
+                    thought=request.thought,
+                    max_tokens=request.max_tokens,
+                    temperature=request.temperature,
+                    stream=True  # 强制开启流式模式
+                )
+                
+                # 创建流式响应生成器
+                async def generate_stream():
+                    try:
+                        async for chunk in self.chat_service.stream_chat(chat_request):
+                            # 以Server-Sent Events格式输出
+                            yield f"data: {json.dumps({'content': chunk})}\n\n"
+                        
+                        # 发送结束标记
+                        yield f"data: {json.dumps({'finish_reason': 'stop'})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        
+                    except Exception as e:
+                        self.logger.error(f"Stream generation error: {e}")
+                        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                
+                return StreamingResponse(
+                    generate_stream(),
+                    media_type="text/plain",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Content-Type": "text/event-stream"
+                    }
+                )
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Stream chat endpoint error: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/genai_stream_chat")
+        async def genai_stream_chat_endpoint(request: ChatRequestModel):
+            """专用于Gemini API的流式聊天接口"""
+            try:
+                # 验证模型是否为Gemini
+                try:
+                    model = ModelName(request.model)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported model: {request.model}"
+                    )
+                
+                # 检查是否为Gemini模型
+                if not ("gemini" in request.model.lower() or "genai" in request.model.lower()):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"This endpoint is only for Gemini models, got: {request.model}"
+                    )
+                
+                # 创建聊天请求
+                chat_request = ChatRequest(
+                    conversation_id=request.conversation_id,
+                    message=request.message,
+                    model=model,
+                    thought=request.thought,
+                    max_tokens=request.max_tokens,
+                    temperature=request.temperature,
+                    stream=True
+                )
+                
+                # 创建Gemini专用流式响应生成器
+                async def generate_gemini_stream():
+                    try:
+                        self.logger.info(f"Starting Gemini stream for model: {request.model}")
+                        
+                        chunk_count = 0
+                        async for chunk in self.chat_service.stream_chat(chat_request):
+                            chunk_count += 1
+                            
+                            # 实时打印日志（可选）
+                            if chunk_count <= 3:  # 只打印前几个chunk的日志
+                                self.logger.debug(f"Gemini chunk {chunk_count}: {chunk[:50]}...")
+                            
+                            # 格式化为JSON输出
+                            response_data = {
+                                "content": chunk,
+                                "model": request.model,
+                                "chunk_id": chunk_count,
+                                "finish_reason": None
+                            }
+                            yield f"data: {json.dumps(response_data)}\n\n"
+                        
+                        # 发送结束标记
+                        final_data = {
+                            "content": "",
+                            "model": request.model,
+                            "chunk_id": chunk_count + 1,
+                            "finish_reason": "stop"
+                        }
+                        yield f"data: {json.dumps(final_data)}\n\n"
+                        yield "data: [DONE]\n\n"
+                        
+                        self.logger.info(f"Gemini stream completed with {chunk_count} chunks")
+                        
+                    except Exception as e:
+                        self.logger.error(f"Gemini stream generation error: {e}")
+                        error_data = {
+                            "error": str(e),
+                            "error_type": type(e).__name__,
+                            "model": request.model
+                        }
+                        yield f"data: {json.dumps(error_data)}\n\n"
+                
+                return StreamingResponse(
+                    generate_gemini_stream(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Headers": "Content-Type"
+                    }
+                )
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Gemini stream chat endpoint error: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.get("/conversations/{conversation_id}/history")

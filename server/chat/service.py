@@ -5,13 +5,13 @@
 """
 import asyncio
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, AsyncGenerator
 import time
 from collections import defaultdict
 import threading
 
-from .models import (
-    ChatRequest, ChatResponse, ErrorResponse, ChatMessage,
+from .deprecated.models import (
+    ChatRequest, ChatResponse, ErrorResponse, Message,
     ModelConfig, ModelProvider, ModelName
 )
 from .providers import ProviderFactory, ChatProvider
@@ -23,8 +23,6 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from llm.history.tree import ConversationTree
-from llm.providers.openrouter_ import OpenRouterMessage, OpenRouterChatHistory
-from llm.providers.gemini_ import GeminiMessage, GeminiChatHistory
 
 class ConversationManager:
     """对话管理器，管理多个对话的历史记录"""
@@ -57,7 +55,7 @@ class ConversationManager:
             
             return self.conversations[conversation_id]
     
-    def add_message_to_conversation(self, conversation_id: str, message: ChatMessage, model_config: ModelConfig):
+    def add_message_to_conversation(self, conversation_id: str, message: Message, model_config: ModelConfig):
         """添加消息到对话"""
         conversation = self.get_or_create_conversation(conversation_id, model_config)
         
@@ -68,12 +66,12 @@ class ConversationManager:
                 thought=message.thought
             )
     
-    def get_conversation_history(self, conversation_id: str, model_config: ModelConfig) -> List[ChatMessage]:
+    def get_conversation_history(self, conversation_id: str, model_config: ModelConfig) -> List[Message]:
         """获取对话历史"""
         conversation = self.get_or_create_conversation(conversation_id, model_config)
         
         with self.conversation_lock:
-            history = conversation.get_history_for_api()
+            history = conversation.get_history()
             messages = []
             
             for msg in history.messages:
@@ -89,7 +87,7 @@ class ConversationManager:
                             content = part.content
                 
                 if content:  # 只添加有内容的消息
-                    messages.append(ChatMessage(
+                    messages.append(Message(
                         role=msg.role,
                         content=content,
                         thought=thought
@@ -226,7 +224,7 @@ class ChatService:
             )
             
             # 添加用户消息到历史
-            user_message = ChatMessage(
+            user_message = Message(
                 role="user",
                 content=request.message,
                 thought=request.thought
@@ -242,7 +240,7 @@ class ChatService:
             
             # 如果是成功响应，添加到对话历史
             if isinstance(response, ChatResponse):
-                assistant_message = ChatMessage(
+                assistant_message = Message(
                     role="assistant",
                     content=response.message,
                     thought=response.thought
@@ -268,7 +266,7 @@ class ChatService:
                 error_type=type(e).__name__
             )
     
-    def get_conversation_history(self, conversation_id: str, model_name: str) -> List[ChatMessage]:
+    def get_conversation_history(self, conversation_id: str, model_name: str) -> List[Message]:
         """获取对话历史"""
         if model_name not in self.model_configs:
             return []
@@ -294,4 +292,84 @@ class ChatService:
             'status': 'healthy' if self.running else 'stopped',
             'timestamp': time.time(),
             'stats': self.get_stats()
-        } 
+        }
+
+    async def stream_chat(self, request: ChatRequest) -> AsyncGenerator[str, None]:
+        """流式聊天请求 - 支持genai和其他provider
+        
+        Args:
+            request: 聊天请求
+            
+        Yields:
+            str: 流式响应文本块
+        """
+        if not self.running:
+            yield "Error: Chat service is not running"
+            return
+        
+        try:
+            # 检查模型是否支持
+            model_name = request.model.value
+            if model_name not in self.providers:
+                yield f"Error: Model {model_name} not supported"
+                return
+            
+            # 获取提供商和模型配置
+            provider = self.providers[model_name]
+            model_config = self.model_configs[model_name]
+            
+            # 获取对话历史
+            history = self.conversation_manager.get_conversation_history(
+                request.conversation_id, 
+                model_config
+            )
+            
+            # 添加用户消息到历史
+            user_message = Message(
+                role="user",
+                content=request.message,
+                thought=request.thought
+            )
+            self.conversation_manager.add_message_to_conversation(
+                request.conversation_id,
+                user_message,
+                model_config
+            )
+            
+            # 收集完整响应用于历史记录
+            full_response_parts = []
+            full_thought = None
+            
+            # 流式调用API
+            async for chunk in provider.stream_chat(request, history):
+                # 解析可能的thought标签
+                if "<Thought>" in chunk and "</Thought>" in chunk:
+                    thought_start = chunk.find("<Thought>") + 10
+                    thought_end = chunk.find("</Thought>")
+                    thought_content = chunk[thought_start:thought_end].strip()
+                    if thought_content:
+                        full_thought = thought_content
+                    # 移除thought标签，只yield内容部分
+                    chunk = chunk[thought_end + 11:].strip()
+                
+                if chunk:  # 只yield非空内容
+                    full_response_parts.append(chunk)
+                    yield chunk
+            
+            # 将完整响应添加到对话历史
+            full_response = "".join(full_response_parts)
+            if full_response:
+                assistant_message = Message(
+                    role="assistant",
+                    content=full_response,
+                    thought=full_thought
+                )
+                self.conversation_manager.add_message_to_conversation(
+                    request.conversation_id,
+                    assistant_message,
+                    model_config
+                )
+            
+        except Exception as e:
+            self.logger.error(f"Error in stream_chat: {e}")
+            yield f"Error: {str(e)}" 
