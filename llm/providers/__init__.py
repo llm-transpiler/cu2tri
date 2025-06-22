@@ -25,7 +25,7 @@ from .impl import (
 
 # 导入配置管理
 from .config import (
-    PlatformConfig, ConfigManager, get_config_manager,
+    PlatformConfig, create_config,
     DEFAULT_MAX_TOKENS, DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT
 )
 
@@ -37,26 +37,24 @@ from .registry import (
 
 # 导入工厂类
 from .factory import (
-    ProviderFactory, ProviderManager, get_provider_manager, get_provider
+    ProviderFactory, get_provider
 )
 
 # 多模态支持
 from .multimodal import (
     GeminiMessage, GeminiChatHistory, GeminiFileManager,
     OpenRouterMessage, OpenRouterChatHistory, OpenRouterFileManager,
-    OpenRouterMessage, OpenRouterChatHistory,
 )
 
 # 便捷函数
 def create_provider(platform_type, api_key=None, api_base=None, **kwargs) -> Provider:
     """便捷创建提供商函数"""
-    config = PlatformConfig(
+    return ProviderFactory.create_provider(
         platform_type=platform_type,
         api_key=api_key,
         api_base=api_base,
         **kwargs
     )
-    return ProviderFactory.create_provider(config)
 
 # 版本信息
 __version__ = "1.0.0"
@@ -83,25 +81,22 @@ __all__ = [
     'DeepSeekProvider',
     
     # 配置管理
-    'PlatformConfig', 'ConfigManager', 'get_config_manager',
+    'PlatformConfig', 'create_config',
     'DEFAULT_MAX_TOKENS', 'DEFAULT_TEMPERATURE', 'DEFAULT_TIMEOUT',
     
     # 注册中心
     'ProviderRegistry', 'get_provider_registry',
     
     # 工厂类
-    'ProviderFactory', 'ProviderManager', 'get_provider_manager',
+    'ProviderFactory',
     
     # 便捷函数
     'get_provider',
-    
-    # 便捷函数
     'create_provider',
     
     # 多模态支持
     'GeminiMessage', 'GeminiChatHistory', 'GeminiFileManager',
     'OpenRouterMessage', 'OpenRouterChatHistory', 'OpenRouterFileManager',
-    'OpenRouterMessage', 'OpenRouterChatHistory',
     
     # 快捷访问
     'PLATFORM_TYPES',

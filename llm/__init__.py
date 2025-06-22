@@ -8,6 +8,9 @@
 from .providers import (
     # 基础类
     FileManager, Message, ChatHistory,
+)
+
+from .history.parts import (
     Part, TextPart, ThoughtPart, ContentPart, FilePart, ImagePart,
 )
 

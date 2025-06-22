@@ -14,9 +14,6 @@ from llm.providers import (
     create_provider,
     PlatformType,
     Message, ChatRequest,
-    OpenRouterChatHistory,
-    OpenRouterMessage,
-    OpenRouterFileManager,
 )
 from llm.providers.impl import OpenRouterChatTree
 
@@ -38,7 +35,7 @@ async def basic_chat_example():
         
         # 创建聊天请求
         request = ChatRequest(
-            messages=tree.get_history().messages,
+            messages=tree.get_history().to_native(),
             model="anthropic/claude-3.7-sonnet",
             include_thinking=True,
             thinking_budget=1000,
