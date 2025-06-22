@@ -15,38 +15,30 @@ def _get_cuda_compute_capability() -> int:
     try:
         if not os.environ.get("CUDA_VISIBLE_DEVICES"):
             set_env()
+        # 延迟导入torch，避免在模块级别导入时就占用GPU
         import torch
         if torch.cuda.is_available():
             device_count = torch.cuda.device_count()
-            available_devices = []
-            
-            cnt = 0
-            i = 0
             compute_capability = set()
-            while len(available_devices) < device_count and cnt < 10:
+            
+            # 只查询设备属性，不设置当前设备，避免创建CUDA context
+            for i in range(device_count):
                 try:
                     props = torch.cuda.get_device_properties(i)
-                    # 尝试设置设备，如果失败则跳过
-                    torch.cuda.set_device(i)
-                    
                     compute_capability.add(int(f"{props.major}{props.minor}"))
-                    available_devices.append(i)
-                    i = i + 1
-                    
                 except RuntimeError as e:
                     # 设备不可用，跳过
-                    pass
-                cnt = cnt + 1
+                    continue
             
             if compute_capability:
                 # 返回最高的计算能力
-                return max(compute_capability)
+                return sorted(list(compute_capability))
             else:
-                return 90  # 默认值
+                return [80,86,89,90]  # 默认值
         else:
-            return 90  # 默认值
+            return [80,86,89,90]  # 默认值
     except Exception:
-        return 90  # 默认值
+        return [80,86,89,90]  # 默认值
 
 @dataclass
 class EvalConfig:
@@ -56,8 +48,8 @@ class EvalConfig:
     extra_cuda_cflags: List[str] = None
     build_dir: str = './build'
     cuda_kernel_name: str = "cuda_kernel"
-    # 自动检测CUDA计算能力
-    cuda_arch_number: int = _get_cuda_compute_capability()
+    # 延迟初始化CUDA计算能力，避免在模块导入时就检测GPU
+    cuda_arch_number: list[int] = None
     
     # 性能测试参数
     warmup_runs: int = 1000
@@ -74,14 +66,16 @@ class EvalConfig:
     log_level: str = "DEBUG"
     
     def __post_init__(self):
-        flag_template = '-gencode=arch=compute_{arch_number},code=sm_{arch_number}'
+        # 延迟检测CUDA计算能力
+        if self.cuda_arch_number is None:
+            self.cuda_arch_number = _get_cuda_compute_capability()
         if self.extra_cuda_cflags is None:
             self.extra_cuda_cflags = [
                 '-O3', 
                 '--use_fast_math', 
-                flag_template.format(arch_number=self.cuda_arch_number),
             ]
+        for arch_number in self.cuda_arch_number:
+            flag_template = '-gencode=arch=compute_{arch_number},code=sm_{arch_number}'
+            self.extra_cuda_cflags.append(flag_template.format(arch_number=arch_number))
 
-
-# 默认配置实例
 DEFAULT_CONFIG = EvalConfig()

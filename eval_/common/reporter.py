@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-import torch
 import traceback
 
 from .config import EvalConfig
@@ -15,16 +14,18 @@ class CorrectnessResult(BaseModel):
     traceback: str = ""
 
 
-
 class PerformanceResult(BaseModel):
     perf_time_ms: float = float('inf')
     error: str = ""
     traceback: str = ""
 
 
-def _compare_tensor_results(triton_result: torch.Tensor, torch_result: torch.Tensor, config: EvalConfig) -> CorrectnessResult:
+def _compare_tensor_results(triton_result, torch_result, config: EvalConfig) -> CorrectnessResult:
     """比较两个结果的匹配度"""
     try:
+        # 延迟导入torch，避免在模块级别导入时就占用GPU
+        import torch
+        
         # 形状比较
         shape_match = triton_result.shape == torch_result.shape
         
