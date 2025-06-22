@@ -15,7 +15,7 @@ curl -X POST "http://localhost:8081/tasks/submit" \
     "task_type": "functional",
     "name": "Simple CPU Task",
     "description": "A basic CPU task for testing",
-    "module_path": "server.xpu.nvgpu.example_tasks",
+    "module_path": "server.xpu.nvgpu.examples.example_tasks",
     "function_name": "simple_cpu_task",
     "args": ["Hello World", 5],
     "kwargs": {},
@@ -78,7 +78,7 @@ The system uses a **two-pass scheduling algorithm** with **GPU type matching**:
 # Force task to run on GPU 1 only
 {
   "task_type": "performance",
-  "module_path": "server.xpu.nvgpu.example_tasks",
+  "module_path": "server.xpu.nvgpu.examples.example_tasks",
   "function_name": "gpu_compute_task",
   "args": [1000],
   "kwargs": {},
@@ -93,7 +93,7 @@ The system uses a **two-pass scheduling algorithm** with **GPU type matching**:
 # Prefer GPU 0, but only allow fallback to other H100 GPUs
 {
   "task_type": "functional",
-  "module_path": "server.xpu.nvgpu.example_tasks",
+  "module_path": "server.xpu.nvgpu.examples.example_tasks",
   "function_name": "memory_intensive_task",
   "args": [],
   "kwargs": {"memory_gb": 2.0},
@@ -109,7 +109,7 @@ The system uses a **two-pass scheduling algorithm** with **GPU type matching**:
 # Prefer GPU 0, but allow fallback to any available GPU type
 {
   "task_type": "functional",
-  "module_path": "server.xpu.nvgpu.example_tasks",
+  "module_path": "server.xpu.nvgpu.examples.example_tasks",
   "function_name": "simple_cpu_task",
   "args": ["Processing", 5],
   "kwargs": {},
@@ -125,7 +125,7 @@ The system uses a **two-pass scheduling algorithm** with **GPU type matching**:
 # Let system choose any available GPU
 {
   "task_type": "functional",
-  "module_path": "server.xpu.nvgpu.example_tasks",
+  "module_path": "server.xpu.nvgpu.examples.example_tasks",
   "function_name": "async_cpu_task",
   "args": ["Processing", 5],
   "kwargs": {}

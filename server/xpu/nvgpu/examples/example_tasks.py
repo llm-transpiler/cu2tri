@@ -8,6 +8,7 @@ import asyncio
 import time
 import logging
 import os
+import multiprocessing
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +102,17 @@ def check_gpu_assignment() -> dict:
     """Check which GPU this task is actually running on using subprocess"""
     try:
         from eval_.common.mprunner import mp_run
-        result = mp_run(check_gpu_assignment_inner)
+        result = mp_run(
+            worker_func=check_gpu_assignment_inner,
+            args=()
+        )
         logger.info(f"GPU assignment check result: {result}")
-        return result.result
+        return result.result if result.subproc_success else {"status": "failed", "error": result.error}
     except Exception as e:
         logger.error(f"GPU assignment check failed: {e}")
         return {"status": "failed", "error": str(e)}
-import multiprocessing
+
+
 def check_gpu_assignment_inner(result_queue: multiprocessing.Queue) -> dict:
     """Check which GPU this task is actually running on"""
     try:
@@ -115,40 +120,6 @@ def check_gpu_assignment_inner(result_queue: multiprocessing.Queue) -> dict:
         # Get CUDA_VISIBLE_DEVICES setting
         visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')
         logger.info(f"CUDA_VISIBLE_DEVICES: {visible_devices}") # 不知道为什么永远好像指向第一个DEVICE, 而且改了代码直接发起请求好像还是用的原来的代码
-        '''
-        2025-06-22 21:01:16,335 - server.xpu.nvgpu.example_tasks - INFO - Starting GPU compute task with n=100
-2025-06-22 21:01:16,914 - server.xpu.nvgpu.example_tasks - INFO - Completed GPU compute task: {'matrix_size': 100, 'computation_time': 0.07730770111083984, 'result_mean': -0.010694164782762527, 'result_std': 9.991312026977539, 'gpu_memory_allocated': 33675776, 'status': 'success'}
-[INFO] - Task 95e3f275-c650-4399-8eab-a2caed173d99 completed on GPU 2 after 2.20s
-[INFO] - Executing task 1ed6ee6e-98fe-45c1-bdfd-9fac7f1dfbf3 on GPU 5
-2025-06-22 21:01:16,915 - server.xpu.nvgpu.example_tasks - INFO - CUDA_VISIBLE_DEVICES: 5
-2025-06-22 21:01:16,989 - server.xpu.nvgpu.example_tasks - INFO - Compute capability: 9.0
-2025-06-22 21:01:16,989 - server.xpu.nvgpu.example_tasks - INFO - device_name: NVIDIA H100 PCIe
-2025-06-22 21:01:16,989 - server.xpu.nvgpu.example_tasks - INFO - GPU assignment check: {'cuda_visible_devices': '5', 'current_device_id': 0, 'device_name': 'NVIDIA H100 PCIe', 'gpu_type': 'Unknown', 'total_visible_devices': 1, 'status': 'success'}
-[INFO] - Task 1ed6ee6e-98fe-45c1-bdfd-9fac7f1dfbf3 completed on GPU 5 after 2.24s
-[INFO] - Executing task 662df6a2-6117-4e37-aa60-1bd98676b202 on GPU 0
-2025-06-22 21:01:16,989 - server.xpu.nvgpu.example_tasks - INFO - CUDA_VISIBLE_DEVICES: 0
-2025-06-22 21:01:17,050 - server.xpu.nvgpu.example_tasks - INFO - Compute capability: 9.0
-2025-06-22 21:01:17,050 - server.xpu.nvgpu.example_tasks - INFO - device_name: NVIDIA H100 PCIe
-2025-06-22 21:01:17,050 - server.xpu.nvgpu.example_tasks - INFO - GPU assignment check: {'cuda_visible_devices': '0', 'current_device_id': 0, 'device_name': 'NVIDIA H100 PCIe', 'gpu_type': 'Unknown', 'total_visible_devices': 1, 'status': 'success'}
-[INFO] - Task 662df6a2-6117-4e37-aa60-1bd98676b202 completed on GPU 0 after 2.29s
-[INFO] - Executing task 24adfef6-6e0f-46e8-bc83-9d28aa23bac8 on GPU 0
-2025-06-22 21:01:17,050 - server.xpu.nvgpu.example_tasks - INFO - CUDA_VISIBLE_DEVICES: 0
-2025-06-22 21:01:17,110 - server.xpu.nvgpu.example_tasks - INFO - Compute capability: 9.0
-2025-06-22 21:01:17,110 - server.xpu.nvgpu.example_tasks - INFO - device_name: NVIDIA H100 PCIe
-2025-06-22 21:01:17,110 - server.xpu.nvgpu.example_tasks - INFO - GPU assignment check: {'cuda_visible_devices': '0', 'current_device_id': 0, 'device_name': 'NVIDIA H100 PCIe', 'gpu_type': 'Unknown', 'total_visible_devices': 1, 'status': 'success'}
-[INFO] - Task 24adfef6-6e0f-46e8-bc83-9d28aa23bac8 completed on GPU 0 after 2.34s
-[INFO] - Executing task 299ea6a5-87fa-4a28-9e1f-1b17d5260157 on GPU 1
-2025-06-22 21:01:17,110 - server.xpu.nvgpu.example_tasks - INFO - CUDA_VISIBLE_DEVICES: 1
-2025-06-22 21:01:17,171 - server.xpu.nvgpu.example_tasks - INFO - Compute capability: 9.0
-2025-06-22 21:01:17,171 - server.xpu.nvgpu.example_tasks - INFO - device_name: NVIDIA H100 PCIe
-2025-06-22 21:01:17,171 - server.xpu.nvgpu.example_tasks - INFO - GPU assignment check: {'cuda_visible_devices': '1', 'current_device_id': 0, 'device_name': 'NVIDIA H100 PCIe', 'gpu_type': 'Unknown', 'total_visible_devices': 1, 'status': 'success'}
-[INFO] - Task 299ea6a5-87fa-4a28-9e1f-1b17d5260157 completed on GPU 1 after 2.38s
-[INFO] - Executing task 6c00f009-b65e-4036-94ec-8b64d810e760 on GPU 3
-2025-06-22 21:01:17,171 - server.xpu.nvgpu.example_tasks - INFO - CUDA_VISIBLE_DEVICES: 3
-2025-06-22 21:01:17,241 - server.xpu.nvgpu.example_tasks - INFO - Compute capability: 9.0
-2025-06-22 21:01:17,242 - server.xpu.nvgpu.example_tasks - INFO - device_name: NVIDIA H100 PCIe
-2025-06-22 21:01:17,242 - server.xpu.nvgpu.example_tasks - INFO - GPU assignment check: {'cuda_visible_devices': '3', 'current_device_id': 0, 'device_name': 'NVIDIA H100 PCIe', 'gpu_type': 'Unknown', 'total_visible_devices': 1, 'status': 'success'}
-        '''
         
         # Get current device
         if torch.cuda.is_available():
@@ -224,4 +195,163 @@ async def long_running_task(duration_minutes: int = 5) -> dict:
     }
     
     logger.info(f"Completed long-running task: {result}")
-    return result 
+    return result
+
+
+def multi_gpu_matmul_task_inner(result_queue: multiprocessing.Queue, gpu_id: int, matrix_size: int, num_iterations: int = 10) -> dict:
+    """Inner function for matmul computation on specific GPU"""
+    try:
+        import torch
+        
+        # 设置当前GPU
+        torch.cuda.set_device(gpu_id)
+        device = f'cuda:{gpu_id}'
+        
+        logger.info(f"GPU {gpu_id}: Starting matmul computation on device {device}")
+        
+        # 获取GPU信息
+        visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES', 'Not set')
+        device_name = torch.cuda.get_device_name(gpu_id)
+        props = torch.cuda.get_device_properties(gpu_id)
+        
+        logger.info(f"GPU {gpu_id}: Device name: {device_name}")
+        logger.info(f"GPU {gpu_id}: Compute capability: {props.major}.{props.minor}")
+        logger.info(f"GPU {gpu_id}: CUDA_VISIBLE_DEVICES: {visible_devices}")
+        
+        # 准备计算
+        start_time = time.time()
+        total_computation_time = 0.0
+        
+        results_stats = []
+        
+        for iteration in range(num_iterations):
+            # 创建随机矩阵
+            a = torch.randn(matrix_size, matrix_size, device=device, dtype=torch.float32)
+            b = torch.randn(matrix_size, matrix_size, device=device, dtype=torch.float32)
+            
+            # 执行矩阵乘法
+            iter_start = time.time()
+            c = torch.matmul(a, b)
+            torch.cuda.synchronize()  # 确保计算完成
+            iter_end = time.time()
+            
+            iter_time = iter_end - iter_start
+            total_computation_time += iter_time
+            
+            # 记录结果统计
+            stats = {
+                "iteration": iteration,
+                "computation_time": iter_time,
+                "result_mean": float(c.mean().cpu()),
+                "result_std": float(c.std().cpu())
+            }
+            results_stats.append(stats)
+            
+            logger.info(f"GPU {gpu_id}: Iteration {iteration+1}/{num_iterations} completed in {iter_time:.4f}s")
+            
+            # 清理内存
+            del a, b, c
+            torch.cuda.empty_cache()
+        
+        end_time = time.time()
+        total_time = end_time - start_time
+        
+        # 计算性能指标
+        avg_computation_time = total_computation_time / num_iterations
+        throughput = num_iterations / total_time  # iterations per second
+        flops_per_iter = 2 * matrix_size**3  # approximate FLOPs for matmul
+        total_flops = flops_per_iter * num_iterations
+        tflops = total_flops / (total_computation_time * 1e12)  # TFLOPs
+        
+        result = {
+            "gpu_id": gpu_id,
+            "device_name": device_name,
+            "cuda_visible_devices": visible_devices,
+            "compute_capability": f"{props.major}.{props.minor}",
+            "matrix_size": matrix_size,
+            "num_iterations": num_iterations,
+            "total_time": total_time,
+            "total_computation_time": total_computation_time,
+            "avg_computation_time": avg_computation_time,
+            "throughput_iter_per_sec": throughput,
+            "estimated_tflops": tflops,
+            "memory_allocated_mb": torch.cuda.memory_allocated(gpu_id) / 1024**2,
+            "iterations_stats": results_stats,
+            "status": "success"
+        }
+        
+        logger.info(f"GPU {gpu_id}: Completed matmul task - Avg time: {avg_computation_time:.4f}s, TFLOPs: {tflops:.2f}")
+        result_queue.put(result)
+        return result
+        
+    except Exception as e:
+        error_msg = f"GPU {gpu_id} matmul task failed: {e}"
+        logger.error(error_msg)
+        error_result = {"gpu_id": gpu_id, "status": "failed", "error": str(e)}
+        result_queue.put(error_result)
+        return error_result
+
+
+async def concurrent_gpu_benchmark(matrix_sizes: list = None, num_iterations: int = 10000) -> dict:
+    """Run concurrent benchmarks on all GPUs with different matrix sizes"""
+    if matrix_sizes is None:
+        matrix_sizes = [512, 1024, 2048]
+    
+    try:
+        from eval_.common.mprunner import mp_run
+        import torch
+        
+        logger.info(f"Starting concurrent GPU benchmark with sizes: {matrix_sizes}")
+        
+        if not torch.cuda.is_available():
+            return {"status": "failed", "error": "CUDA not available"}
+        
+        gpu_count = torch.cuda.device_count()
+        logger.info(f"Found {gpu_count} GPUs available")
+        
+        # 为每个GPU分配不同大小的矩阵进行测试 - 使用异步并发执行
+        all_results = []
+        
+        # 创建所有任务的列表
+        async def run_gpu_task(gpu_id: int, size: int) -> dict:
+            """异步运行单个GPU任务"""
+            result = await asyncio.to_thread(
+                mp_run,
+                worker_func=multi_gpu_matmul_task_inner,
+                args=(gpu_id, size, num_iterations)
+            )
+            return {
+                "gpu_id": gpu_id,
+                "matrix_size": size,
+                "result": result.result if result.subproc_success else {"status": "failed", "error": result.error}
+            }
+        
+        for size in matrix_sizes:
+            logger.info(f"Testing matrix size: {size}x{size}")
+            
+            # 为当前矩阵大小创建所有GPU的并发任务
+            tasks = [run_gpu_task(gpu_id, size) for gpu_id in range(gpu_count)]
+            
+            # 并发执行所有GPU任务
+            size_results = await asyncio.gather(*tasks)
+            
+            all_results.append({
+                "matrix_size": size,
+                "gpu_results": size_results
+            })
+        
+        # 生成性能对比报告
+        performance_summary = {
+            "total_gpus": gpu_count,
+            "matrix_sizes_tested": matrix_sizes,
+            "num_iterations_per_test": num_iterations,
+            "detailed_results": all_results,
+            "status": "success"
+        }
+        
+        logger.info(f"Completed concurrent GPU benchmark")
+        return performance_summary
+        
+    except Exception as e:
+        logger.error(f"Concurrent GPU benchmark failed: {e}")
+        return {"status": "failed", "error": str(e)} 
