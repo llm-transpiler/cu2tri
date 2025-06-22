@@ -189,7 +189,7 @@ class TaskQueue:
             'result': task.result
         }
     
-    async def cancel_task(self, task_id: str) -> bool:
+    async def cancel_task(self, task_id: str) -> bool: # 现在cancel应该是完全没有效果的, 可能需要强行关闭 #TODO
         """Cancel a pending task"""
         async with self._lock:
             # Remove from functional queue
