@@ -46,9 +46,9 @@ class ProviderFactory:
             logger.warning("OpenAIProvider not available")
         
         try:
-            from .impl import GoogleProvider
+            from .impl import GenaiProvider
             if PlatformType.GOOGLE_OFFICIAL in PLATFORM_REGISTRY:
-                provider_mappings[PlatformType.GOOGLE_OFFICIAL] = GoogleProvider
+                provider_mappings[PlatformType.GOOGLE_OFFICIAL] = GenaiProvider
         except ImportError:
             logger.warning("GoogleProvider not available")
         

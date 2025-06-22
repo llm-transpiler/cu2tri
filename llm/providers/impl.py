@@ -8,7 +8,7 @@ from typing import AsyncGenerator, Dict, Any, List, Optional
 import time
 
 from .base import (
-    ChatRequest, ChatResponse, StreamChunk, ChatMessage, ChatHistory, FileManager,
+    ChatRequest, ChatResponse, StreamChunk, Message, ChatHistory, FileManager,
     ProviderError, AuthenticationError, ValidationError,
     Provider,
 )
@@ -18,6 +18,21 @@ from .factory import (
     ProviderFactory,
 )
 from ..history.tree import ConversationTree
+from .multimodal import GeminiMessage, OpenRouterMessage, OpenRouterChatHistory, GeminiChatHistory
+
+class OpenRouterChatTree(ConversationTree):
+    """OpenAI聊天树"""
+    def __init__(self, message_cls: Message = OpenRouterMessage, history_cls: ChatHistory = OpenRouterChatHistory, 
+                 system_prompt: Optional[str] = "You are a helpful assistant.", file_manager: Optional[FileManager] = None, 
+                 logger: Optional[logging.Logger] = None):
+        super().__init__(message_cls, history_cls, system_prompt, file_manager, logger)
+
+class GeminiChatTree(ConversationTree):
+    """Gemini聊天树"""
+    def __init__(self, message_cls: Message = GeminiMessage, history_cls: ChatHistory = GeminiChatHistory, 
+                 system_prompt: Optional[str] = None, file_manager: Optional[FileManager] = None, 
+                 logger: Optional[logging.Logger] = None):
+        super().__init__(message_cls, history_cls, system_prompt, file_manager, logger)
 
 # ============ OpenAI兼容提供商基类 ============
 
@@ -69,10 +84,10 @@ class OpenAICompatibleProvider(Provider):
         """准备请求参数，包含思考功能配置"""
         
         # 转换消息格式
-        if hasattr(request.messages, 'to_native_format'):
-            messages = request.messages.to_native_format()
+        if hasattr(request.messages, 'to_native'):
+            messages = request.messages.to_native()
         elif isinstance(request.messages, list):
-            messages = [msg.to_native_format() if hasattr(msg, 'to_native_format') else msg for msg in request.messages]
+            messages = [msg.to_native() if hasattr(msg, 'to_native') else msg for msg in request.messages]
         else:
             raise ValueError("Invalid messages format")
         
@@ -315,7 +330,7 @@ class ZhipuProvider(OpenAICompatibleProvider):
     """智谱AI官方API提供商"""
     pass
 
-class GoogleProvider(Provider):
+class GenaiProvider(Provider):
     """Google genai官方API提供商 - 支持思考功能"""
     
     def __init__(self, config, logger=None):
@@ -351,7 +366,8 @@ class GoogleProvider(Provider):
             config.max_output_tokens = request.max_tokens
         if request.temperature is not None:
             config.temperature = request.temperature
-        
+        if request.system_prompt:
+            config.system_prompt = request.system_prompt
         # 设置思考功能
         if request.include_thinking or isinstance(request.thinking_budget, int):
             config.thinking_config = self._types.ThinkingConfig(
@@ -361,6 +377,14 @@ class GoogleProvider(Provider):
         
         return config
     
+    def _message_to_native(self, messages: GeminiMessage | List[GeminiMessage]) -> List[Any]:
+        if isinstance(messages, GeminiMessage):
+            return [messages.to_native()]
+        elif isinstance(messages, list):
+            return [msg.to_native() for msg in messages]
+        else:
+            raise ValueError("Invalid messages format: %s" % messages)
+
     async def chat(self, request: ChatRequest) -> ChatResponse:
         """发送聊天请求"""
         async with self.ensure_initialized():
@@ -374,7 +398,7 @@ class GoogleProvider(Provider):
                     return await self._chat_with_thinking(request)
                 else:
                     # 使用标准方式
-                    contents = request.messages.to_native_format()
+                    contents = self._message_to_native(request.messages)
                     config = self._get_generate_config(request)
                     
                     response = await self._client.aio.models.generate_content(
@@ -395,7 +419,7 @@ class GoogleProvider(Provider):
     
     async def _chat_with_thinking(self, request: ChatRequest) -> ChatResponse:
         """使用思考功能的聊天请求"""
-        contents = request.messages.to_native_format()
+        contents = self._message_to_native(request.messages)
         config = self._get_generate_config(request)
         
         thoughts = ""
@@ -435,7 +459,7 @@ class GoogleProvider(Provider):
                         yield chunk
                 else:
                     # 标准流式处理
-                    contents = request.messages.to_native_format()
+                    contents = self._message_to_native(request.messages)
                     config = self._get_generate_config(request)
                     
                     async for chunk in self._client.aio.models.generate_content_stream(
@@ -457,7 +481,7 @@ class GoogleProvider(Provider):
     
     async def _stream_with_thinking(self, request: ChatRequest) -> AsyncGenerator[StreamChunk, None]:
         """支持思考功能的流式处理"""
-        contents = request.messages.to_native_format()
+        contents = self._message_to_native(request.messages)
         config = self._get_generate_config(request)
         
         thoughts_started = False
@@ -534,7 +558,7 @@ def _register_all_providers():
         # 官方API
         (PlatformType.OPENAI_OFFICIAL, OpenAIProvider),
         (PlatformType.ANTHROPIC_OFFICIAL, AnthropicProvider),
-        (PlatformType.GOOGLE_OFFICIAL, GoogleProvider),
+        (PlatformType.GOOGLE_OFFICIAL, GenaiProvider),
         (PlatformType.DEEPSEEK_OFFICIAL, DeepSeekProvider),
         (PlatformType.ZHIPU_OFFICIAL, ZhipuProvider),
         
@@ -557,20 +581,6 @@ def _register_all_providers():
 # 模块导入时自动注册
 _register_all_providers()
 
-class OpenAIChatTree(ConversationTree):
-    """OpenAI聊天树"""
-    def __init__(self, message_cls: ChatMessage = ChatMessage, history_cls: ChatHistory = ChatHistory, 
-                 system_prompt: Optional[str] = "You are a helpful assistant.", file_manager: Optional[FileManager] = None, 
-                 logger: Optional[logging.Logger] = None):
-        super().__init__(message_cls, history_cls, system_prompt, file_manager, logger)
-
-class GeminiChatTree(ConversationTree):
-    """Gemini聊天树"""
-    def __init__(self, message_cls: ChatMessage = ChatMessage, history_cls: ChatHistory = ChatHistory, 
-                 system_prompt: Optional[str] = "You are a helpful assistant.", file_manager: Optional[FileManager] = None, 
-                 logger: Optional[logging.Logger] = None):
-        super().__init__(message_cls, history_cls, system_prompt, file_manager, logger)
-
 # ============ 导出 ============
 
 __all__ = [
@@ -579,6 +589,6 @@ __all__ = [
     'AnthropicProvider',
     'DeepSeekProvider',
     'ZhipuProvider',
-    'GoogleProvider',
+    'GenaiProvider',
     'VLLMProvider',
 ]

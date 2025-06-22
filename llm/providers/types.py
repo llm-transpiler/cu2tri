@@ -36,8 +36,8 @@ class PlatformType(str, Enum):
     
     # 提供API的公司, 具有自己的部署
     OPENAI_OFFICIAL = "openai"
-    ANTHROPIC_OFFICIAL = "anthropic"
     GOOGLE_OFFICIAL = "google"
+    ANTHROPIC_OFFICIAL = "anthropic"
     DEEPSEEK_OFFICIAL = "deepseek"
     ZHIPU_OFFICIAL = "zhipu"
     # COHERE_OFFICIAL = "cohere"

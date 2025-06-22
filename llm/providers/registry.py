@@ -63,7 +63,7 @@ PLATFORM_REGISTRY: Dict[PlatformType, PlatformInfo] = {
         description="Google genai official API",
         http_base_url="https://generativelanguage.googleapis.com/v1beta", # https://ai.google.dev/gemini-api/docs/quickstart#rest
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/", # https://ai.google.dev/gemini-api/docs/openai?hl=zh-cn
-        api_key_name="GOOGLE_API_KEY",
+        api_key_name="GEMINI_API_KEY",
         supported_vendors={VendorType.GOOGLE},
         supported_sdks={SDKType.GENAI, SDKType.OPENAI},
         model_name_format="{model}"

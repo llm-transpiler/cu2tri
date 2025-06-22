@@ -10,7 +10,7 @@ from .types import PlatformType, ModelSpec, PlatformInfo
 # 导入核心基类
 from .base import (
     Provider,
-    Message, ChatMessage, ChatHistory, FileManager,
+    Message, ChatHistory, FileManager,
     ChatRequest, ChatResponse, StreamChunk,
     ProviderError, AuthenticationError, RateLimitError, 
     ModelNotFoundError, ValidationError, NetworkError, ServiceUnavailableError
@@ -20,7 +20,7 @@ from .base import (
 from .impl import (
     OpenAICompatibleProvider,
     OpenAIProvider, OpenRouterProvider,
-    DeepSeekProvider, GoogleProvider,
+    DeepSeekProvider, GenaiProvider,
 )
 
 # 导入配置管理
@@ -44,7 +44,7 @@ from .factory import (
 from .multimodal import (
     GeminiMessage, GeminiChatHistory, GeminiFileManager,
     OpenRouterMessage, OpenRouterChatHistory, OpenRouterFileManager,
-    OpenAIMessage, OpenAIChatHistory,
+    OpenRouterMessage, OpenRouterChatHistory,
 )
 
 # 便捷函数
@@ -71,7 +71,7 @@ __all__ = [
     
     # 基础类
     'Provider', 'OpenAICompatibleProvider',
-    'Message', 'ChatMessage', 'ChatHistory', 'FileManager',
+    'Message', 'ChatHistory', 'FileManager',
     'ChatRequest', 'ChatResponse', 'StreamChunk',
     
     # 异常类
@@ -79,7 +79,7 @@ __all__ = [
     'ModelNotFoundError', 'ValidationError', 'NetworkError', 'ServiceUnavailableError',
     
     # 提供商实现
-    'OpenAIProvider', 'GoogleProvider', 'OpenRouterProvider',
+    'OpenAIProvider', 'GenaiProvider', 'OpenRouterProvider',
     'DeepSeekProvider',
     
     # 配置管理
@@ -101,7 +101,7 @@ __all__ = [
     # 多模态支持
     'GeminiMessage', 'GeminiChatHistory', 'GeminiFileManager',
     'OpenRouterMessage', 'OpenRouterChatHistory', 'OpenRouterFileManager',
-    'OpenAIMessage', 'OpenAIChatHistory',
+    'OpenRouterMessage', 'OpenRouterChatHistory',
     
     # 快捷访问
     'PLATFORM_TYPES',

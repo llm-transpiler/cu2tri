@@ -24,9 +24,9 @@ class ConversationTree:
         self.history_cls = history_cls
         self.file_manager = file_manager
         self.root: Optional[MessageNode] = None
-        
+        self.system_prompt = system_prompt
         if system_prompt:
-            self.root = MessageNode(self.message_cls(role="system", parts=[TextPart(system_prompt)]))
+            self.root = MessageNode(self.message_cls(role="system", parts=[ContentPart(system_prompt)]))
         
         self.current_node = self.root
         self.nodes: Dict[str, MessageNode] = {self.root.id: self.root} if self.root else {}
@@ -145,7 +145,7 @@ class ConversationTree:
             parts_summary.append(f"{part_type}: '{content_summary}'")
         
         print(prefix + ("└── " if is_last else "├── ") + 
-              f"[{node.message.role.upper()}] (id: {node.id}) Parts: " + ", ".join(parts_summary))
+              f"[{node.message.role.upper()}] (id: {node.id}) " + ", ".join(parts_summary))
         
         children = node.children
         for i, child in enumerate(children):

@@ -47,7 +47,7 @@ class GeminiFileManager(FileManager):
 class GeminiMessage(Message):
     """适用于Google Gemini API的多模态消息"""
     
-    def to_native_format(self) -> Optional[Any]:
+    def to_native(self) -> Optional[Any]:
         """将消息转换为Gemini API格式"""
         try:
             from google.genai import types
@@ -69,7 +69,47 @@ class GeminiMessage(Message):
 
 class GeminiChatHistory(ChatHistory):
     """适用于Google Gemini API的对话历史"""
-    pass
+    def to_native(self) -> Optional[Any]:
+        messages = self.messages
+        if isinstance(messages, Message):
+            messages = [messages]
+        return [msg.to_native() for msg in messages]
+
+# ============ OpenAI 相关实现 ============
+
+class OpenRouterMessage(Message):
+    """适用于OpenAI API的多模态消息"""
+    
+    def to_native(self) -> Dict[str, Any]:
+        """将消息转换为OpenAI API格式"""
+        from ..history.errors import UnsupportedModalityError
+        
+        native_parts = []
+        text_content = ""
+        
+        for part in self.parts:
+            if isinstance(part, ThoughtPart):
+                text_content += f"<thought>\n{part.content}\n</thought>\n"
+        for part in self.parts:
+            if isinstance(part, TextPart):
+                text_content += part.content
+            elif isinstance(part, ImagePart):
+                native_parts.append({"type": "image_url", "image_url": {"url": part.content}})
+            elif isinstance(part, FilePart):
+                raise UnsupportedModalityError("OpenAI Chat API does not directly support FileParts.")
+        if text_content:
+            native_parts.insert(0, {"type": "text", "text": text_content})
+            return {"role": self.role, "content": native_parts}
+        else:
+            return {"role": self.role, "content": text_content}
+
+class OpenRouterChatHistory(ChatHistory):
+    """适用于OpenAI API的对话历史"""
+    def to_native(self) -> Optional[Any]:
+        messages = self.messages
+        if isinstance(messages, Message):
+            messages = [messages]
+        return [msg.to_native() for msg in messages]
 
 # ============ OpenRouter 相关实现 ============
 
@@ -121,76 +161,13 @@ class OpenRouterFileManager(FileManager):
             setattr(file_part, 'filename', file_path_obj.name)
             return file_part
 
-class OpenRouterMessage(Message):
-    """适用于OpenRouter API的多模态消息，完全兼容OpenAI SDK并扩展了PDF支持"""
-    
-    def to_native_format(self) -> Dict[str, Any]:
-        """将消息转换为OpenRouter API格式"""
-        native_parts = []
-        text_content = []
-        
-        for part in self.parts:
-            if isinstance(part, ThoughtPart):
-                text_content.append(f"<Thought>\n{part.content}\n</Thought>")
-            elif isinstance(part, ContentPart):
-                # 处理None值
-                content = str(part.content) if part.content is not None else ""
-                text_content.append(content)
-            elif isinstance(part, ImagePart):
-                # OpenRouter 支持标准的 image_url 格式
-                native_parts.append({"type": "image_url", "image_url": {"url": part.content}})
-            elif isinstance(part, FilePart):
-                # OpenRouter 扩展：支持 PDF 文件
-                filename = getattr(part, 'filename', 'default_document.pdf')
-                native_parts.append({
-                    "type": "file",
-                    "file": {
-                        "filename": filename,
-                        "file_data": part.content
-                    }
-                })
-        
-        if text_content:
-            native_parts.insert(0, {"type": "text", "text": "\n".join(text_content)})
-        
-        return {"role": self.role, "content": native_parts}
+# class OpenAIMessage(OpenAIMessage):
+#     """适用于OpenRouter API的多模态消息，完全兼容OpenAI SDK并扩展了PDF支持"""
+#     pass
 
-class OpenRouterChatHistory(ChatHistory):
-    """适用于OpenRouter API的对话历史"""
-    pass
-
-# ============ OpenAI 相关实现 ============
-
-class OpenAIMessage(Message):
-    """适用于OpenAI API的多模态消息"""
-    
-    def to_native_format(self) -> Dict[str, Any]:
-        """将消息转换为OpenAI API格式"""
-        from ..history.errors import UnsupportedModalityError
-        
-        native_parts = []
-        text_content = []
-        
-        for part in self.parts:
-            if isinstance(part, ThoughtPart):
-                text_content.append(f"<Thought>\n{part.content}\n</Thought>")
-            elif isinstance(part, ContentPart):
-                text_content.append(part.content)
-            elif isinstance(part, TextPart):
-                text_content.append(part.content)
-            elif isinstance(part, ImagePart):
-                native_parts.append({"type": "image_url", "image_url": {"url": part.content}})
-            elif isinstance(part, FilePart):
-                raise UnsupportedModalityError("OpenAI Chat API does not directly support FileParts.")
-        
-        if text_content:
-            native_parts.insert(0, {"type": "text", "text": "\n".join(text_content)})
-        
-        return {"role": self.role, "content": native_parts}
-
-class OpenAIChatHistory(ChatHistory):
-    """适用于OpenAI API的对话历史"""
-    pass
+# class OpenAIChatHistory(ChatHistory):
+#     """适用于OpenRouter API的对话历史"""
+#     pass
 
 # ============ 导出 ============
 
@@ -201,8 +178,8 @@ __all__ = [
     'OpenRouterFileManager',
     'OpenRouterMessage',
     'OpenRouterChatHistory', 
-    'OpenAIMessage',
-    'OpenAIChatHistory',
+    # 'OpenAIMessage',
+    # 'OpenAIChatHistory',
     'create_file_manager',
     'create_message',
     'create_chat_history',

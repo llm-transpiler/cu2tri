@@ -364,7 +364,7 @@ class ConfigManager:
         self.set_config("google_official", PlatformConfig(
             platform_type=PlatformType.GOOGLE_OFFICIAL,
             enabled=False,
-            api_key=os.getenv("GENAI_API_KEY"),
+            api_key=os.getenv("GEMINI_API_KEY"),
             preferred_models=["gemini-2.5-pro", "gemini-2.5-flash"],
             temperature=DEFAULT_TEMPERATURE
         ))
@@ -391,7 +391,7 @@ class ConfigManager:
                 continue
             
             # 配置名称
-            config_name = platform_info.name.lower().replace(' ', '_').replace('.', '_').replace('-', '_').replace('/', '_').replace(':', '_')
+            config_name = platform_info.type_.lower().replace(' ', '_').replace('.', '_').replace('-', '_').replace('/', '_').replace(':', '_')
             
             api_key = os.getenv(platform_info.api_key_name)
             
@@ -413,6 +413,7 @@ class ConfigManager:
                 platform_type=platform_type,
                 enabled=bool(api_key),  # 有API密钥就启用
                 api_key=api_key,
+                api_base=platform_info.base_url,
                 preferred_models=preferred_models,
                 temperature=DEFAULT_TEMPERATURE,
                 max_tokens=DEFAULT_MAX_TOKENS,

@@ -53,20 +53,32 @@ class Message(ABC):
                 if isinstance(part, TextPart) and part.content:
                     text_parts.append(str(part.content))
             if text_parts:
-                self.content = '\n'.join(text_parts)
+                self.content = '\n\n'.join(text_parts)
     
-    @abstractmethod
-    def to_native_format(self) -> Any:
-        pass
-
-class ChatMessage(Message):
-    """默认消息实现类"""
-    def to_native_format(self) -> Dict[str, Any]:
-        """转换为标准格式"""
+    def __str__(self) -> str:
+        return f"Message(role={self.role}, content={self.content})"
+    
+    def __repr__(self) -> str:
+        return self.__str__()
+    
+    def __dict__(self) -> Dict[str, Any]:
         return {
             "role": self.role,
-            "content": self.content,
+            "content": self.content,    
         }
+    
+    # @abstractmethod
+    # def to_native_format(self) -> Any:
+    #     pass
+
+# class ChatMessage(Message):
+#     """默认消息实现类"""
+#     def to_native_format(self) -> Dict[str, Any]:
+#         """转换为标准格式"""
+#         return {
+#             "role": self.role,
+#             "content": self.content,
+#         }
 
 class ChatHistory(ABC):
     """聊天历史基类（兼容性接口）"""
@@ -74,24 +86,27 @@ class ChatHistory(ABC):
         self.messages = messages
         self.id = id_ if id_ else str(uuid.uuid4())
     
-    def to_native_format(self) -> List[Any]:
-        return [message.to_native_format() for message in self.messages if message.to_native_format()]
+    @abstractmethod
+    def to_native(self) -> List[Any]:
+        pass
     
     def simple_print(self) -> str:
-        messages = self.to_native_format()
+        # messages = self.to_native()
+        messages = self.messages
         result = ""
         for msg in messages:
-            role = msg.get('role', 'unknown')
-            content = msg.get('content', '❌ No content')
+            role = msg.role
+            content = msg.content
             if isinstance(content, list) and content:
-                content = content[0].get('text', str(content))
+                content = content[0].content
             result += f"[{role.upper()}] {content}\n"
         return result
 
 @dataclass
 class ChatRequest:
     """聊天请求统一数据模型"""
-    messages: List[ChatMessage]
+    messages: List[Message]
+    system_prompt: Optional[str] = None
     model: Optional[str] = None
     max_tokens: Optional[int] = None
     temperature: Optional[float] = DEFAULT_TEMPERATURE
@@ -404,7 +419,7 @@ class Provider(ABC):
         try:
             async with self.ensure_initialized():
                 test_request = ChatRequest(
-                    messages=[ChatMessage(role="user", content="Hello")],
+                    messages=[Message(role="user", content="Hello")],
                     max_tokens=1
                 )
                 await self.chat(test_request)
