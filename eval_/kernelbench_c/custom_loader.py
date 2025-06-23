@@ -6,5 +6,5 @@ def load_triton_kernel_from_pyfile(kernel_pyfile_path: str, attr_name: str = 'fo
     return _load_pyfile_module_attr(kernel_pyfile_path, attr_name)
 
 
-def load_torch_reference_from_pyfile(ref_pyfile_path: str, module_name: str = None) -> ModuleType:
+def load_torch_ref_from_pyfile(ref_pyfile_path: str, module_name: str = None) -> ModuleType:
     return _load_pyfile_module(ref_pyfile_path, module_name)

@@ -13,30 +13,31 @@ from utils.set_env import set_env
 def _get_cuda_compute_capability() -> int:
     """获取当前CUDA设备的计算能力"""
     try:
-        if not os.environ.get("CUDA_VISIBLE_DEVICES"):
-            set_env()
-        # 延迟导入torch，避免在模块级别导入时就占用GPU
-        import torch
-        if torch.cuda.is_available():
-            device_count = torch.cuda.device_count()
-            compute_capability = set()
-            
-            # 只查询设备属性，不设置当前设备，避免创建CUDA context
-            for i in range(device_count):
-                try:
-                    props = torch.cuda.get_device_properties(i)
-                    compute_capability.add(int(f"{props.major}{props.minor}"))
-                except RuntimeError as e:
-                    # 设备不可用，跳过
-                    continue
-            
-            if compute_capability:
-                # 返回最高的计算能力
-                return sorted(list(compute_capability))
+        with torch.no_grad():
+            import torch
+            if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+                set_env()
+            # 延迟导入torch，避免在模块级别导入时就占用GPU
+            if torch.cuda.is_available():
+                device_count = torch.cuda.device_count()
+                compute_capability = set()
+                
+                # 只查询设备属性，不设置当前设备，避免创建CUDA context
+                for i in range(device_count):
+                    try:
+                        props = torch.cuda.get_device_properties(i)
+                        compute_capability.add(int(f"{props.major}{props.minor}"))
+                    except RuntimeError as e:
+                        # 设备不可用，跳过
+                        continue
+                
+                if compute_capability:
+                    # 返回最高的计算能力
+                    return sorted(list(compute_capability))
+                else:
+                    return [80,86,89,90]  # 默认值
             else:
                 return [80,86,89,90]  # 默认值
-        else:
-            return [80,86,89,90]  # 默认值
     except Exception:
         return [80,86,89,90]  # 默认值
 
