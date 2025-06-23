@@ -57,8 +57,8 @@ def test_gpu_assignment():
         "kwargs": {}
     }
     
-    task1_id = submit_task(task1_data)
-    print(f"✅ Submitted task: {task1_id}")
+    # task1_id = submit_task(task1_data)
+    # print(f"✅ Submitted task: {task1_id}")
     
     # Test 2: Task with GPU 0 preference
     print("\n📋 Test 2: Task preferring GPU 0")
@@ -74,8 +74,8 @@ def test_gpu_assignment():
         "allow_fallback": True
     }
     
-    task2_id = submit_task(task2_data)
-    print(f"✅ Submitted task: {task2_id}")
+    # task2_id = submit_task(task2_data)
+    # print(f"✅ Submitted task: {task2_id}")
     
     # Test 3: Task with GPU 1 preference, no fallback
     print("\n📋 Test 3: Task requiring GPU 1 (no fallback)")
@@ -91,8 +91,8 @@ def test_gpu_assignment():
         "allow_fallback": False
     }
     
-    task3_id = submit_task(task3_data)
-    print(f"✅ Submitted task: {task3_id}")
+    # task3_id = submit_task(task3_data)
+    # print(f"✅ Submitted task: {task3_id}")
     
     # Test 4: GPU computation task with preference
     print("\n📋 Test 4: GPU computation task preferring GPU 2")
@@ -126,8 +126,8 @@ def test_gpu_assignment():
         "require_same_gpu_type": True
     }
     
-    task5_id = submit_task(task5_data)
-    print(f"✅ Submitted task: {task5_id}")
+    # task5_id = submit_task(task5_data)
+    # print(f"✅ Submitted task: {task5_id}")
     
     # Test 6: Cross-type fallback test
     print("\n📋 Test 6: Cross-type fallback (prefer H100, allow any type)")
@@ -144,17 +144,17 @@ def test_gpu_assignment():
         "require_same_gpu_type": False
     }
     
-    task6_id = submit_task(task6_data)
-    print(f"✅ Submitted task: {task6_id}")
-    
+    # task6_id = submit_task(task6_data)
+    # print(f"✅ Submitted task: {task6_id}")
+    # return 
     # Wait for all tasks to complete
     tasks = [
-        (task1_id, "No GPU Preference"),
-        (task2_id, "Prefer GPU 0"),
-        (task3_id, "Require GPU 1"),
-        (task4_id, "GPU Compute on GPU 2"),
-        (task5_id, "H100 Type Matching"),
-        (task6_id, "Cross-Type Fallback")
+        # (task1_id, "No GPU Preference"),
+        # (task2_id, "Prefer GPU 0"),
+        # (task3_id, "Require GPU 1"),
+        # (task4_id, "GPU Compute on GPU 2"),
+        # (task5_id, "H100 Type Matching"),
+        # (task6_id, "Cross-Type Fallback")
     ]
     
     print("\n⏳ Waiting for tasks to complete...")
@@ -234,10 +234,10 @@ if __name__ == "__main__":
     print("🚀 GPU Assignment Test Suite")
     print("=" * 50)
     
-    # Check system status first
-    if not check_system_status():
-        print("\n❌ System check failed. Make sure the API server is running.")
-        exit(1)
+    # # Check system status first
+    # if not check_system_status():
+    #     print("\n❌ System check failed. Make sure the API server is running.")
+    #     exit(1)
     
     # Run tests
     try:

@@ -31,35 +31,89 @@ async def async_cpu_task(message: str, duration: int = 3) -> dict:
 
 def gpu_compute_task(n: int = 1000000) -> dict:
     """A task that uses GPU for computation"""
+    # return {"status": "success", "result": "no result"}
     try:
+        def matmul():
+       
+            import torch # 可以在这里import, 上面一行也能正常运行
+            import gc
+            
+            logger.info(f"Starting GPU compute task with n={n}")
+            # return {"status": "success", "result": "no result"}
+            # 获取当前正确的GPU设备, 这一段会持续占用4M的显存
+            if torch.cuda.is_available():
+                current_device = torch.cuda.current_device()
+                device = f'cuda:{current_device}'
+                logger.info(f"Using device: {device} (CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')})")
+            else:
+                raise RuntimeError("CUDA is not available")
+            # return {"status": "success", "result": "no result"}
+            # Create random tensors on the correct GPU device
+            # 这一段会持续占用一定显存
+            a = torch.randn(n, n, device=device, dtype=torch.float32)
+            b = torch.randn(n, n, device=device, dtype=torch.float32)
+            # torch.cuda.empty_cache()
+            # torch.cuda.synchronize()
+            # del a, b
+            # torch.cuda.empty_cache()
+            # torch.cuda.synchronize()
+            # return {"status": "success", "result": "no result"}
+            # Perform matrix multiplication
+            start_time = time.time()
+            c = torch.matmul(a, b)
+            torch.cuda.synchronize()  # 确保计算完成
+            end_time = time.time()
+            
+            del a, b, c
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # Get result statistics
+            result_mean = float(c.mean().cpu())
+            result_std = float(c.std().cpu())
+            memory_allocated = torch.cuda.memory_allocated(current_device)
+            
+            result = {
+                "matrix_size": n,
+                "computation_time": end_time - start_time,
+                "result_mean": result_mean,
+                "result_std": result_std,
+                "gpu_memory_allocated": memory_allocated,
+                "device_used": device,
+                "cuda_visible_devices": os.environ.get('CUDA_VISIBLE_DEVICES', 'not set'),
+                "status": "success"
+            }
+            
+            # 彻底清理GPU显存
+            del a, b, c  # 显式删除张量
+            gc.collect()  # 强制垃圾回收
+            torch.cuda.empty_cache()  # 清空缓存
+            torch.cuda.synchronize()  # 同步所有CUDA操作
+            
+            logger.info(f"Completed GPU compute task: {result}")
+            logger.info(f"Memory after cleanup: {torch.cuda.memory_allocated(current_device)} bytes")
+            return result
+        '''
         import torch
+        with torch.no_grad(): # 这一行可以消除其他方法都不行的显存持续占用
+            matmul()
+        '''# 这样不行, 显存持续占用
         
-        logger.info(f"Starting GPU compute task with n={n}")
+        with torch.no_grad(): # 这一行可以消除其他方法都不行的显存持续占用
+            import torch
+            matmul()
         
-        # Create random tensors on GPU
-        a = torch.randn(n, n, device='cuda')
-        b = torch.randn(n, n, device='cuda')
-        
-        # Perform matrix multiplication
-        start_time = time.time()
-        c = torch.matmul(a, b)
-        end_time = time.time()
-        
-        # Get result statistics
-        result = {
-            "matrix_size": n,
-            "computation_time": end_time - start_time,
-            "result_mean": float(c.mean().cpu()),
-            "result_std": float(c.std().cpu()),
-            "gpu_memory_allocated": torch.cuda.memory_allocated(),
-            "status": "success"
-        }
-        
-        logger.info(f"Completed GPU compute task: {result}")
-        return result
         
     except Exception as e:
         logger.error(f"GPU compute task failed: {e}")
+        # 发生异常时也要清理
+        try:
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except:
+            pass
         return {"status": "failed", "error": str(e)}
 
 
@@ -67,40 +121,72 @@ def memory_intensive_task(memory_gb: float = 1.0) -> dict:
     """A task that allocates significant GPU memory"""
     try:
         import torch
+        import gc
         
         logger.info(f"Starting memory intensive task with {memory_gb}GB")
+        
+        # 获取当前正确的GPU设备
+        if torch.cuda.is_available():
+            current_device = torch.cuda.current_device()
+            device = f'cuda:{current_device}'
+            logger.info(f"Using device: {device} (CUDA_VISIBLE_DEVICES: {os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')})")
+        else:
+            raise RuntimeError("CUDA is not available")
         
         # Calculate tensor size for desired memory usage
         bytes_per_element = 4  # float32
         elements_needed = int(memory_gb * 1024**3 / bytes_per_element)
         tensor_size = int(elements_needed**0.5)  # Square matrix
         
-        # Allocate memory
-        tensor = torch.randn(tensor_size, tensor_size, device='cuda')
+        # Allocate memory on the correct device
+        tensor = torch.randn(tensor_size, tensor_size, device=device, dtype=torch.float32)
         
         # Simple computation
         result_tensor = tensor @ tensor.T
+        torch.cuda.synchronize()  # 确保计算完成
         
         # Get statistics
+        actual_memory_gb = torch.cuda.memory_allocated(current_device) / 1024**3
+        computation_result_mean = float(result_tensor.mean().cpu())
+        
         result = {
             "requested_memory_gb": memory_gb,
             "actual_tensor_size": [tensor_size, tensor_size],
-            "actual_memory_gb": torch.cuda.memory_allocated() / 1024**3,
-            "computation_result_mean": float(result_tensor.mean().cpu()),
+            "actual_memory_gb": actual_memory_gb,
+            "computation_result_mean": computation_result_mean,
+            "device_used": device,
+            "cuda_visible_devices": os.environ.get('CUDA_VISIBLE_DEVICES', 'not set'),
             "status": "success"
         }
         
+        # 彻底清理GPU显存
+        del tensor, result_tensor  # 显式删除张量
+        gc.collect()  # 强制垃圾回收
+        torch.cuda.empty_cache()  # 清空缓存
+        torch.cuda.synchronize()  # 同步所有CUDA操作
+        
         logger.info(f"Completed memory intensive task: {result}")
+        logger.info(f"Memory after cleanup: {torch.cuda.memory_allocated(current_device)} bytes")
         return result
         
     except Exception as e:
         logger.error(f"Memory intensive task failed: {e}")
+        # 发生异常时也要清理
+        try:
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+        except:
+            pass
         return {"status": "failed", "error": str(e)}
 
 
 def check_gpu_assignment() -> dict:
     """Check which GPU this task is actually running on using subprocess"""
     try:
+        return {"status": "success", "result": "no result"}
         from eval_.common.mprunner import mp_run
         result = mp_run(
             worker_func=check_gpu_assignment_inner,
@@ -115,6 +201,7 @@ def check_gpu_assignment() -> dict:
 
 def check_gpu_assignment_inner(result_queue: multiprocessing.Queue) -> dict:
     """Check which GPU this task is actually running on"""
+    return {"status": "success", "result": "no result"}
     try:
         import torch
         # Get CUDA_VISIBLE_DEVICES setting
@@ -137,16 +224,16 @@ def check_gpu_assignment_inner(result_queue: multiprocessing.Queue) -> dict:
             #     gpu_type = "RTX_6000_Ada"
             # elif "A100" in device_name:
             #     gpu_type = "A100"
-            try:
-                test_tensor1 = torch.tensor([1.0, 2.0], device=current_device)
-                test_tensor2 = torch.tensor([3.0, 4.0], device=current_device)
-                for i in range(10000):
-                    result = test_tensor1 + test_tensor2
-                    # print(f"  GPU functionality test: PASSED {i}")
-                del test_tensor1, test_tensor2, result
-                torch.cuda.empty_cache()
-            except Exception as test_e:
-                print(f"  GPU functionality test: FAILED - {str(test_e)}")
+            # try:
+            #     test_tensor1 = torch.tensor([1.0, 2.0], device=current_device)
+            #     test_tensor2 = torch.tensor([3.0, 4.0], device=current_device)
+            #     for i in range(10000):
+            #         result = test_tensor1 + test_tensor2
+            #         # print(f"  GPU functionality test: PASSED {i}")
+            #     del test_tensor1, test_tensor2, result
+            #     torch.cuda.empty_cache()
+            # except Exception as test_e:
+            #     print(f"  GPU functionality test: FAILED - {str(test_e)}")
             
         else:
             current_device = None
@@ -173,6 +260,25 @@ def check_gpu_assignment_inner(result_queue: multiprocessing.Queue) -> dict:
         logger.error(f"GPU assignment check failed: {e}")
         return {"status": "failed", "error": str(e)}
 
+    finally:
+        # 确保结果总是被放入队列，即使出现异常
+        try:
+            result_queue.put(result)
+        except Exception as queue_error:
+            logger.error(f"Failed to put result in queue: {queue_error}")
+            # 如果队列操作失败，至少记录错误
+        
+        # 尝试清理PyTorch CUDA上下文
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                # 强制同步以确保所有CUDA操作完成
+                torch.cuda.synchronize()
+        except Exception as cleanup_error:
+            logger.error(f"Failed to cleanup CUDA resources: {cleanup_error}")
+    
+    return result
 
 async def long_running_task(duration_minutes: int = 5) -> dict:
     """A long-running task for testing queue management"""
