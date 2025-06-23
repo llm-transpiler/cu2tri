@@ -3,5 +3,6 @@
 repo/*
 **__pycache__**
 .env
-*/outputs/*
-*/tests/*
+**/outputs/**
+**/tests/**
+**/logs/**
