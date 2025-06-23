@@ -12,3 +12,4 @@ dev/
 **/logs/*
 .env
 *deprecated*
+*/outputs/*
