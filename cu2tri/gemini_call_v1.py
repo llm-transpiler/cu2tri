@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 # 设置环境变量
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 # 导入项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,9 +28,6 @@ project_root = os.path.dirname(current_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-MAX_RETRIES = 5
-MAX_ITERATIONS = 5
-BASE_SLEEP_TIME = 3
 # 导入LLM提供商系统
 try:
     import dotenv
@@ -38,7 +35,7 @@ try:
         get_provider, PlatformType, ChatRequest, Message
     )
     from llm.providers.impl import GeminiChatTree, OpenRouterChatTree
-    from eval_triton import TritonKernelEvaluator
+    from eval_triton_v1 import TritonKernelEvaluator
     import prompt
 except ImportError as e:
     print(f"导入错误: {e}")
@@ -72,9 +69,9 @@ class TritonCodeGenerator:
         self.evaluator = TritonKernelEvaluator(logger=self.logger)
         
         # 配置参数
-        self.max_retries = MAX_RETRIES
-        self.max_iterations = MAX_ITERATIONS
-        self.base_sleep_time = BASE_SLEEP_TIME
+        self.max_retries = 5
+        self.max_iterations = 5
+        self.base_sleep_time = 3
         
     def _create_default_logger(self) -> logging.Logger:
         """创建默认日志记录器"""
@@ -83,8 +80,7 @@ class TritonCodeGenerator:
             logger.setLevel(logging.INFO)
             handler = logging.StreamHandler()
             formatter = logging.Formatter(
-                # '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-                '[%(levelname)s] %(message)s'
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
             handler.setFormatter(formatter)
             logger.addHandler(handler)
@@ -94,9 +90,9 @@ class TritonCodeGenerator:
         """初始化LLM提供商"""
         try:
             self.provider = get_provider(self.platform_type)
-            self.logger.info(f"✅ LLM provider initialized: {self.platform_type}")
+            self.logger.info(f"✅ 已初始化LLM提供商: {self.platform_type}")
         except Exception as e:
-            self.logger.error(f"❌ Failed to initialize LLM provider: {e}")
+            self.logger.error(f"❌ 初始化LLM提供商失败: {e}")
             raise
     
     async def close(self) -> None:
@@ -104,9 +100,9 @@ class TritonCodeGenerator:
         if self.provider:
             try:
                 await self.provider.close()
-                self.logger.info("✅ LLM provider connection closed")
+                self.logger.info("✅ 已关闭LLM提供商连接")
             except Exception as e:
-                self.logger.warning(f"⚠️ Error closing LLM provider connection: {e}")
+                self.logger.warning(f"⚠️ 关闭LLM提供商连接时出错: {e}")
     
     def create_chat_tree(self, system_prompt: Optional[str] = None):
         """创建聊天树对象
@@ -161,11 +157,11 @@ class TritonCodeGenerator:
                     return response.content
                     
             except Exception as e:
-                self.logger.warning(f"Generation request failed (retry {retry + 1}/{self.max_retries}): {e}")
+                self.logger.warning(f"生成请求失败 (重试 {retry + 1}/{self.max_retries}): {e}")
                 if retry < self.max_retries - 1:
                     await asyncio.sleep(self.base_sleep_time * (2 ** retry))
                 else:
-                    raise Exception(f"All retries failed: {e}")
+                    raise Exception(f"所有重试都失败了: {e}")
     
     def extract_code_from_response(self, response: str) -> str:
         """从响应中提取Python代码
@@ -248,7 +244,7 @@ class TritonCodeGenerator:
                 "traceback": traceback.format_exc()
             }
     
-    def setup_logging_dir(self, test_dir: str, time_str: str) -> tuple:
+    def setup_logging_directories(self, test_dir: str, time_str: str) -> tuple:
         """设置日志目录
         
         Args:
@@ -287,12 +283,12 @@ class TritonCodeGenerator:
         """
         try:
             with open(conversation_log_path, "w", encoding="utf-8") as f:
-                f.write(f"=== CUDA to Triton code conversion conversation log ===\n")
-                f.write(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Test directory: {test_dir}\n")
-                f.write(f"Model: {self.model_name}\n")
-                f.write(f"Platform: {self.platform_type}\n")
-                f.write(f"Maximum iterations: {self.max_iterations}\n")
+                f.write(f"=== CUDA到Triton代码转换对话日志 ===\n")
+                f.write(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"测试目录: {test_dir}\n")
+                f.write(f"模型: {self.model_name}\n")
+                f.write(f"平台: {self.platform_type}\n")
+                f.write(f"最大迭代次数: {self.max_iterations}\n")
                 if iteration_info:
                     f.write(f"{iteration_info}\n")
                 f.write(f"="*60 + "\n\n")
@@ -301,7 +297,7 @@ class TritonCodeGenerator:
                 f.write(chat_tree.get_history().simple_print())
                 f.write(f"\n{'='*60}\n\n")
         except Exception as e:
-            self.logger.warning(f"Failed to write conversation log: {e}")
+            self.logger.warning(f"写入对话日志失败: {e}")
     
     def save_code_version(
         self, 
@@ -333,7 +329,7 @@ class TritonCodeGenerator:
         with open(file_path, "w") as f:
             f.write(code)
         
-        self.logger.info(f"Code saved to: {file_path}")
+        self.logger.info(f"代码已保存到: {file_path}")
         return file_path
     
     def create_code_version_summary(
@@ -353,34 +349,34 @@ class TritonCodeGenerator:
         
         try:
             with open(summary_path, "w", encoding="utf-8") as f:
-                f.write(f"# Triton code generation version summary\n\n")
-                f.write(f"**Generation time**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"**Model**: {self.model_name}\n")
-                f.write(f"**Platform**: {self.platform_type}\n")
-                f.write(f"**Total rounds**: {total_rounds}\n")
-                f.write(f"**Final result**: {'✅ Success' if success else '❌ Failed'}\n\n")
+                f.write(f"# Triton代码生成版本摘要\n\n")
+                f.write(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"**模型**: {self.model_name}\n")
+                f.write(f"**平台**: {self.platform_type}\n")
+                f.write(f"**总轮次**: {total_rounds}\n")
+                f.write(f"**最终结果**: {'✅ 成功' if success else '❌ 失败'}\n\n")
                 
-                f.write("## Code version list\n\n")
+                f.write("## 代码版本列表\n\n")
                 
                 # 列出所有轮次的代码文件
                 for round_num in range(1, total_rounds + 1):
                     round_file = f"triton_round{round_num}.py"
-                    f.write(f"- **Round {round_num}**: `{round_file}`\n")
+                    f.write(f"- **第{round_num}轮**: `{round_file}`\n")
                 
                 if success:
-                    f.write(f"- **Final success version**: `triton_final.py` ✅\n")
+                    f.write(f"- **最终成功版本**: `triton_final.py` ✅\n")
                 else:
-                    f.write(f"- **Last attempt version**: `triton_round{total_rounds}.py` ❌\n")
+                    f.write(f"- **最后尝试版本**: `triton_round{total_rounds}.py` ❌\n")
                 
-                f.write(f"\n## Related files\n\n")
-                f.write(f"- **Conversation log**: `conversation.log`\n")
-                f.write(f"- **Evaluation log**: See the corresponding eval log file\n")
-                f.write(f"- **Archive version**: `triton.py`\n")
+                f.write(f"\n## 相关文件\n\n")
+                f.write(f"- **对话日志**: `conversation.log`\n")
+                f.write(f"- **评估日志**: 查看对应的eval日志文件\n")
+                f.write(f"- **存档版本**: `triton.py`\n")
             
-            self.logger.info(f"Code version summary created: {summary_path}")
+            self.logger.info(f"代码版本摘要已创建: {summary_path}")
             
         except Exception as e:
-            self.logger.warning(f"Failed to create code version summary: {e}")
+            self.logger.warning(f"创建代码版本摘要失败: {e}")
     
     async def generate_triton_kernel_with_feedback(
         self, 
@@ -405,7 +401,7 @@ class TritonCodeGenerator:
             time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # 设置目录
-        timestamp_log_dir, conversation_log_path = self.setup_logging_dir(test_dir, time_str)
+        timestamp_log_dir, conversation_log_path = self.setup_logging_directories(test_dir, time_str)
         
         # 读取CUDA代码
         cuda_file_path = f"{test_dir}/cuda_ref.cu"
@@ -413,7 +409,7 @@ class TritonCodeGenerator:
             with open(cuda_file_path, "r") as f:
                 cuda_code = f.read()
         except FileNotFoundError:
-            raise FileNotFoundError(f"CUDA reference file not found: {cuda_file_path}")
+            raise FileNotFoundError(f"CUDA参考文件未找到: {cuda_file_path}")
         
         # 创建聊天树
         system_prompt = 'You are a professional GPU computing optimization expert, proficient in CUDA and Triton programming.'
@@ -424,13 +420,13 @@ class TritonCodeGenerator:
         chat_tree.add_user_message(initial_prompt)
         
         # 记录初始prompt
-        self.write_conversation_log(chat_tree, conversation_log_path, test_dir, "Initial prompt generated")
+        self.write_conversation_log(chat_tree, conversation_log_path, test_dir, "初始prompt已生成")
         
         generated_code = ""
         
         # 多轮对话循环
         for iteration in range(self.max_iterations):
-            self.logger.info(f"Round {iteration + 1} generation...")
+            self.logger.info(f"第 {iteration + 1} 轮生成...")
             
             # 创建请求
             request = ChatRequest(
@@ -446,13 +442,13 @@ class TritonCodeGenerator:
             try:
                 response = await self.generate_with_retries(chat_tree, request)
             except Exception as e:
-                self.logger.error(f"Round {iteration + 1} generation failed: {e}")
+                self.logger.error(f"第{iteration + 1}轮生成失败: {e}")
                 continue
             
             # 更新对话日志
             self.write_conversation_log(
                 chat_tree, conversation_log_path, test_dir, 
-                f"Round {iteration + 1} - Model replied"
+                f"第{iteration + 1}轮 - 模型已回复"
             )
             
             # 提取代码
@@ -462,29 +458,29 @@ class TritonCodeGenerator:
             self.save_code_version(generated_code, timestamp_log_dir, iteration + 1)
             
             # 测试代码
-            self.logger.info("Testing generated code...")
+            self.logger.info("正在测试生成的代码...")
             test_result = await self.test_triton_kernel(
                 test_dir, time_str, iteration + 1, timestamp_log_dir
             )
             
             if test_result.get("success", False):
-                self.logger.info("✅ Code test passed!")
+                self.logger.info("✅ 代码测试成功！")
                 
                 # 保存最终成功版本
                 self.save_code_version(generated_code, timestamp_log_dir, iteration + 1, is_final=True)
                 
                 # 打印性能对比结果
                 if "performance" in test_result:
-                    self.logger.info(f"Performance comparison result:")
+                    self.logger.info(f"性能对比结果:")
                     perf_info = test_result["performance"]
                     if isinstance(perf_info, dict):
                         for key, value in perf_info.items():
                             self.logger.info(f"  {key}: {value}")
                 
                 # 记录成功结果到日志
-                success_info = f"Round {iteration + 1} - Code test passed!\n"
+                success_info = f"第{iteration + 1}轮 - 代码测试成功！\n"
                 if "performance" in test_result:
-                    success_info += f"Performance result: {test_result['performance']}"
+                    success_info += f"性能结果: {test_result['performance']}"
                 self.write_conversation_log(chat_tree, conversation_log_path, test_dir, success_info)
                 
                 # 创建代码版本摘要
@@ -492,14 +488,14 @@ class TritonCodeGenerator:
                 
                 return generated_code
             else:
-                self.logger.info(f"❌ Code test failed: {test_result.get('error', 'Unknown error')}")
+                self.logger.info(f"❌ 代码测试失败: {test_result.get('error', '未知错误')}")
                 
                 if iteration == self.max_iterations - 1:
-                    self.logger.info(f"Reached maximum iteration ({self.max_iterations}), stopping attempt")
+                    self.logger.info(f"已达到最大迭代次数 ({self.max_iterations})，停止尝试")
                     break
                 
                 # 准备反馈信息
-                error_info = test_result.get('error', 'Unknown error')
+                error_info = test_result.get('error', '未知错误')
                 traceback_info = test_result.get('traceback', '')
                 
                 feedback_prompt = prompt.feedback_prompt.format(
@@ -510,7 +506,7 @@ class TritonCodeGenerator:
                 chat_tree.add_user_message(feedback_prompt)
                 
                 # 记录反馈信息到日志
-                error_info_log = f"Round {iteration + 1} - Code test failed, provided error feedback\nError: {error_info}"
+                error_info_log = f"第{iteration + 1}轮 - 代码测试失败，已提供错误反馈\n错误: {error_info}"
                 self.write_conversation_log(chat_tree, conversation_log_path, test_dir, error_info_log)
         
         # 如果所有迭代都失败了，仍然保存最后一次的代码
@@ -520,10 +516,10 @@ class TritonCodeGenerator:
                 f.write(generated_code)
             with open(f"{timestamp_log_dir}/triton.py", "w") as f:
                 f.write(generated_code)
-            self.logger.info(f"Last attempt code saved to: {last_attempt_path}")
+            self.logger.info(f"最后尝试的代码已保存到: {last_attempt_path}")
         
         # 记录最终失败日志
-        final_log = f"All {self.max_iterations} iterations failed, saved the last generated code"
+        final_log = f"所有{self.max_iterations}轮迭代都失败了，保存最后一次生成的代码"
         self.write_conversation_log(chat_tree, conversation_log_path, test_dir, final_log)
         
         # 创建代码版本摘要
@@ -531,166 +527,99 @@ class TritonCodeGenerator:
         
         return generated_code
     
+    async def generate_triton_kernel(
+        self, 
+        test_dir: str, 
+        time_str: Optional[str] = None
+    ) -> str:
+        """生成Triton内核代码（入口函数）
+        
+        Args:
+            test_dir: 测试目录
+            time_str: 时间戳字符串
+            
+        Returns:
+            生成的Triton代码
+        """
+        try:
+            return await self.generate_triton_kernel_with_feedback(test_dir, time_str)
+        finally:
+            await self.close()
 
 
-async def process_single_kernel(generator_config, test_dir, semaphore, logger: Optional[logging.Logger] = None):
-    """处理单个内核的生成和评估
+# 向后兼容的函数接口
+async def generate_triton_kernel(
+    test_dir: str, 
+    model_name: str = "gemini-2.5-pro", 
+    time_str: Optional[str] = None,
+    platform_type: PlatformType = PlatformType.GOOGLE_OFFICIAL
+) -> str:
+    """生成Triton内核代码（向后兼容的异步函数）
     
     Args:
-        generator_config: TritonCodeGenerator配置字典
-        test_dir: 测试目录路径
-        semaphore: 并发限制信号量
-        logger: 日志记录器
-    
+        test_dir: 测试目录
+        model_name: 模型名称
+        time_str: 时间戳字符串
+        platform_type: LLM平台类型
+        
     Returns:
-        处理结果字符串
+        生成的Triton代码
     """
-    async with semaphore:  # 限制并发数量
-        time_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]  # 添加微秒避免时间戳冲突
-        
-        # 为每个任务创建独立的generator实例，避免状态共享
-        generator = TritonCodeGenerator(
-            platform_type=generator_config["platform_type"],
-            model_name=generator_config["model_name"]
-        )
-        
-        try:
-            # 初始化generator
-            await generator.initialize()
-            
-            # 设置任务专用的日志记录器，避免日志竞争
-            task_logger = logging.getLogger(f"TritonGen-{os.path.basename(test_dir)}-{time_str}")
-            task_logger.setLevel(logging.INFO)
-            
-            # 清除之前的处理器
-            for handler in task_logger.handlers[:]:
-                task_logger.removeHandler(handler)
-            
-            # 设置控制台处理器
-            console_handler = logging.StreamHandler()
-            console_formatter = logging.Formatter(
-                f'[{os.path.basename(test_dir)}] %(asctime)s - %(levelname)s - %(message)s'
-            )
-            console_handler.setFormatter(console_formatter)
-            task_logger.addHandler(console_handler)
-            
-            # 设置任务专用日志文件
-            task_log_file = f"{test_dir}/logs/task_{time_str}.log"
-            os.makedirs(os.path.dirname(task_log_file), exist_ok=True)
-            file_handler = logging.FileHandler(task_log_file, mode='w')
-            file_formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-            file_handler.setFormatter(file_formatter)
-            task_logger.addHandler(file_handler)
-            
-            # 防止日志向上传播
-            task_logger.propagate = False
-            
-            # 更新generator的logger
-            generator.logger = task_logger
-            generator.evaluator.logger = task_logger
-            
-            task_logger.info(f"🚀 Start processing {test_dir}")
-            await generator.generate_triton_kernel_with_feedback(test_dir, time_str)
-            
-            # 运行独立的评估
-            model_name_clean = generator.model_name.replace('.', '_').replace('/', '_').replace('-', '_')
-            timestamp_log_dir = f"{test_dir}/logs/{model_name_clean}/{time_str}"
-            
-            await generator.evaluator.evaluate_triton_kernel(
-                base_dir=test_dir,
-                model_name=generator.model_name,
-                time_str=time_str,
-                timestamp_log_dir=timestamp_log_dir
-            )
-            
-            result_msg = f"✅ Successfully processed {os.path.basename(test_dir)}"
-            task_logger.info(result_msg)
-            return result_msg
-            
-        except Exception as e:
-            import traceback
-            error_msg = f"❌ Error processing {os.path.basename(test_dir)}: {e}"
-            task_logger.error(error_msg)
-            task_logger.error(traceback.format_exc())
-            raise Exception(f"{error_msg}\n{traceback.format_exc()}")
-        
-        finally:
-            # 确保generator被正确关闭
-            try:
-                await generator.close()
-            except Exception as close_error:
-                if logger:
-                    logger.warning(f"Error closing generator for {test_dir}: {close_error}")
+    generator = TritonCodeGenerator(
+        platform_type=platform_type,
+        model_name=model_name
+    )
+    
+    return await generator.generate_triton_kernel(test_dir, time_str)
 
 
-async def batch_generate_kernels(levels: List[str] = None, max_concurrent: int = 10, logger: Optional[logging.Logger] = None):
-    """批量生成内核代码（并发执行）
+async def batch_generate_kernels(levels: List[str] = None):
+    """批量生成内核代码
     
     Args:
         levels: 要处理的级别列表，默认为['level1']
-        max_concurrent: 最大并发数量，默认为10
-        logger: 日志记录器
     """
     if levels is None:
         levels = ['level1']
     
-    if logger is None:
-        logger = logging.getLogger(__name__)
-    
-    # 准备generator配置（避免共享状态）
-    generator_config = {
-        "platform_type": PlatformType.GOOGLE_OFFICIAL,
-        "model_name": "gemini-2.5-pro"
-    }
-    
-    # 创建并发限制信号量
-    semaphore = asyncio.Semaphore(max_concurrent)
+    generator = TritonCodeGenerator()
+    await generator.initialize()
     
     try:
         for level in levels:
             output_dir = f"outputs/kernelbench_c/{level}"
             if not os.path.exists(output_dir):
-                logger.error(f"Directory does not exist: {output_dir}")
+                print(f"目录不存在: {output_dir}")
                 continue
                 
             all_dirs = sorted(os.listdir(output_dir), key=lambda x: int(x.split('_')[0]))
             
-            # 创建并发任务列表
-            tasks = []
             for dir_name in all_dirs:
                 test_dir = f"{output_dir}/{dir_name}"
-                # 创建任务协程（注意不要立即执行）
-                task_coro = process_single_kernel(generator_config, test_dir, semaphore, logger)
-                tasks.append(task_coro)
-            
-            logger.info(f"🎯 Start concurrent processing {level} level {len(tasks)} kernels (max concurrent: {max_concurrent})")
-            
-            # 并发执行所有任务
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # 统计并处理结果
-            success_count = 0
-            error_count = 0
-            
-            logger.info(f"\n📊 {level} level processing result:")
-            for i, result in enumerate(results):
-                dir_name = all_dirs[i]
-                if isinstance(result, Exception):
-                    logger.error(f"  ❌ {dir_name}: {str(result).split('\\n')[0]}")
-                    error_count += 1
-                else:
-                    logger.info(f"  {result}")
-                    success_count += 1
-            
-            logger.info(f"\n🏆 {level} level summary: {success_count} passed, {error_count} failed")
-            logger.info("-" * 60)
+                time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+                
+                try:
+                    print(f"正在为 {test_dir} 生成Triton内核")
+                    await generator.generate_triton_kernel_with_feedback(test_dir, time_str)
                     
-    except Exception as e:
-        logger.error(f"Batch processing error: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+                    # 运行独立的评估
+                    model_name_clean = generator.model_name.replace('.', '_').replace('/', '_').replace('-', '_')
+                    timestamp_log_dir = f"{test_dir}/logs/{model_name_clean}/{time_str}"
+                    
+                    await generator.evaluator.evaluate_triton_kernel(
+                        base_dir=test_dir,
+                        model_name=generator.model_name,
+                        time_str=time_str,
+                        timestamp_log_dir=timestamp_log_dir
+                    )
+                    
+                except Exception as e:
+                    import traceback
+                    print(f"处理 {test_dir} 时出错: {e}")
+                    print(traceback.format_exc())
+                    continue
+    finally:
+        await generator.close()
 
 
 # 主函数示例

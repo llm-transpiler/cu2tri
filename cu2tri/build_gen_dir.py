@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 
 # 定义基础路径
-WORKSPACE_ROOT = Path("/workspace/monocases")
+WORKSPACE_ROOT = Path("/workspace")
 TESTS_ROOT = WORKSPACE_ROOT / "tests" / "_cuda" / "HPCTransCompile"
 TORCH_REF_DIR = TESTS_ROOT / "EvalEngine" / "torch_functionals"
 CUDA_REF_DIR = TESTS_ROOT / "KernelBench_c"
-OUTPUT_ROOT = WORKSPACE_ROOT / "cu2tri" / "outputs"
+OUTPUT_ROOT = WORKSPACE_ROOT / "cu2tri" / "outputs" / "kernelbench_c"
 levels = ['level1', 'level2', 'level3']
 name_set = {'level1': set(), 'level2': set(), 'level3': set()}
 def process():    

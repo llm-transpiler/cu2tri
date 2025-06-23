@@ -14,6 +14,7 @@ import importlib.util
 import subprocess
 import tempfile
 import time
+import multiprocessing
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
@@ -21,7 +22,7 @@ import gc
 
 # 设置CUDA环境变量
 os.environ["TORCH_USE_CUDA_DSA"] = "1" 
-os.environ['TORCH_CUDA_ARCH_LIST'] = "Hopper"
+os.environ['TORCH_CUDA_ARCH_LIST'] = "Ada"
 
 # 导入项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -34,24 +35,28 @@ if project_root not in sys.path:
 
 try:
     import torch
-    from tools.performer import KernelPerfBench
+    from eval_.kernelbench_c.custom_loader import load_torch_ref_from_pyfile, load_triton_kernel_from_pyfile
+    from eval_.common.loader import load_cuda_extension_from_cufile
+    from eval_.common.config import EvalConfig
+    from eval_.common.benchmark import benchmark_kernel
+    from eval_.common.mprunner import mp_run, SubProcResult
 except ImportError as e:
-    print(f"导入错误: {e}")
-    print("请确保安装了必要的依赖包")
+    print(f"Import Error: {e}")
+    print("Please ensure the necessary dependencies are installed")
     sys.exit(1)
 
 
 class TritonKernelEvaluator:
     """Triton内核评估器"""
     
-    def __init__(self, logger: Optional[logging.Logger] = None):
+    def __init__(self, logger: Optional[logging.Logger] = None, config: EvalConfig = EvalConfig()):
         """初始化评估器
         
         Args:
             logger: 日志记录器，如果未提供则创建默认记录器
         """
         self.logger = logger or self._create_default_logger()
-        self.tolerance = {"atol": 1e-1, "rtol": 1e-1}
+        self.config = config
         
     def _create_default_logger(self) -> logging.Logger:
         """创建默认日志记录器"""
@@ -66,114 +71,6 @@ class TritonKernelEvaluator:
             logger.addHandler(handler)
         return logger
     
-    def set_tolerance(self, atol: float = 1e-1, rtol: float = 1e-1) -> None:
-        """设置数值比较容差
-        
-        Args:
-            atol: 绝对容差
-            rtol: 相对容差
-        """
-        self.tolerance = {"atol": atol, "rtol": rtol}
-        self.logger.info(f"设置容差: atol={atol}, rtol={rtol}")
-    
-    def compile_cuda_kernel_from_file(self, kernel_path: str, verbose: bool = False) -> callable:
-        """从文件编译CUDA内核
-        
-        Args:
-            kernel_path: 内核文件路径
-            verbose: 是否显示详细信息
-            
-        Returns:
-            编译后的内核函数
-            
-        Raises:
-            ImportError: 当无法导入模块时
-            AttributeError: 当找不到forward函数时
-        """
-        try:
-            spec = importlib.util.spec_from_file_location(
-                Path(kernel_path).stem,
-                kernel_path
-            )
-            if spec is None or spec.loader is None:
-                raise ImportError(f"无法加载模块规范: {kernel_path}")
-                
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            
-            if not hasattr(module, 'forward'):
-                raise AttributeError(f"模块中未找到forward函数: {kernel_path}")
-                
-            return getattr(module, 'forward')
-            
-        except Exception as e:
-            self.logger.error(f"编译内核失败: {e}")
-            raise
-    
-    def compile_cuda_extension(
-        self, 
-        cuda_file: str, 
-        build_dir: str = './build', 
-        name: str = "cuda_kernel"
-    ) -> Any:
-        """编译CUDA扩展
-        
-        Args:
-            cuda_file: CUDA源文件路径
-            build_dir: 构建目录
-            name: 扩展名称
-            
-        Returns:
-            编译后的扩展对象
-            
-        Raises:
-            RuntimeError: 当编译失败时
-        """
-        try:
-            from torch.utils.cpp_extension import load
-            
-            if not os.path.exists(build_dir):
-                os.makedirs(build_dir)
-                
-            extension = load(
-                name=name,
-                sources=[cuda_file],
-                extra_cuda_cflags=[
-                    '-O3', 
-                    '--use_fast_math', 
-                    '-gencode=arch=compute_80,code=sm_80', 
-                    '-gencode=arch=compute_90,code=sm_90'
-                ],
-                verbose=True,
-                build_directory=build_dir
-            )
-            return extension
-            
-        except Exception as e:
-            self.logger.error(f"CUDA扩展编译失败: {e}")
-            raise RuntimeError(f"CUDA扩展编译失败: {e}")
-    
-    def load_torch_ref(self, ref_path: str) -> Any:
-        """加载PyTorch参考实现
-        
-        Args:
-            ref_path: 参考实现文件路径
-            
-        Returns:
-            加载的模块对象
-        """
-        try:
-            spec = importlib.util.spec_from_file_location("torch_ref", ref_path)
-            if spec is None or spec.loader is None:
-                raise ImportError(f"无法加载PyTorch参考模块: {ref_path}")
-                
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return module
-            
-        except Exception as e:
-            self.logger.error(f"加载PyTorch参考失败: {e}")
-            raise
     
     def benchmark_kernel(self, kernel_func: callable, inputs: List[torch.Tensor]) -> float:
         """对内核进行性能基准测试
@@ -186,15 +83,15 @@ class TritonKernelEvaluator:
             平均执行时间（毫秒）
         """
         try:
-            return KernelPerfBench.func_perf_test_median(kernel_func, inputs)
+            return benchmark_kernel(kernel_func, inputs)
         except Exception as e:
-            self.logger.error(f"性能测试失败: {e}")
+            self.logger.error(f"Performance Test Failed: {e}")
             return float('inf')
     
     def check_cuda_availability(self) -> bool:
         """检查CUDA是否可用"""
         if not torch.cuda.is_available():
-            self.logger.error("❌ CUDA不可用，跳过测试")
+            self.logger.error("❌ CUDA Unavailable, Skip Test")
             return False
         return True
     
@@ -214,7 +111,7 @@ class TritonKernelEvaluator:
         ]
         
         if cuda_inputs:
-            self.logger.info(f"📊 测试矩阵大小: {cuda_inputs[0].shape}")
+            self.logger.info(f"📊 Test Matrix Size: {cuda_inputs[0].shape}")
             
         return cuda_inputs
     
@@ -234,7 +131,7 @@ class TritonKernelEvaluator:
         Returns:
             包含比较结果的字典
         """
-        atol, rtol = self.tolerance["atol"], self.tolerance["rtol"]
+        atol, rtol = self.config.atol, self.config.rtol
         
         comparisons = {
             "triton_cuda_match": torch.allclose(triton_result, cuda_result, atol=atol, rtol=rtol),
@@ -242,13 +139,13 @@ class TritonKernelEvaluator:
             "cuda_torch_match": torch.allclose(cuda_result, torch_result, atol=atol, rtol=rtol)
         }
         
-        self.logger.info(f"🔍 Triton vs CUDA 匹配: {'✅' if comparisons['triton_cuda_match'] else '❌'}")
-        self.logger.info(f"🔍 Triton vs PyTorch 匹配: {'✅' if comparisons['triton_torch_match'] else '❌'}")
-        self.logger.info(f"🔍 CUDA vs PyTorch 匹配: {'✅' if comparisons['cuda_torch_match'] else '❌'}")
+        self.logger.info(f"🔍 Triton vs CUDA Match: {'✅' if comparisons['triton_cuda_match'] else '❌'}")
+        self.logger.info(f"🔍 Triton vs PyTorch Match: {'✅' if comparisons['triton_torch_match'] else '❌'}")
+        self.logger.info(f"🔍 CUDA vs PyTorch Match: {'✅' if comparisons['cuda_torch_match'] else '❌'}")
         
         if not comparisons["triton_cuda_match"]:
             max_diff = torch.max(torch.abs(triton_result - cuda_result)).item()
-            self.logger.info(f"   最大差异: {max_diff:.2e}")
+            self.logger.info(f"   Max Difference: {max_diff:.2e}")
             
         return comparisons
     
@@ -327,13 +224,13 @@ class TritonKernelEvaluator:
         round_info = f" - {logfile_prefix.replace('_', '').upper()}" if logfile_prefix.startswith("round") else ""
         
         self.logger.info(f"\n{'='*60}")
-        self.logger.info(f"测试开始时间: {current_time}{round_info}")
+        self.logger.info(f"Test Start Time: {current_time}{round_info}")
         self.logger.info(f"{'='*60}")
     
     def log_test_end(self) -> None:
         """记录测试结束信息"""
-        self.logger.info("\n✅ 测试完成!")
-        self.logger.info(f"测试结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.logger.info("\n✅ Test Completed!")
+        self.logger.info(f"Test End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.logger.info(f"{'='*60}\n")
     
     def cleanup_gpu_memory(self) -> None:
@@ -344,26 +241,30 @@ class TritonKernelEvaluator:
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
         except Exception as e:
-            self.logger.warning(f"清理GPU内存时出错: {e}")
-    
+            self.logger.warning(f"Clean GPU Memory Error: {e}")
+
     async def evaluate_triton_kernel(
         self,
         base_dir: str,
+        kernel_name: str = None,
         model_name: str = "triton_test",
         time_str: Optional[str] = None,
         logfile_prefix: str = "",
         timestamp_log_dir: Optional[str] = None,
-        return_result: bool = False
+        return_result: bool = False,
+        timeout: int = 300
     ) -> Optional[Dict[str, Any]]:
-        """评估Triton内核
+        """评估Triton内核（使用子进程模式避免core dump导致主进程崩溃）
         
         Args:
             base_dir: 基础目录路径
+            kernel_name: CUDA内核名称
             model_name: 模型名称
             time_str: 时间戳字符串
             logfile_prefix: 日志文件前缀
             timestamp_log_dir: 时间戳日志目录
             return_result: 是否返回结果字典
+            timeout: 子进程超时时间（秒）
             
         Returns:
             如果return_result为True，返回包含评估结果的字典
@@ -394,127 +295,329 @@ class TritonKernelEvaluator:
         self.log_test_start(logfile_prefix)
         
         try:
-            # 检查CUDA可用性
-            if not self.check_cuda_availability():
-                result = {"success": False, "error": "CUDA不可用"}
+            # 检查必要文件是否存在
+            for file_path, file_desc in [
+                (triton_file, "Triton kernel file"),
+                (cuda_file, "CUDA reference file"),
+                (torch_ref_file, "PyTorch reference file")
+            ]:
+                if not os.path.exists(file_path):
+                    error_msg = f"{file_desc} does not exist: {file_path}"
+                    self.logger.error(f"❌ {error_msg}")
+                    result = {"success": False, "error": error_msg}
+                    return result if return_result else None
+            
+            # 准备配置字典
+            config_dict = {
+                'atol': self.config.atol,
+                'rtol': self.config.rtol
+            }
+            
+            self.logger.info(f"🚀 Start subprocess to evaluate Triton kernel (timeout: {timeout} seconds)")
+            
+            # 使用子进程执行评估，避免core dump影响主进程
+            subprocess_result = await asyncio.to_thread(
+                mp_run,
+                worker_func=evaluate_triton_kernel_subproc,
+                args=(
+                    base_dir,
+                    kernel_name,
+                    triton_file,
+                    cuda_file,
+                    torch_ref_file,
+                    config_dict
+                ),
+                timeout=timeout
+            )
+            
+            # 处理子进程结果
+            if subprocess_result.subproc_success:
+                result = subprocess_result.result
+                self.logger.info("✅ Subprocess Evaluation Completed Successfully")
+                
+                # 记录详细结果到主进程日志
+                if result.get("success"):
+                    if "performance" in result:
+                        perf = result["performance"]
+                        self.logger.info(f"\n📈 Performance Test Results:")
+                        self.logger.info(f"   Triton:   {perf['triton_time']:.3f} ms")
+                        self.logger.info(f"   CUDA:     {perf['cuda_time']:.3f} ms")
+                        self.logger.info(f"   PyTorch:  {perf['torch_time']:.3f} ms")
+                        self.logger.info(f"\n🚀 Speedup:")
+                        self.logger.info(f"   Triton vs CUDA: {perf['triton_cuda_speedup']:.2f}x")
+                        self.logger.info(f"   Triton vs PyTorch: {perf['triton_torch_speedup']:.2f}x")
+                    
+                    if "device_info" in result:
+                        device_info = result["device_info"]
+                        self.logger.info(f"📱 GPU Device Information: {device_info['device_name']} (Device {device_info['device_id']})")
+                else:
+                    self.logger.info(f"❌ Subprocess Evaluation Failed: {result.get('error', 'Unknown error')}")
+                
+                self.log_test_end()
+                return result if return_result else None
+            else:            
+                error_msg = f"Subprocess Execution Failed: {subprocess_result.error}"
+                self.logger.error(f"❌ {error_msg}")
+                result = {
+                    "success": False,
+                    "error": error_msg,
+                    "subprocess_failed": True
+                }
                 return result if return_result else None
             
-            # 加载测试数据
-            self.logger.info("📁 加载测试用例...")
-            torch_ref = self.load_torch_ref(torch_ref_file)
-            cuda_inputs = self.prepare_test_inputs(torch_ref)
-            
-            # 加载Triton内核
-            self.logger.info(f"⚡ 加载Triton内核: {triton_file}")
-            triton_func = self.compile_cuda_kernel_from_file(triton_file, verbose=False)
-            self.logger.info("✅ Triton内核加载成功")
-            
-            # 编译CUDA内核
-            self.logger.info("🔧 编译CUDA内核...")
-            cuda_extension = self.compile_cuda_extension(cuda_file, build_dir=f"{base_dir}/build")
-            cuda_func = getattr(cuda_extension, 'forward')
-            self.logger.info("✅ CUDA内核编译成功")
-            
-            # 功能正确性测试
-            self.logger.info("\n🧪 开始功能正确性测试...")
+        except Exception as e:
+            self.logger.error(f"❌ Main Process Evaluation Error: {e}")
+            import traceback
+            result = {
+                "success": False, 
+                "error": str(e), 
+                "traceback": traceback.format_exc(),
+                "main_process_error": True
+            }
+            return result if return_result else None
+        
+        finally:
+            # 主进程也进行清理
+            self.cleanup_gpu_memory()
+
+
+def evaluate_triton_kernel_subproc(
+    result_queue: multiprocessing.Queue,
+    base_dir: str,
+    kernel_name: Optional[str],
+    triton_file: str,
+    cuda_file: str,
+    torch_ref_file: str,
+    config_dict: Dict[str, Any]
+) -> None:
+    """在子进程中执行Triton内核评估的核心逻辑
+    
+    Args:
+        result_queue: 用于返回结果的队列
+        base_dir: 基础目录路径
+        kernel_name: CUDA内核名称
+        triton_file: Triton文件路径
+        cuda_file: CUDA文件路径
+        torch_ref_file: PyTorch参考文件路径
+        config_dict: 配置字典
+    """
+    import multiprocessing
+    import torch
+    import gc
+    import logging
+    
+    # 在子进程中设置独立的日志系统
+    process_id = multiprocessing.current_process().pid
+    logger = logging.getLogger(f"TritonEval-Subprocess-{process_id}")
+    logger.setLevel(logging.INFO)
+    
+    # 清除可能存在的处理器，避免重复
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # 设置控制台输出
+    console_handler = logging.StreamHandler()
+    console_formatter = logging.Formatter(
+        f'[PID-{process_id}] %(asctime)s - %(levelname)s - %(message)s'
+    )
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+    
+    # 设置子进程专用的日志文件（避免与主进程竞争）
+    try:
+        subprocess_log_file = f"{base_dir}/logs/subprocess_{process_id}.log"
+        import os
+        os.makedirs(os.path.dirname(subprocess_log_file), exist_ok=True)
+        
+        file_handler = logging.FileHandler(subprocess_log_file, mode='w')
+        file_formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
+    except Exception as log_setup_error:
+        # 如果日志文件设置失败，不影响主要功能
+        logger.warning(f"Failed to setup subprocess log file: {log_setup_error}")
+    
+    # 防止日志向上传播，避免与主进程日志混淆
+    logger.propagate = False
+    
+    result = {}
+    result_queue_filled = False  # 初始化结果队列填充标记
+    
+    try:
+        logger.info(f"Subprocess {process_id} start Triton kernel evaluation")
+        
+        # 检查CUDA可用性
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is not available")
+        
+        current_device = torch.cuda.current_device()
+        device_name = torch.cuda.get_device_name(current_device)
+        logger.info(f"Use GPU device: {device_name} (Device {current_device})")
+        
+        # 创建配置对象
+        config = EvalConfig(
+            cuda_kernel_name=kernel_name or "cuda_kernel",
+            build_dir=f"{base_dir}/build",
+            atol=config_dict.get('atol', 1e-1),
+            rtol=config_dict.get('rtol', 1e-1)
+        )
+        
+        # 加载测试数据
+        logger.info("📁 Load test case...")
+        torch_ref = load_torch_ref_from_pyfile(torch_ref_file)
+        test_inputs = torch_ref.get_inputs()
+        cuda_inputs = [
+            inp.cuda() if isinstance(inp, torch.Tensor) else inp 
+            for inp in test_inputs
+        ]
+        
+        if cuda_inputs:
+            logger.info(f"📊 Test matrix size: {cuda_inputs[0].shape}")
+        
+        # 加载Triton内核
+        logger.info(f"⚡ Load Triton kernel: {triton_file}")
+        triton_func = load_triton_kernel_from_pyfile(triton_file)
+        logger.info("✅ Triton kernel loaded successfully")
+        
+        # 编译CUDA内核
+        logger.info("🔧 Compile CUDA kernel...")
+        cuda_extension = load_cuda_extension_from_cufile(cuda_file, config)
+        cuda_func = getattr(cuda_extension, 'forward')
+        logger.info("✅ CUDA kernel compiled successfully")
+        
+        # 功能正确性测试
+        logger.info("\n🧪 Start function correctness test...")
+        
+        # 使用torch.no_grad()防止显存持续占用
+        with torch.no_grad():
             triton_result = triton_func(*cuda_inputs)
             cuda_result = cuda_func(*cuda_inputs)
             torch_result = torch_ref.module_fn(*cuda_inputs)
-            
-            # 比较结果
-            comparisons = self.compare_results(triton_result, cuda_result, torch_result)
-            
-            if not (comparisons["triton_cuda_match"] and comparisons["cuda_torch_match"]):
-                self.logger.info("❌ 功能测试失败，跳过性能测试")
-                result = {"success": False, "error": "功能测试失败：结果不匹配"}
-                return result if return_result else None
-            
+        
+        # 比较结果
+        atol, rtol = config.atol, config.rtol
+        comparisons = {
+            "triton_cuda_match": torch.allclose(triton_result, cuda_result, atol=atol, rtol=rtol),
+            "triton_torch_match": torch.allclose(triton_result, torch_result, atol=atol, rtol=rtol),
+            "cuda_torch_match": torch.allclose(cuda_result, torch_result, atol=atol, rtol=rtol)
+        }
+        
+        logger.info(f"🔍 Triton vs CUDA match: {'✅' if comparisons['triton_cuda_match'] else '❌'}")
+        logger.info(f"🔍 Triton vs PyTorch match: {'✅' if comparisons['triton_torch_match'] else '❌'}")
+        logger.info(f"🔍 CUDA vs PyTorch match: {'✅' if comparisons['cuda_torch_match'] else '❌'}")
+        
+        if not comparisons["triton_cuda_match"]:
+            max_diff = torch.max(torch.abs(triton_result - cuda_result)).item()
+            logger.info(f"   Max difference: {max_diff:.2e}")
+        
+        if not (comparisons["triton_cuda_match"] and comparisons["cuda_torch_match"]):
+            logger.info("❌ Function test failed, skipping performance test")
+            result = {"success": False, "error": "Function test failed: result mismatch", "correctness": comparisons}
+        else:
             # 性能测试
-            self.logger.info("\n⏱️  开始性能测试...")
-            triton_time = self.benchmark_kernel(triton_func, cuda_inputs)
-            self.logger.info("测试CUDA内核性能...")
-            cuda_time = self.benchmark_kernel(cuda_func, cuda_inputs)
-            self.logger.info("测试PyTorch参考性能...")
-            torch_time = self.benchmark_kernel(torch_ref.module_fn, cuda_inputs)
+            logger.info("\n⏱️  Start performance test...")
+            
+            triton_time = benchmark_kernel(triton_func, cuda_inputs)
+            logger.info("Test CUDA kernel performance...")
+            cuda_time = benchmark_kernel(cuda_func, cuda_inputs)
+            logger.info("Test PyTorch reference performance...")
+            torch_time = benchmark_kernel(torch_ref.module_fn, cuda_inputs)
             
             # 性能结果
-            self.logger.info(f"\n📈 性能测试结果:")
-            self.logger.info(f"   Triton:   {triton_time:.3f} ms")
-            self.logger.info(f"   CUDA:     {cuda_time:.3f} ms")
-            self.logger.info(f"   PyTorch:  {torch_time:.3f} ms")
+            logger.info(f"\n📈 Performance test results:")
+            logger.info(f"   Triton:   {triton_time:.3f} ms")
+            logger.info(f"   CUDA:     {cuda_time:.3f} ms")
+            logger.info(f"   PyTorch:  {torch_time:.3f} ms")
             
             # 计算加速比
             triton_cuda_speedup = cuda_time / triton_time if triton_time > 0 else 0.0
             triton_torch_speedup = torch_time / triton_time if triton_time > 0 else 0.0
             
-            self.logger.info(f"\n🚀 加速比:")
-            self.logger.info(f"   Triton vs CUDA: {triton_cuda_speedup:.2f}x")
-            self.logger.info(f"   Triton vs PyTorch: {triton_torch_speedup:.2f}x")
+            logger.info(f"\n🚀 Speedup:")
+            logger.info(f"   Triton vs CUDA: {triton_cuda_speedup:.2f}x")
+            logger.info(f"   Triton vs PyTorch: {triton_torch_speedup:.2f}x")
             
-            self.log_test_end()
-            
-            if return_result:
-                return {
-                    "success": True,
-                    "performance": {
-                        "triton_time": triton_time,
-                        "cuda_time": cuda_time,
-                        "torch_time": torch_time,
-                        "triton_cuda_speedup": triton_cuda_speedup,
-                        "triton_torch_speedup": triton_torch_speedup
-                    },
-                    "correctness": comparisons
-                }
-            
-        except Exception as e:
-            self.logger.error(f"❌ 评估过程出错: {e}")
-            import traceback
             result = {
-                "success": False, 
-                "error": str(e), 
-                "traceback": traceback.format_exc()
+                "success": True,
+                "performance": {
+                    "triton_time": triton_time,
+                    "cuda_time": cuda_time,
+                    "torch_time": torch_time,
+                    "triton_cuda_speedup": triton_cuda_speedup,
+                    "triton_torch_speedup": triton_torch_speedup
+                },
+                "correctness": comparisons,
+                "device_info": {
+                    "device_name": device_name,
+                    "device_id": current_device
+                }
             }
-            return result if return_result else None
         
-        finally:
-            self.cleanup_gpu_memory()
-
-
-# 向后兼容的函数接口
-def eval_triton_kernel(
-    base_dir: str,
-    model_name: str = "new_test",
-    logger: Optional[logging.Logger] = None,
-    time_str: Optional[str] = None,
-    logfile_prefix: str = "",
-    return_result: bool = False,
-    timestamp_log_dir: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
-    """评估Triton内核（同步版本，向后兼容）
-    
-    Args:
-        base_dir: 基础目录路径
-        model_name: 模型名称
-        logger: 日志记录器
-        time_str: 时间戳字符串
-        logfile_prefix: 日志文件前缀
-        return_result: 是否返回结果字典
-        timestamp_log_dir: 时间戳日志目录
+        logger.info("✅ Subprocess evaluation completed")
+        result_queue.put(result)
+        result_queue_filled = True  # 标记结果已放入队列
         
-    Returns:
-        如果return_result为True，返回包含评估结果的字典
-    """
-    evaluator = TritonKernelEvaluator(logger)
-    
-    # 由于原来是同步函数，这里使用asyncio.run来运行异步版本
-    return asyncio.run(evaluator.evaluate_triton_kernel(
-        base_dir=base_dir,
-        model_name=model_name,
-        time_str=time_str,
-        logfile_prefix=logfile_prefix,
-        timestamp_log_dir=timestamp_log_dir,
-        return_result=return_result
-    ))
+    except Exception as e:
+        error_msg = f"Subprocess evaluation failed: {e}"
+        logger.error(error_msg)
+        import traceback
+        error_result = {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "process_id": process_id
+        }
+        result_queue.put(error_result)
+        result_queue_filled = True  # 标记结果已放入队列
+        
+    finally:
+        # 彻底清理GPU显存和上下文
+        try:
+            # 显式删除可能的张量引用
+            tensor_vars = []
+            for var_name, var_value in list(locals().items()):
+                try:
+                    if hasattr(var_value, 'dtype') and hasattr(var_value, 'device'):  # 更安全的torch.Tensor检查
+                        tensor_vars.append(var_name)
+                except:
+                    pass
+            
+            for var_name in tensor_vars:
+                try:
+                    del locals()[var_name]
+                except:
+                    pass
+            
+            # 清理PyTorch CUDA上下文
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            logger.info(f"Subprocess {process_id} cleaned up")
+        except Exception as cleanup_error:
+            # 即使清理失败，也要记录日志，但不阻止结果返回
+            try:
+                logger.error(f"Subprocess cleanup failed: {cleanup_error}")
+            except:
+                # 如果连日志都无法写入，则静默处理
+                pass
+        
+        # 确保结果总是被放入队列（除非已经放入）
+        try:
+            # 检查是否已经放入结果
+            if 'result_queue_filled' not in locals() or not result_queue_filled:
+                result_queue.put({
+                    "success": False,
+                    "error": "Subprocess completed without putting result",
+                    "process_id": process_id
+                })
+        except Exception:
+            # 队列操作失败也要静默处理
+            pass
+
 
 
 # 主函数示例
@@ -532,9 +635,9 @@ async def main():
         )
         
         if result:
-            print(f"评估结果: {result['success']}")
+            print(f"Evaluation Result: {result['success']}")
             if result.get('performance'):
-                print(f"性能数据: {result['performance']}")
+                print(f"Performance Data: {result['performance']}")
 
 
 if __name__ == "__main__":
