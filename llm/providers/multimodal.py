@@ -73,7 +73,15 @@ class GeminiChatHistory(ChatHistory):
         messages = self.messages
         if isinstance(messages, Message):
             messages = [messages]
-        return [msg.to_native() for msg in messages]
+        # 过滤掉None值（系统消息等）
+        native_messages = []
+        for msg in messages:
+            if msg is None:
+                continue
+            native_msg = msg.to_native()
+            if native_msg is not None:
+                native_messages.append(native_msg)
+        return native_messages
 
 # ============ OpenAI 相关实现 ============
 
@@ -109,7 +117,15 @@ class OpenRouterChatHistory(ChatHistory):
         messages = self.messages
         if isinstance(messages, Message):
             messages = [messages]
-        return [msg.to_native() for msg in messages]
+        # 过滤掉None值（如果有的话）
+        native_messages = []
+        for msg in messages:
+            if msg is None:
+                continue
+            native_msg = msg.to_native()
+            if native_msg is not None:
+                native_messages.append(native_msg)
+        return native_messages
 
 # ============ OpenRouter 相关实现 ============
 

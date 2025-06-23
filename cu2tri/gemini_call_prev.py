@@ -643,7 +643,7 @@ async def main():
             print(f"❌ 生成失败: {e}")
     
     # 示例2: 批量生成（取消注释以启用）
-    await batch_generate_kernels(['level1'])
+    # await batch_generate_kernels(['level1'])
 
 
 if __name__ == "__main__":

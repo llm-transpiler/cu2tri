@@ -379,9 +379,16 @@ class GenaiProvider(Provider):
     
     def _message_to_native(self, messages: GeminiMessage | List[GeminiMessage]) -> List[Any]:
         if isinstance(messages, GeminiMessage):
-            return [messages.to_native()]
+            native_msg = messages.to_native()
+            return [native_msg] if native_msg is not None else []
         elif isinstance(messages, list):
-            return [msg.to_native() for msg in messages]
+            native_messages = []
+            for msg in messages:
+                if msg is not None:
+                    native_msg = msg.to_native()
+                    if native_msg is not None:
+                        native_messages.append(native_msg)
+            return native_messages
         else:
             raise ValueError("Invalid messages format: %s" % messages)
 
