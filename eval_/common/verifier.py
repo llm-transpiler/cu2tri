@@ -152,8 +152,8 @@ def _compare_tensor_results(real_outs, ref_outs, rtol: float, atol: float) -> Co
     """比较两个结果的匹配度 - 支持单输出和多输出"""
     
     try:
+        import torch
         with torch.no_grad():
-            import torch
             # 规范化输出格式
             real_outs = _normalize_output(real_outs)
             ref_outs = _normalize_output(ref_outs)

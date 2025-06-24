@@ -14,8 +14,8 @@ DEFAULT_RANDOM_SEED = 42
 def _get_cuda_compute_capability() -> int:
     """获取当前CUDA设备的计算能力"""
     try:
+        import torch
         with torch.no_grad():
-            import torch
             if not os.environ.get("CUDA_VISIBLE_DEVICES"):
                 set_env()
             # 延迟导入torch，避免在模块级别导入时就占用GPU
