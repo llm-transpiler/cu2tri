@@ -6,8 +6,16 @@
 """
 
 import os
-import multiprocessing
+import sys
+import logging
 import traceback
+import multiprocessing
+from typing import Dict, Any, List, Tuple, Optional, Union
+
+# Add project root to path for imports
+from utils.set_env import PROJECT_ROOT
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 # 设置多进程启动方法为 spawn 以支持 CUDA
 multiprocessing.set_start_method('spawn', force=True)
@@ -23,8 +31,20 @@ from ..common.mprunner import SubProcResult
 from ..common.mprunner import OutputCapture
 
 
+def _ensure_config(config: Union[Dict[str, Any], EvalConfig]) -> EvalConfig:
+    """Ensure config is EvalConfig object, convert from dict if necessary"""
+    if isinstance(config, dict):
+        return EvalConfig.from_dict(config)
+    elif isinstance(config, EvalConfig):
+        return config
+    else:
+        # Default fallback
+        return DEFAULT_CONFIG
+
+
 def _compare_triton_torch_executor(result_queue, triton_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for correctness testing"""
+    config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -72,6 +92,7 @@ def triton_compare_torch_worker(
 
 def _compare_triton_cuda_executor(result_queue, triton_file, cuda_ref_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for triton vs cuda correctness testing"""
+    config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -119,6 +140,7 @@ def triton_compare_cuda_worker(
 
 def _compare_cuda_torch_executor(result_queue, cuda_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for cuda vs torch correctness testing"""
+    config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -164,8 +186,9 @@ def cuda_compare_torch_worker(
     return mp_run(_compare_cuda_torch_executor, (cuda_file, torch_ref_file, random_seed, config, log_file_path), timeout=timeout)
 
 
-def _perf_triton_executor(result_queue, triton_file, torch_ref_file, random_seed, warmup_runs, test_runs, log_file_path):
+def _perf_triton_executor(result_queue, triton_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for performance testing"""
+    config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
             import torch # must be here
@@ -190,7 +213,7 @@ def _perf_triton_executor(result_queue, triton_file, torch_ref_file, random_seed
                 def triton_test_func():
                     return torch_ref_model.forward(*triton_inputs, fn=triton_fn)
                     # return triton_fn(*triton_inputs)
-                triton_time = benchmark_kernel(triton_test_func, [], warmup=warmup_runs, iterations=test_runs)
+                triton_time = benchmark_kernel(triton_test_func, [], warmup=config.warmup_runs, iterations=config.test_runs)
                 
                 result_queue.put(PerformanceResult(perf_exec_success=True, perf_time_ms=triton_time, output_capture=capture.get_output()))
                 
@@ -205,10 +228,11 @@ def triton_perf_worker(
     log_file_path: str = None,
     config: EvalConfig = DEFAULT_CONFIG,
 ) -> SubProcResult:
-    return mp_run(_perf_triton_executor, (triton_file, torch_ref_file, random_seed, config.warmup_runs, config.test_runs, log_file_path), timeout=config.subproc_timeout)
+    return mp_run(_perf_triton_executor, (triton_file, torch_ref_file, random_seed, config, log_file_path), timeout=config.subproc_timeout if hasattr(config, 'subproc_timeout') else DEFAULT_CONFIG.subproc_timeout)
 
 def _perf_cuda_executor(result_queue, cuda_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for CUDA performance testing"""
+    config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
             import torch
@@ -244,10 +268,11 @@ def cuda_perf_worker(
     log_file_path: str = None,
     config: EvalConfig = DEFAULT_CONFIG,
 ) -> SubProcResult:
-    return mp_run(_perf_cuda_executor, (cuda_file, torch_ref_file, random_seed, config, log_file_path), timeout=config.subproc_timeout)
+    return mp_run(_perf_cuda_executor, (cuda_file, torch_ref_file, random_seed, config, log_file_path), timeout=config.subproc_timeout if hasattr(config, 'subproc_timeout') else DEFAULT_CONFIG.subproc_timeout)
 
 def _perf_torch_executor(result_queue, torch_file, random_seed, config, log_file_path):
     """Worker function for Torch performance testing"""
+    config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
             import torch
@@ -282,7 +307,7 @@ def torch_perf_worker(
     log_file_path: str = None,
     config: EvalConfig = DEFAULT_CONFIG,
 ) -> SubProcResult:
-    return mp_run(_perf_torch_executor, (torch_file, random_seed, config, log_file_path), timeout=config.subproc_timeout)
+    return mp_run(_perf_torch_executor, (torch_file, random_seed, config, log_file_path), timeout=config.subproc_timeout if hasattr(config, 'subproc_timeout') else DEFAULT_CONFIG.subproc_timeout)
 
 def _load_torch_reference(torch_ref_file: str):
     return _load_pyfile_module(torch_ref_file)
@@ -290,6 +315,7 @@ def _load_torch_reference(torch_ref_file: str):
 def _load_triton_kernel(triton_file: str):
     return _load_pyfile_module_attr(triton_file, "forward")
 
-def _load_cuda_kernel(cuda_ref_file: str, config: EvalConfig):
+def _load_cuda_kernel(cuda_ref_file: str, config: Union[Dict[str, Any], EvalConfig]):
+    config = _ensure_config(config)
     extension = load_cuda_extension_from_cufile(cuda_ref_file, config)
     return getattr(extension, "forward")

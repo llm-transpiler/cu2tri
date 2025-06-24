@@ -11,10 +11,6 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple, Callable
 import gc
 
-# Set environment variables
-os.environ["TORCH_USE_CUDA_DSA"] = "1" 
-os.environ['TORCH_CUDA_ARCH_LIST'] = "Ada"
-
 # Add project root to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(current_dir)
@@ -28,12 +24,43 @@ try:
         triton_compare_torch_worker, triton_compare_cuda_worker, cuda_compare_torch_worker,
         triton_perf_worker, cuda_perf_worker, torch_perf_worker
     )
-    from eval_.common.config import EvalConfig
+    from eval_.common.config import EvalConfig, DEFAULT_RANDOM_SEED
     from eval_.common.verifier import CompareResult, PerformanceResult
 except ImportError as e:
     print(f"Import Error: {e}")
     sys.exit(1)
 
+import requests
+import time
+
+API_BASE_URL = "http://localhost:8081"
+
+def submit_task(task_data: Dict[str, Any]) -> str:
+    """Submit a task and return task ID"""
+    response = requests.post(f"{API_BASE_URL}/tasks/submit", json=task_data)
+    if response.status_code == 200:
+        result = response.json()
+        return result["task_id"]
+    else:
+        raise Exception(f"Failed to submit task: {response.text}")
+
+def get_task_status(task_id: str) -> Dict[str, Any]:
+    """Get task status"""
+    response = requests.get(f"{API_BASE_URL}/tasks/{task_id}")
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"Failed to get task status: {response.text}")
+
+def wait_for_task_completion(task_id: str, timeout: int = 60) -> Dict[str, Any]:
+    """Wait for task to complete"""
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        status = get_task_status(task_id)
+        if status["status"] in ["completed", "failed", "cancelled"]:
+            return status
+        time.sleep(2)
+    raise Exception(f"Task {task_id} did not complete within {timeout} seconds")
 
 class TritonKernelEvaluator:
     """Triton Kernel Evaluator"""
@@ -45,15 +72,23 @@ class TritonKernelEvaluator:
     def _create_logger(self) -> logging.Logger:
         """Create logger"""
         logger = logging.getLogger(__name__)
-        if not logger.handlers:
-            logger.setLevel(logging.INFO)
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s | %(levelname)-5s | %(message)s',
-                datefmt='%H:%M:%S'
-            )
-            handler.setFormatter(formatter)
-            logger.addHandler(handler)
+        
+        # Clear existing handlers to avoid duplicates
+        logger.handlers.clear()
+        
+        logger.setLevel(logging.DEBUG)
+        # Prevent propagation to root logger to avoid duplicate messages
+        logger.propagate = False
+        
+        # Add console handler
+        console_handler = logging.StreamHandler()
+        console_formatter = logging.Formatter(
+            '%(asctime)s | %(levelname)-5s | %(message)s',
+            datefmt='%H:%M:%S'
+        )
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
+        
         return logger
     
     def _setup_file_logging(self, base_dir: Path, model_name: str, time_str: str, 
@@ -70,15 +105,22 @@ class TritonKernelEvaluator:
         
         os.makedirs(log_file.parent, exist_ok=True)
         
-        # Add file handler
-        file_handler = logging.FileHandler(log_file, mode='a')
-        file_formatter = logging.Formatter(
-            '%(asctime)s | %(levelname)-5s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        file_handler.setFormatter(file_formatter)
-        self.logger.addHandler(file_handler)
-        self.logger.setLevel(logging.DEBUG)
+        # Check if file handler already exists for this file
+        file_handler_exists = False
+        for handler in self.logger.handlers:
+            if isinstance(handler, logging.FileHandler) and handler.baseFilename == str(log_file.resolve()):
+                file_handler_exists = True
+                break
+        
+        # Only add file handler if it doesn't exist
+        if not file_handler_exists:
+            file_handler = logging.FileHandler(log_file, mode='a')
+            file_formatter = logging.Formatter(
+                '%(asctime)s | %(levelname)-5s | %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S'
+            )
+            file_handler.setFormatter(file_formatter)
+            self.logger.addHandler(file_handler)
         
         return log_file
     
@@ -88,26 +130,77 @@ class TritonKernelEvaluator:
         """Run comparison test with generic function"""
         self.logger.info(f"🔍 {test_name}...")
         
-        result = worker_func(
-            config=config,
-            log_file_path=output_capture_file,
-            timeout=timeout,
-            **kwargs
-        )
+        # Convert any Path objects to strings in kwargs
+        serializable_kwargs = {}
+        for key, value in kwargs.items():
+            if hasattr(value, '__fspath__'):  # Path-like object
+                serializable_kwargs[key] = str(value)
+            else:
+                serializable_kwargs[key] = value
         
-        if result.subproc_success:
-            compare_result: CompareResult = result.result
-            self.logger.info(
-                f"    ✓ {test_name}: "
-                f"max_rel_err={compare_result.max_relative_error:.3f}, "
-                f"max_abs_err={compare_result.max_absolute_error:.6f}"
-            )
-            return True, compare_result, ""
+        # Build args list based on function signature - don't use kwargs to avoid conflicts
+        args_list = []
+        if worker_func.__name__ == "triton_compare_torch_worker":
+            args_list = [serializable_kwargs.get("triton_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, config.to_dict(), output_capture_file, timeout]
+        elif worker_func.__name__ == "triton_compare_cuda_worker":
+            args_list = [serializable_kwargs.get("triton_file"), serializable_kwargs.get("cuda_ref_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, config.to_dict(), output_capture_file, timeout]
+        elif worker_func.__name__ == "cuda_compare_torch_worker":
+            args_list = [serializable_kwargs.get("cuda_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, config.to_dict(), output_capture_file, timeout]
         else:
-            error_msg = f"{test_name} failed - {result.error}"
+            args_list = [config.to_dict(), output_capture_file, timeout]
+        from server.xpu.nvgpu.task_queue import TaskType
+        task_data = {
+            "task_type": TaskType.FUNCTIONAL.value,
+            "name": test_name,
+            "description": f"Comparison test: {test_name}",
+            "module_path": "eval_.kernelbench_c.custom_mprunner",
+            "function_name": worker_func.__name__,
+            "args": args_list,
+            "kwargs": {},
+            "preferred_gpu_id": 0,
+            "allow_fallback": True,
+            "require_same_gpu_type": True
+        }
+        task_id = submit_task(task_data)
+        self.logger.info(f"✅ Submitted task: {task_id}")
+        
+        status = wait_for_task_completion(task_id, timeout=config.subproc_timeout + 5)
+        self.logger.info(f"✅ Task completed: {status}")
+        
+        result = get_task_status(task_id)
+        self.logger.info(f"✅ Task result: {result}")
+        self.logger.debug(f"✅ Task result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        self.logger.debug(f"✅ Task result['result']: {result.get('result') if isinstance(result, dict) else 'N/A'}")
+        
+        # Handle API result format
+        if result.get("status") == "completed" and result.get("result"):
+            task_result = result["result"]
+            # The result should be a SubProcResult-like object with result field containing CompareResult
+            if hasattr(task_result, 'subproc_success') and task_result.subproc_success:
+                compare_result = task_result.result
+                self.logger.info(
+                    f"    ✓ {test_name}: "
+                    f"max_rel_err={compare_result.max_relative_error:.3f}, "
+                    f"max_abs_err={compare_result.max_absolute_error:.6f}"
+                )
+                return True, compare_result, ""
+            elif isinstance(task_result, dict) and task_result.get("subproc_success"):
+                compare_result_dict = task_result["result"]
+                from eval_.common.verifier import CompareResult
+                compare_result = CompareResult(**compare_result_dict)
+                self.logger.info(
+                    f"    ✓ {test_name}: "
+                    f"max_rel_err={compare_result.max_relative_error:.3f}, "
+                    f"max_abs_err={compare_result.max_absolute_error:.6f}"
+                )
+                return True, compare_result, ""
+            else:
+                error_msg = f"{test_name} failed - {getattr(task_result, 'error', task_result.get('error', 'Unknown error'))}"
+                self.logger.error(f"    ❌ {error_msg}")
+                return False, None, error_msg
+        else:
+            error_msg = f"{test_name} failed - {result.get('error', 'Task failed')} (result key: {result.get('result', 'Missing')})"
             self.logger.error(f"    ❌ {error_msg}")
-            if result.traceback:
-                self.logger.debug(f"    Traceback: {result.traceback}")
             return False, None, error_msg
     
     def _run_perf_test(self, worker_func: Callable, test_name: str,
@@ -116,21 +209,67 @@ class TritonKernelEvaluator:
         """Run performance test with generic function"""
         self.logger.info(f"🚀 {test_name}...")
         
-        result = worker_func(
-            config=config,
-            log_file_path=output_capture_file,
-            **kwargs
-        )
+        # Convert any Path objects to strings in kwargs
+        serializable_kwargs = {}
+        for key, value in kwargs.items():
+            if hasattr(value, '__fspath__'):  # Path-like object
+                serializable_kwargs[key] = str(value)
+            else:
+                serializable_kwargs[key] = value
         
-        if result.subproc_success:
-            perf_result: PerformanceResult = result.result
-            self.logger.info(f"    ✓ {test_name}: {perf_result.perf_time_ms:.3f} ms")
-            return True, perf_result, ""
+        # Build args list based on function signature
+        args_list = []
+        if worker_func.__name__ == "triton_perf_worker":
+            args_list = [serializable_kwargs.get("triton_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, output_capture_file, config.to_dict()]
+        elif worker_func.__name__ == "cuda_perf_worker":
+            args_list = [serializable_kwargs.get("cuda_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, output_capture_file, config.to_dict()]
+        elif worker_func.__name__ == "torch_perf_worker":
+            args_list = [serializable_kwargs.get("torch_file"), DEFAULT_RANDOM_SEED, output_capture_file, config.to_dict()]
         else:
-            error_msg = f"{test_name} failed - {result.error}"
+            args_list = [config.to_dict(), output_capture_file]
+        from server.xpu.nvgpu.task_queue import TaskType
+        task_data = {
+            "task_type": TaskType.PERFORMANCE.value,
+            "name": test_name,
+            "description": f"Performance test: {test_name}",
+            "module_path": "eval_.kernelbench_c.custom_mprunner",
+            "function_name": worker_func.__name__,
+            "args": args_list,
+            "kwargs": {},
+            "preferred_gpu_id": 0,
+            "allow_fallback": True,
+            "require_same_gpu_type": True
+        }
+        task_id = submit_task(task_data)
+        self.logger.info(f"✅ Submitted task: {task_id}")
+        
+        status = wait_for_task_completion(task_id, timeout=config.subproc_timeout + 5)
+        self.logger.info(f"✅ Task completed: {status}")
+        
+        result = get_task_status(task_id)
+        self.logger.info(f"✅ Task result: {result}")
+        
+        # Handle API result format
+        if result.get("status") == "completed" and result.get("result"):
+            task_result = result["result"]
+            # The result should be a SubProcResult-like object with result field containing PerformanceResult
+            if hasattr(task_result, 'subproc_success') and task_result.subproc_success:
+                perf_result = task_result.result
+                self.logger.info(f"    ✓ {test_name}: {perf_result.perf_time_ms:.3f} ms")
+                return True, perf_result, ""
+            elif isinstance(task_result, dict) and task_result.get("subproc_success"):
+                perf_result_dict = task_result["result"]
+                from eval_.common.verifier import PerformanceResult
+                perf_result = PerformanceResult(**perf_result_dict)
+                self.logger.info(f"    ✓ {test_name}: {perf_result.perf_time_ms:.3f} ms")
+                return True, perf_result, ""
+            else:
+                error_msg = f"{test_name} failed - {getattr(task_result, 'error', task_result.get('error', 'Unknown error'))}"
+                self.logger.error(f"    ❌ {error_msg}")
+                return False, None, error_msg
+        else:
+            error_msg = f"{test_name} failed - {result.get('error', 'Task failed')}"
             self.logger.error(f"    ❌ {error_msg}")
-            if hasattr(result, 'traceback') and result.traceback:
-                self.logger.debug(f"    Traceback: {result.traceback}")
             return False, None, error_msg
     
     def _run_evaluation_core(self, triton_file: str, cuda_file: str, torch_ref_file: str,
@@ -141,9 +280,10 @@ class TritonKernelEvaluator:
             self.logger.info("🧪 Correctness Testing")
             self.logger.info("─" * 50)
             
+            test_name = "Correctness" if config.cuda_kernel_name == "cuda_kernel" else f"[{config.cuda_kernel_name}] - Correctness"
             # Triton vs PyTorch
             success, triton_torch_compare, error = self._run_compare_test(
-                triton_compare_torch_worker, "Triton vs PyTorch",
+                triton_compare_torch_worker, test_name + " - Triton vs PyTorch",
                 config, output_capture_file, timeout,
                 triton_file=triton_file, torch_ref_file=torch_ref_file
             )
@@ -152,7 +292,7 @@ class TritonKernelEvaluator:
             
             # Triton vs CUDA
             success, triton_cuda_compare, error = self._run_compare_test(
-                triton_compare_cuda_worker, "Triton vs CUDA",
+                triton_compare_cuda_worker, test_name + " - Triton vs CUDA",
                 config, output_capture_file, timeout,
                 triton_file=triton_file, cuda_ref_file=cuda_file,
                 torch_ref_file=torch_ref_file
@@ -162,7 +302,7 @@ class TritonKernelEvaluator:
             
             # CUDA vs PyTorch
             success, cuda_torch_compare, error = self._run_compare_test(
-                cuda_compare_torch_worker, "CUDA vs PyTorch",
+                cuda_compare_torch_worker, test_name + " - CUDA vs PyTorch",
                 config, output_capture_file, timeout,
                 cuda_file=cuda_file, torch_ref_file=torch_ref_file
             )
@@ -194,9 +334,10 @@ class TritonKernelEvaluator:
             self.logger.info("⚡ Performance Testing")
             self.logger.info("─" * 50)
             
+            test_name = "Perf" if config.cuda_kernel_name == "cuda_kernel" else f"[{config.cuda_kernel_name}] - Perf"
             # Triton performance test
             success, triton_perf, error = self._run_perf_test(
-                triton_perf_worker, "Triton Performance",
+                triton_perf_worker, test_name + " - Triton",
                 config, output_capture_file,
                 triton_file=triton_file, torch_ref_file=torch_ref_file
             )
@@ -205,7 +346,7 @@ class TritonKernelEvaluator:
             
             # CUDA performance test
             success, cuda_perf, error = self._run_perf_test(
-                cuda_perf_worker, "CUDA Performance",
+                cuda_perf_worker, test_name + " - CUDA",
                 config, output_capture_file,
                 cuda_file=cuda_file, torch_ref_file=torch_ref_file
             )
@@ -214,7 +355,7 @@ class TritonKernelEvaluator:
             
             # PyTorch performance test
             success, torch_perf, error = self._run_perf_test(
-                torch_perf_worker, "PyTorch Performance",
+                torch_perf_worker, test_name + " - PyTorch",
                 config, output_capture_file,
                 torch_file=torch_ref_file
             )
@@ -318,7 +459,7 @@ class TritonKernelEvaluator:
                 subproc_timeout=timeout
             )
             
-            output_capture_file = log_file.parent / f"subprocess_output_{time_str}.log" if capture_output else None
+            output_capture_file = str(log_file.parent / f"subprocess_output_{time_str}.log") if capture_output else None
             
             self.logger.info("📁 File Paths:")
             self.logger.info(f"    Triton:   {triton_file}")

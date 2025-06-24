@@ -20,6 +20,12 @@ class TaskType(Enum):
     """Task type enumeration"""
     FUNCTIONAL = "functional"  # Multiple tasks can run on same GPU if memory allows
     PERFORMANCE = "performance"  # Requires exclusive GPU access
+    
+    def __str__(self):
+        return self.value
+    
+    def __repr__(self):
+        return self.value
 
 
 class TaskStatus(Enum):
@@ -29,6 +35,12 @@ class TaskStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    
+    def __str__(self):
+        return self.value
+    
+    def __repr__(self):
+        return self.value
 
 
 @dataclass

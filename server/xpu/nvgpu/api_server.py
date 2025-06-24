@@ -46,6 +46,7 @@ class TaskStatusResponse(BaseModel):
     execution_time_seconds: float
     gpu_id: Optional[int]
     error: Optional[str]
+    result: Optional[Any] = None
 
 
 class GPUStatusResponse(BaseModel):

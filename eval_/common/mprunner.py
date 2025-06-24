@@ -71,8 +71,8 @@ class SubProcResult(BaseModel):
 
 class OutputCapture:
     """用于捕获所有输出（包括子进程）的上下文管理器"""
-    def __init__(self, output_file_path: str = None, safe_mode: bool = True, 
-                 real_time_flush: bool = False, flush_interval: float = 1.0):
+    def __init__(self, output_file_path: str = None, safe_mode: bool = False, 
+                 real_time_flush: bool = True, flush_interval: float = 0.1):
         self.captured_output = ""
         self.old_stdout = None
         self.old_stderr = None
@@ -255,7 +255,8 @@ class OutputCapture:
                         pass
                     
                     break
-                    
+                
+                self.captured_output += combined_content
             except Exception as e:
                 if attempt == max_retries - 1:
                     print(f"Warning: Failed to write captured output to {self.output_file_path}: {e}", file=sys.__stderr__)

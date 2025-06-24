@@ -108,26 +108,26 @@ kernel_testing:
 environments:
   # All GPUs (default)
   all_gpus:
-    visible_devices: [0, 1, 2, 3, 4, 5]  # Use all available
+    visible_devices: [0, 1]  # Use all available
     description: "Use all available GPUs"
   
-  # H100 only
-  h100_only:
-    visible_devices: [2, 3, 4, 5]  # Assuming H100s are GPUs 0-3
-    description: "Use H100 GPUs for high-performance tasks"
+  # # H100 only
+  # h100_only:
+  #   visible_devices: [2, 3, 4, 5]  # Assuming H100s are GPUs 0-3
+  #   description: "Use H100 GPUs for high-performance tasks"
   
-  # L20 only  
-  l20_only:
-    visible_devices: [0, 1]  # Assuming L20s are GPUs 4-5
-    description: "Use L20 GPUs for development and testing"
+  # # L20 only  
+  # l20_only:
+  #   visible_devices: [0, 1]  # Assuming L20s are GPUs 4-5
+  #   description: "Use L20 GPUs for development and testing"
   
   a6000_only:
     visible_devices: [0, 1]  # Assuming A6000s are GPUs 0-1
     description: "Use A6000 GPUs for high-performance tasks"
   
-  a100_104_only:
-    visible_devices: [0]  # Assuming A100s are GPUs 0-1
-    description: "Use A100 GPUs for high-performance tasks"
+  # a100_104_only:
+  #   visible_devices: [0]  # Assuming A100s are GPUs 0-1
+  #   description: "Use A100 GPUs for high-performance tasks"
   
   # Single GPU for debugging
   single_gpu:
@@ -171,14 +171,8 @@ usage_examples:
 # GPU ID映射配置 - 解决CUDA_VISIBLE_DEVICES和nvidia-smi ID不一致问题
 # 格式: cuda_device_id: nvidia_smi_device_id
 gpu_id_mapping:
-  # CUDA_VISIBLE_DEVICES的0,1对应nvidia-smi的4,5 (L20)
-  0: 4  # CUDA device 0 -> nvidia-smi GPU 4 (L20)
-  1: 5  # CUDA device 1 -> nvidia-smi GPU 5 (L20)
-  # CUDA_VISIBLE_DEVICES的2,3,4,5对应nvidia-smi的0,1,2,3 (H100)
-  2: 0  # CUDA device 2 -> nvidia-smi GPU 0 (H100)
-  3: 1  # CUDA device 3 -> nvidia-smi GPU 1 (H100)
-  4: 2  # CUDA device 4 -> nvidia-smi GPU 2 (H100)
-  5: 3  # CUDA device 5 -> nvidia-smi GPU 3 (H100)
+  0: 0  # CUDA device 0 -> nvidia-smi GPU 0 (RTX 6000 Ada)
+  1: 1  # CUDA device 1 -> nvidia-smi GPU 1 (RTX 6000 Ada)
 
 # 管理器设置
 manager:

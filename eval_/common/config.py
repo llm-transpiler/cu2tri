@@ -5,8 +5,8 @@
 """
 
 import os
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, asdict
+from typing import List, Dict, Any
 from utils.set_env import set_env
 
 DEFAULT_RANDOM_SEED = 42
@@ -80,5 +80,14 @@ class EvalConfig:
         for arch_number in self.cuda_arch_number:
             flag_template = '-gencode=arch=compute_{arch_number},code=sm_{arch_number}'
             self.extra_cuda_cflags.append(flag_template.format(arch_number=arch_number))
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert EvalConfig to dictionary for JSON serialization"""
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'EvalConfig':
+        """Create EvalConfig from dictionary"""
+        return cls(**data)
 
 DEFAULT_CONFIG = EvalConfig()
