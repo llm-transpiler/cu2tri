@@ -246,59 +246,69 @@ class OpenAICompatibleProvider(Provider):
     
     async def _stream_with_thinking(self, request: ChatRequest) -> AsyncGenerator[StreamChunk, None]:
         """支持思考功能的流式处理"""
-        params = self._prepare_request_params(request)
-        params["stream"] = True
+        contents = self._message_to_native(request.messages)
+        config = self._get_generate_config(request)
         
         thoughts_started = False
         answer_started = False
-        reasoning_tokens = 0
         
-        try:
-            stream = await self._client.chat.completions.create(**params)
-            
-            async for chunk in stream:
-                # OpenAI的o1系列模型不会在流中提供reasoning内容
-                # reasoning信息在最终的usage中
-                if chunk.choices and chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    
-                    if not answer_started:
-                        # 开始输出答案
-                        yield StreamChunk(
-                            content="<answer>" + content,
-                            content_type="answer_start"
-                        )
-                        answer_started = True
-                    else:
-                        yield StreamChunk(
-                            content=content,
-                            content_type="answer"
-                        )
-                
-                # 检查是否有reasoning信息
-                if (chunk.usage and 
-                    hasattr(chunk.usage, 'completion_tokens_details') and 
-                    chunk.usage.completion_tokens_details and
-                    hasattr(chunk.usage.completion_tokens_details, 'reasoning_tokens')):
-                    reasoning_tokens = chunk.usage.completion_tokens_details.reasoning_tokens
-            
-            # 如果有reasoning tokens，输出思考信息
-            if reasoning_tokens > 0 and not thoughts_started:
-                yield StreamChunk(
-                    content=f"<reasoning_tokens>{reasoning_tokens}</reasoning_tokens>\n",
-                    content_type="thought"
-                )
-            
-            # 标记结束
+        # 使用异步方式处理同步流，避免阻塞事件循环
+        def _process_sync_stream():
+            chunks = []
+            for chunk in self._client.models.generate_content_stream(
+                model=request.model,
+                contents=contents,
+                config=config,
+            ):
+                for part in chunk.candidates[0].content.parts:
+                    if not part.text:
+                        continue
+                    chunks.append((part.text, part.thought))
+            return chunks
+        
+        # 在线程池中运行同步代码
+        chunks = await asyncio.to_thread(_process_sync_stream)
+        
+        # 处理收集到的chunks
+        for text, is_thought in chunks:
+            if is_thought:
+                if not thoughts_started:
+                    yield StreamChunk(
+                        content="<thought>" + text,
+                        content_type="thought_start"
+                    )
+                    thoughts_started = True
+                else:
+                    yield StreamChunk(
+                        content=text,
+                        content_type="thought"
+                    )
+            else:
+                if thoughts_started and not answer_started:
+                    yield StreamChunk(
+                        content="</thought>\n<answer>" + text,
+                        content_type="thought_end"
+                    )
+                    answer_started = True
+                else:
+                    yield StreamChunk(
+                        content=text,
+                        content_type="answer"
+                    )
+        
+        # 如果有思考内容但没有输出结束标记
+        if thoughts_started and not answer_started:
             yield StreamChunk(
-                content="</answer>\n",
-                finish_reason="stop",
-                content_type="end"
+                content="</thought>\n<answer>",
+                content_type="thought_end"
             )
-            
-        except Exception as e:
-            self.logger.error(f"OpenAI reasoning stream failed: {e}")
-            raise self.convert_exception(e)
+        
+        # 标记结束
+        yield StreamChunk(
+            content="</answer>\n",
+            finish_reason="stop",
+            content_type="end"
+        )
 
     async def stream_chat_completion(self, request: ChatRequest) -> str:
         """流式聊天请求（返回完整内容）"""
@@ -432,18 +442,24 @@ class GenaiProvider(Provider):
         thoughts = ""
         answer = ""
         
-        for chunk in self._client.models.generate_content_stream(
-            model=request.model,
-            contents=contents,
-            config=config,
-        ):
-            for part in chunk.candidates[0].content.parts:
-                if not part.text:
-                    continue
-                elif part.thought:
-                    thoughts += part.text
-                else:
-                    answer += part.text
+        # 使用异步方式处理同步流，避免阻塞事件循环
+        def _process_sync_stream():
+            nonlocal thoughts, answer
+            for chunk in self._client.models.generate_content_stream(
+                model=request.model,
+                contents=contents,
+                config=config,
+            ):
+                for part in chunk.candidates[0].content.parts:
+                    if not part.text:
+                        continue
+                    elif part.thought:
+                        thoughts += part.text
+                    else:
+                        answer += part.text
+        
+        # 在线程池中运行同步代码，避免阻塞事件循环
+        await asyncio.to_thread(_process_sync_stream)
         
         return ChatResponse(
             content=answer,
@@ -494,36 +510,47 @@ class GenaiProvider(Provider):
         thoughts_started = False
         answer_started = False
         
-        for chunk in self._client.models.generate_content_stream(
-            model=request.model,
-            contents=contents,
-            config=config,
-        ):
-            for part in chunk.candidates[0].content.parts:
-                if not part.text:
-                    continue
-                elif part.thought:
-                    if not thoughts_started:
-                        yield StreamChunk(
-                            content="<thought>"+(part.text or ""),
-                            content_type="thought_start"
-                        )
-                        thoughts_started = True
-                    
+        # 使用异步方式处理同步流，避免阻塞事件循环
+        def _process_sync_stream():
+            chunks = []
+            for chunk in self._client.models.generate_content_stream(
+                model=request.model,
+                contents=contents,
+                config=config,
+            ):
+                for part in chunk.candidates[0].content.parts:
+                    if not part.text:
+                        continue
+                    chunks.append((part.text, part.thought))
+            return chunks
+        
+        # 在线程池中运行同步代码
+        chunks = await asyncio.to_thread(_process_sync_stream)
+        
+        # 处理收集到的chunks
+        for text, is_thought in chunks:
+            if is_thought:
+                if not thoughts_started:
                     yield StreamChunk(
-                        content=part.text or "",
+                        content="<thought>" + text,
+                        content_type="thought_start"
+                    )
+                    thoughts_started = True
+                else:
+                    yield StreamChunk(
+                        content=text,
                         content_type="thought"
                     )
-                else:
-                    if thoughts_started and not answer_started:
-                        yield StreamChunk(
-                            content="</thought>\n<answer>"+(part.text or ""),
-                            content_type="thought_end"
-                        )
-                        answer_started = True
-                    
+            else:
+                if thoughts_started and not answer_started:
                     yield StreamChunk(
-                        content=part.text or "",
+                        content="</thought>\n<answer>" + text,
+                        content_type="thought_end"
+                    )
+                    answer_started = True
+                else:
+                    yield StreamChunk(
+                        content=text,
                         content_type="answer"
                     )
         

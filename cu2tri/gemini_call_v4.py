@@ -32,8 +32,6 @@ MAX_RETRIES = 5
 MAX_ITERATIONS = 3  # 减少到3轮迭代
 BASE_SLEEP_TIME = 3
 
-DEFAULT_MODEL_NAME = "gemini-2.5-pro"
-
 # 导入LLM提供商系统和eval_triton模块
 try:
     import dotenv
@@ -58,7 +56,7 @@ class TritonCodeGenerator:
     def __init__(
         self, 
         platform_type: PlatformType = PlatformType.GOOGLE_OFFICIAL,
-        model_name: str = DEFAULT_MODEL_NAME,
+        model_name: str = "gemini-2.5-pro",
         logger: Optional[logging.Logger] = None
     ):
         """初始化代码生成器
@@ -94,7 +92,7 @@ class TritonCodeGenerator:
         # 添加控制台处理器
         console_handler = logging.StreamHandler()
         console_formatter = logging.Formatter(
-            '| %(levelname)-5s | %(message)s',
+            '%(asctime)s | %(levelname)-5s | %(message)s',
             datefmt='%H:%M:%S'
         )
         console_handler.setFormatter(console_formatter)
@@ -127,7 +125,7 @@ class TritonCodeGenerator:
         if not file_handler_exists:
             file_handler = logging.FileHandler(log_file, mode='a')
             file_formatter = logging.Formatter(
-                '| %(levelname)-5s | %(message)s',
+                '%(asctime)s | %(levelname)-5s | %(message)s',
                 datefmt='%Y-%m-%d %H:%M:%S'
             )
             file_handler.setFormatter(file_formatter)
@@ -191,15 +189,14 @@ class TritonCodeGenerator:
                 if hasattr(response, 'thoughts') and response.thoughts:
                     thought_content = response.thoughts
                     answer_content = response.content
-                    #  # 将思考和回答都添加到树中
-                    # chat_tree.add_assistant_message(
-                    #     text=answer_content, 
-                    #     thought=thought_content
-                    # )
-                    # 只将答案部分添加到对话历史中，thinking部分不参与下一轮对话
-                    chat_tree.add_assistant_message(answer_content)
                     
-                    # 返回格式化的完整回复（用于日志记录）
+                    # 将思考和回答都添加到树中
+                    chat_tree.add_assistant_message(
+                        text=answer_content, 
+                        thought=thought_content
+                    )
+                    
+                    # 返回格式化的完整回复
                     return f"<thoughts>{thought_content}</thoughts><answer>{answer_content}</answer>"
                 else:
                     # 没有思考内容，只添加回答
@@ -630,28 +627,20 @@ class TritonCodeGenerator:
         return generated_code
 
 
-async def process_single_kernel(generator_config, test_dir, semaphore, global_time_str: str, logger: Optional[logging.Logger] = None):
+async def process_single_kernel(generator_config, test_dir, semaphore, logger: Optional[logging.Logger] = None):
     """处理单个内核的生成和评估 - 优化版本，使用eval_triton.py的方法
     
     Args:
         generator_config: TritonCodeGenerator配置字典
         test_dir: 测试目录路径
         semaphore: 并发限制信号量
-        global_time_str: 全局时间戳，用于标识整个批次
         logger: 日志记录器
     
     Returns:
         处理结果字符串
     """
     async with semaphore:  # 限制并发数量
-        # 使用全局时间戳 + 任务特定标识符
-        task_time_str = f"{global_time_str}_{Path(test_dir).name}"
-        
-        # 简化的任务名称（只取前几个字符和数字）
-        task_name = Path(test_dir).name
-        # 提取任务编号（例如从 "2_Standard_matrix_multiplication_" 提取 "2"）
-        task_num = task_name.split('_')[0] if '_' in task_name else task_name[:10]
-        simple_task_name = f"Task_{task_num}"
+        time_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]  # 添加微秒避免时间戳冲突
         
         # 为每个任务创建独立的generator实例，避免状态共享
         generator = TritonCodeGenerator(
@@ -663,8 +652,8 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
             # 初始化generator
             await generator.initialize()
             
-            # 设置任务专用的日志记录器，避免日志竞争 - 使用简化的名称
-            task_logger = logging.getLogger(f"{simple_task_name}")
+            # 设置任务专用的日志记录器，避免日志竞争
+            task_logger = logging.getLogger(f"TritonGen-{Path(test_dir).name}-{time_str}")
             task_logger.setLevel(logging.INFO)
             
             # 清除之前的处理器
@@ -674,18 +663,17 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
             # 设置控制台处理器
             console_handler = logging.StreamHandler()
             console_formatter = logging.Formatter(
-                f'[{simple_task_name}] | %(levelname)-5s | %(message)s'
+                f'[{Path(test_dir).name}] %(asctime)s - %(levelname)s - %(message)s'
             )
             console_handler.setFormatter(console_formatter)
             task_logger.addHandler(console_handler)
             
             # 设置任务专用日志文件
-            task_log_file = Path(test_dir) / "logs" / f"task_{task_time_str}.log"
-            task_log_file = task_log_file.resolve()
+            task_log_file = Path(test_dir) / "logs" / f"task_{time_str}.log"
             os.makedirs(task_log_file.parent, exist_ok=True)
             file_handler = logging.FileHandler(task_log_file, mode='w')
             file_formatter = logging.Formatter(
-                f'[{simple_task_name}] | %(levelname)-5s | %(message)s'
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
             )
             file_handler.setFormatter(file_formatter)
             task_logger.addHandler(file_handler)
@@ -697,18 +685,17 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
             generator.logger = task_logger
             generator.evaluator.logger = task_logger
             
-            task_logger.info(f"🚀 Start processing {test_dir} (Batch: {global_time_str})")
-            await generator.generate_triton_kernel_with_feedback(test_dir, global_time_str)
+            task_logger.info(f"🚀 Start processing {test_dir}")
+            await generator.generate_triton_kernel_with_feedback(test_dir, time_str)
             
             # 运行独立的评估 - 使用eval_triton.py的方法
             model_name_clean = generator.model_name.replace('.', '_').replace('/', '_').replace('-', '_')
-            timestamp_log_dir = Path(test_dir) / "logs" / model_name_clean / global_time_str
-            timestamp_log_dir = timestamp_log_dir.resolve()
+            timestamp_log_dir = Path(test_dir) / "logs" / model_name_clean / time_str
             
             await generator.evaluator.evaluate_triton_kernel(
                 base_dir=Path(test_dir),
                 model_name=generator.model_name,
-                time_str=global_time_str,
+                time_str=time_str,
                 timestamp_log_dir=timestamp_log_dir,
                 return_result=False,
                 timeout=300,
@@ -736,37 +723,32 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
                     logger.warning(f"Error closing generator for {test_dir}: {close_error}")
 
 
-async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: int = 10, logger: Optional[logging.Logger] = None):
+async def batch_generate_kernels(levels: List[str] = None, max_concurrent: int = 1, logger: Optional[logging.Logger] = None):
     """批量生成内核代码（并发执行）- 优化版本
     
     Args:
-        levels: 要处理的级别列表，默认为['01_single_op']（现已固定为此目录）
-        max_concurrent: 最大并发数量，默认为1
+        levels: 要处理的级别列表，默认为['level1']
+        max_concurrent: 最大并发数量，默认为10
         logger: 日志记录器
     """
-    if test_dirs is None:
-        test_dirs = ['01_single_op']  # 现在固定使用此目录
+    if levels is None:
+        levels = ['level1']
     
     if logger is None:
         logger = logging.getLogger(__name__)
     
-    # 生成全局时间戳，用于标识整个批次的测试
-    global_time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-    logger.info(f"📅 Global batch timestamp: {global_time_str}")
-    
     # 准备generator配置（避免共享状态）
     generator_config = {
         "platform_type": PlatformType.GOOGLE_OFFICIAL,
-        "model_name": DEFAULT_MODEL_NAME
+        "model_name": "gemini-2.5-pro"
     }
     
     # 创建并发限制信号量
     semaphore = asyncio.Semaphore(max_concurrent)
     
     try:
-        for sub_dir in test_dirs:
-            # 修改为新的输出目录结构
-            output_dir = f"/workspace/cu2tri/outputs/cu2tri/kernelbench_c/{sub_dir}"
+        for level in levels:
+            output_dir = f"outputs/kernelbench_c/{level}"
             if not os.path.exists(output_dir):
                 logger.error(f"Directory does not exist: {output_dir}")
                 continue
@@ -777,11 +759,11 @@ async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: in
             tasks = []
             for dir_name in all_dirs:
                 test_dir = f"{output_dir}/{dir_name}"
-                # 创建任务协程（注意传递全局时间戳）
-                task_coro = process_single_kernel(generator_config, test_dir, semaphore, global_time_str, logger)
+                # 创建任务协程（注意不要立即执行）
+                task_coro = process_single_kernel(generator_config, test_dir, semaphore, logger)
                 tasks.append(task_coro)
             
-            logger.info(f"🎯 Start concurrent processing {sub_dir} {len(tasks)} kernels (batch: {global_time_str}, max concurrent: {max_concurrent}, max iterations: {MAX_ITERATIONS})")
+            logger.info(f"🎯 Start concurrent processing {level} level {len(tasks)} kernels (max concurrent: {max_concurrent}, max iterations: {MAX_ITERATIONS})")
             
             # 并发执行所有任务
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -790,7 +772,7 @@ async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: in
             success_count = 0
             error_count = 0
             
-            logger.info(f"\n📊 {sub_dir} processing result:")
+            logger.info(f"\n📊 {level} level processing result:")
             for i, result in enumerate(results):
                 dir_name = all_dirs[i]
                 if isinstance(result, Exception):
@@ -800,7 +782,7 @@ async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: in
                     logger.info(f"  {result}")
                     success_count += 1
             
-            logger.info(f"\n🏆 {sub_dir} summary: {success_count} passed, {error_count} failed")
+            logger.info(f"\n🏆 {level} level summary: {success_count} passed, {error_count} failed")
             logger.info("-" * 60)
                     
     except Exception as e:
@@ -814,28 +796,24 @@ async def main():
     """主函数示例"""
     # # 示例1: 单个内核生成
     # test_dir = "outputs/kernelbench_c/level1/1_Square_matrix_multiplication_"
-    # test_dir = "/workspace/cu2tri/outputs/tests/31_ELU"
-    # if os.path.exists(test_dir):
-    #     try:
-    #         # 生成单次测试的时间戳
-    #         single_test_time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
-    #         print(f"📅 Single test timestamp: {single_test_time_str}")
+    test_dir = "/workspace/cu2tri/outputs/tests/31_ELU"
+    if os.path.exists(test_dir):
+        try:
+            generator = TritonCodeGenerator(
+                platform_type=PlatformType.GOOGLE_OFFICIAL,
+                model_name="gemini-2.5-pro"
+            )
+            await generator.initialize()
             
-    #         generator = TritonCodeGenerator(
-    #             platform_type=PlatformType.GOOGLE_OFFICIAL,
-    #             model_name=DEFAULT_MODEL_NAME
-    #         )
-    #         await generator.initialize()
+            code = await generator.generate_triton_kernel_with_feedback(test_dir)
+            print("✅ 代码生成完成")
+            print(f"生成的代码长度: {len(code)} 字符")
             
-    #         code = await generator.generate_triton_kernel_with_feedback(test_dir, single_test_time_str)
-    #         print("✅ 代码生成完成")
-    #         print(f"生成的代码长度: {len(code)} 字符")
-            
-    #     except Exception as e:
-    #         print(f"❌ 生成失败: {e}")
+        except Exception as e:
+            print(f"❌ 生成失败: {e}")
     
     # 示例2: 批量生成（取消注释以启用）
-    await batch_generate_kernels(['01_single_op'], max_concurrent=10)
+    await batch_generate_kernels(['level1'])
 
 
 if __name__ == "__main__":

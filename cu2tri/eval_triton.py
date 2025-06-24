@@ -11,12 +11,13 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple, Callable
 import gc
 
+from utils.set_env import set_env
+set_env()
 # Add project root to path
 current_dir = os.path.dirname(os.path.abspath(__file__))
-os.chdir(current_dir)
-project_root = os.path.dirname(current_dir)
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+from utils.set_env import PROJECT_ROOT
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 try:
     import torch
@@ -130,11 +131,12 @@ class TritonKernelEvaluator:
         """Run comparison test with generic function"""
         self.logger.info(f"🔍 {test_name}...")
         
-        # Convert any Path objects to strings in kwargs
+        # Convert any Path objects to strings and ensure absolute paths
         serializable_kwargs = {}
         for key, value in kwargs.items():
             if hasattr(value, '__fspath__'):  # Path-like object
-                serializable_kwargs[key] = str(value)
+                # Convert to absolute path to ensure GPU server can find files
+                serializable_kwargs[key] = str(Path(value).resolve())
             else:
                 serializable_kwargs[key] = value
         
@@ -209,11 +211,12 @@ class TritonKernelEvaluator:
         """Run performance test with generic function"""
         self.logger.info(f"🚀 {test_name}...")
         
-        # Convert any Path objects to strings in kwargs
+        # Convert any Path objects to strings and ensure absolute paths
         serializable_kwargs = {}
         for key, value in kwargs.items():
             if hasattr(value, '__fspath__'):  # Path-like object
-                serializable_kwargs[key] = str(value)
+                # Convert to absolute path to ensure GPU server can find files
+                serializable_kwargs[key] = str(Path(value).resolve())
             else:
                 serializable_kwargs[key] = value
         
@@ -431,8 +434,14 @@ class TritonKernelEvaluator:
         cuda_file = base_dir / "cuda_ref.cu"
         torch_ref_file = base_dir / "torch_ref.py"
         
+        triton_file = triton_file.resolve()
+        cuda_file = cuda_file.resolve()
+        torch_ref_file = torch_ref_file.resolve()
+        
         # Setup logging
         log_file = self._setup_file_logging(base_dir, model_name, time_str, logfile_prefix, timestamp_log_dir)
+        
+        log_file = log_file.resolve()
         
         self.logger.info("")
         self.logger.info("╔" + "═" * 58 + "╗")
@@ -453,13 +462,17 @@ class TritonKernelEvaluator:
             # Prepare configuration
             config = EvalConfig(
                 cuda_kernel_name=kernel_name,
-                build_dir=f"{base_dir}/build",
+                build_dir=str(Path(base_dir).resolve() / "build"),
                 atol=self.config.atol,
                 rtol=self.config.rtol,
                 subproc_timeout=timeout
             )
             
             output_capture_file = str(log_file.parent / f"subprocess_output_{time_str}.log") if capture_output else None
+            
+            # Ensure output capture file directory exists
+            if output_capture_file:
+                os.makedirs(os.path.dirname(output_capture_file), exist_ok=True)
             
             self.logger.info("📁 File Paths:")
             self.logger.info(f"    Triton:   {triton_file}")
@@ -509,8 +522,10 @@ async def test_square_matrix_multiplication():
     """Test square matrix multiplication"""
     config = EvalConfig(atol=0.1, rtol=0.1)
     evaluator = TritonKernelEvaluator(config=config)
-    from utils.set_env import PROJECT_ROOT
-    test_dir = PROJECT_ROOT / "cu2tri" / "outputs" / "tests" / "1_Square_matrix_multiplication_"
+    # from utils.set_env import PROJECT_ROOT
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    test_dir = Path("outputs") / "tests" / "1_Square_matrix_multiplication_"
+    print(test_dir.resolve())
     if not os.path.exists(test_dir):
         print(f"❌ Test directory not found: {test_dir}")
         return

@@ -1,6 +1,10 @@
 from pydantic import BaseModel
 import traceback
 import copy
+from typing import Any, List, Tuple
+
+# 定义一个安全的大数值，避免JSON序列化时的无穷大问题
+SAFE_MAX_VALUE = 1e9
 
 
 class CompareResult(BaseModel):
@@ -9,8 +13,8 @@ class CompareResult(BaseModel):
     shape_match: bool = False
     values_match: bool = False
     overall_match: bool = False
-    max_relative_error: float = float('inf')
-    max_absolute_error: float = float('inf')
+    max_relative_error: float = SAFE_MAX_VALUE
+    max_absolute_error: float = SAFE_MAX_VALUE
     error: str = ""
     traceback: str = ""
     output_capture: str = ""
@@ -18,7 +22,7 @@ class CompareResult(BaseModel):
 
 class PerformanceResult(BaseModel):
     perf_exec_success: bool = True
-    perf_time_ms: float = float('inf')
+    perf_time_ms: float = SAFE_MAX_VALUE
     error: str = ""
     traceback: str = ""
     output_capture: str = ""
@@ -138,12 +142,12 @@ def _compare_single_tensor(tensor1, tensor2, rtol: float, atol: float):
             
         except Exception:
             values_match = False
-            max_rel_error = float('inf')
-            max_abs_error = float('inf')
+            max_rel_error = SAFE_MAX_VALUE
+            max_abs_error = SAFE_MAX_VALUE
     else:
         values_match = False
-        max_rel_error = float('inf')
-        max_abs_error = float('inf')
+        max_rel_error = SAFE_MAX_VALUE
+        max_abs_error = SAFE_MAX_VALUE
     
     return shape_match, dtype_match, values_match, float(max_rel_error), float(max_abs_error)
 

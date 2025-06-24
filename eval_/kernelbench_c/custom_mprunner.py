@@ -318,4 +318,12 @@ def _load_triton_kernel(triton_file: str):
 def _load_cuda_kernel(cuda_ref_file: str, config: Union[Dict[str, Any], EvalConfig]):
     config = _ensure_config(config)
     extension = load_cuda_extension_from_cufile(cuda_ref_file, config)
+    
+    # Check if extension loading failed (returned string error message)
+    if isinstance(extension, str):
+        raise RuntimeError(f"Failed to load CUDA extension: {extension}")
+        
+    if not hasattr(extension, "forward"):
+        raise AttributeError(f"CUDA extension does not have 'forward' attribute. Available attributes: {dir(extension)}")
+        
     return getattr(extension, "forward")

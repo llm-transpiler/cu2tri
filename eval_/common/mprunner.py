@@ -134,15 +134,19 @@ class OutputCapture:
         return self
 
     def _enter_direct_mode(self):
-        """直接模式：原始实现"""
-        # 创建临时文件用于捕获输出
+        """直接模式：直接重定向stdout/stderr到文件"""
         if self.output_file_path is None:
-            temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False)
-            temp_file.close()
-            self.output_file_path = temp_file.name
+            # 如果没有指定输出文件，创建临时文件
+            import tempfile
+            self._temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log')
+            self.output_file_path = self._temp_file.name
             self.file_temp = True
         else:
             self.file_temp = False 
+
+        # 确保输出文件的父目录存在
+        import os
+        os.makedirs(os.path.dirname(self.output_file_path), exist_ok=True)
 
         # 保存原始的文件描述符
         self.old_stdout = os.dup(1)

@@ -31,8 +31,8 @@ def calculate_performance_metrics(
     
     if triton_time > 0:
         performance_metrics.update({
-            "triton_cuda_speedup": cuda_time / triton_time,
-            "triton_torch_speedup": torch_time / triton_time
+            "triton_cuda_speedup": 0.0 if triton_time < 1e-9 else cuda_time / triton_time,
+            "triton_torch_speedup": 0.0 if triton_time < 1e-9 else torch_time / triton_time
         })
     
     return performance_metrics
