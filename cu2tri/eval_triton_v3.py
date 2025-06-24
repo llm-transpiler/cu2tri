@@ -335,7 +335,7 @@ class TritonKernelEvaluator:
             self.logger.info("")
             if result.get("success"):
                 self.logger.info("╔" + "═" * 58 + "╗")
-                self.logger.info("║" + f"{'🎉 Evaluation Completed Successfully!':^56}" + "║")
+                self.logger.info("║" + f"{'🎉 Evaluation Completed Successfully!':^57}" + "║")
                 self.logger.info("╚" + "═" * 58 + "╝")
             else:
                 self.logger.error("╔" + "═" * 58 + "╗")
