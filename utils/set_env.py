@@ -17,7 +17,7 @@ def set_env():
     """设置CUDA和PyTorch相关的环境变量"""
     os.environ["TORCH_USE_CUDA_DSA"] = "1"
     # os.environ["CUDA_VISIBLE_DEVICES"] = "2, 5"
-    os.environ['TORCH_CUDA_ARCH_LIST'] = "Hopper"
+    os.environ['TORCH_CUDA_ARCH_LIST'] = "Ada"
 
 # Fix libstdc++ compatibility issue
 

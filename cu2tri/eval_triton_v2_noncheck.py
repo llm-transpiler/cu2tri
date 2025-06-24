@@ -10,10 +10,6 @@ import os
 import sys
 import asyncio
 import logging
-import importlib.util
-import subprocess
-import tempfile
-import time
 import multiprocessing
 from pathlib import Path
 from datetime import datetime
@@ -39,7 +35,7 @@ try:
     from eval_.common.loader import load_cuda_extension_from_cufile
     from eval_.common.config import EvalConfig
     from eval_.common.benchmark import benchmark_kernel
-    from eval_.common.mprunner import mp_run, SubProcResult
+    from eval_.common.mprunner import mp_run
 except ImportError as e:
     print(f"Import Error: {e}")
     print("Please ensure the necessary dependencies are installed")
@@ -121,16 +117,6 @@ class TritonKernelEvaluator:
         cuda_result: torch.Tensor, 
         torch_result: torch.Tensor
     ) -> Dict[str, bool]:
-        """比较不同实现的结果
-        
-        Args:
-            triton_result: Triton结果
-            cuda_result: CUDA结果
-            torch_result: PyTorch结果
-            
-        Returns:
-            包含比较结果的字典
-        """
         atol, rtol = self.config.atol, self.config.rtol
         
         comparisons = {
@@ -431,7 +417,7 @@ def evaluate_triton_kernel_subproc(
         
         file_handler = logging.FileHandler(subprocess_log_file, mode='w')
         file_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            '[%(levelname)s]\t%(message)s'
         )
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)

@@ -15,31 +15,42 @@ WORKSPACE_ROOT = Path("/workspace")
 TESTS_ROOT = WORKSPACE_ROOT / "tests" / "_cuda" / "HPCTransCompile"
 TORCH_REF_DIR = TESTS_ROOT / "EvalEngine" / "torch_functionals"
 CUDA_REF_DIR = TESTS_ROOT / "KernelBench_c"
-OUTPUT_ROOT = WORKSPACE_ROOT / "cu2tri" / "outputs" / "kernelbench_c"
-levels = ['level1', 'level2', 'level3']
-name_set = {'level1': set(), 'level2': set(), 'level3': set()}
+OUTPUT_ROOT = WORKSPACE_ROOT / "cu2tri" / "outputs" / "cu2tri" / "kernelbench_c"
+
+# 定义源文件夹到目标文件夹的映射
+# src_dirs = ['level1', 'level2', 'level3']
+src2tgt_mapping = {
+    'level1': '01_single_op',
+    'level2': '02_fused_op', 
+    'level3': '03_network'
+}
+
+name_set = {k: set() for k in src2tgt_mapping.keys()}
+
 def process():    
-    for level in ['level1', 'level2', 'level3']:
-        level_dir = CUDA_REF_DIR / level
-        if not level_dir.exists():
+    for src_dir in src2tgt_mapping.keys():
+        src_path = CUDA_REF_DIR / src_dir
+        if not src_path.exists():
             continue
-        for file in level_dir.glob("*.cu"):
-            name_set[level].add(file.stem)
-    for level in levels:
-        level_dir = TORCH_REF_DIR / level
-        if not level_dir.exists():
+        for file in src_path.glob("*.cu"):
+            name_set[src_dir].add(file.stem)
+    for src_dir in src2tgt_mapping.keys():
+        src_path = TORCH_REF_DIR / src_dir
+        if not src_path.exists():
             continue
-        for file in level_dir.glob("*.py"):
-            if file.stem not in name_set[level]:
-                raise ValueError(f"File {level + '_' + file.stem} not found in {level_dir}")
-    for level in levels:
-        name_set[level] = sorted(list(name_set[level]), key=lambda x: int(x.split('_')[0])) # type: ignore
-    for level in levels:
-        os.makedirs(OUTPUT_ROOT / level, exist_ok=True)
-        for name in name_set[level]:
-            os.makedirs(OUTPUT_ROOT / level / f"{name}", exist_ok=True)
-            shutil.copy(CUDA_REF_DIR / level / f"{name}.cu", OUTPUT_ROOT / level / f"{name}" / f"cuda_ref.cu")
-            shutil.copy(TORCH_REF_DIR / level / f"{name}.py", OUTPUT_ROOT / level / f"{name}" / f"torch_ref.py")
+        for file in src_path.glob("*.py"):
+            if file.stem not in name_set[src_dir]:
+                raise ValueError(f"File {src_dir + '_' + file.stem} not found in {src_path}")
+    for src_dir in src2tgt_mapping.keys():
+        name_set[src_dir] = sorted(list(name_set[src_dir]), key=lambda x: int(x.split('_')[0])) # type: ignore
+    for src_dir in src2tgt_mapping.keys():
+        # 使用映射后的目标目录名
+        tgt_dir = src2tgt_mapping[src_dir]
+        os.makedirs(OUTPUT_ROOT / tgt_dir, exist_ok=True)
+        for name in name_set[src_dir]:
+            os.makedirs(OUTPUT_ROOT / tgt_dir / f"{name}", exist_ok=True)
+            shutil.copy(CUDA_REF_DIR / src_dir / f"{name}.cu", OUTPUT_ROOT / tgt_dir / f"{name}" / f"cuda_ref.cu")
+            shutil.copy(TORCH_REF_DIR / src_dir / f"{name}.py", OUTPUT_ROOT / tgt_dir / f"{name}" / f"torch_ref.py")
 
 if __name__ == "__main__":
     process()

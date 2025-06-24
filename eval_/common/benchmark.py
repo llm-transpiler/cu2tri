@@ -10,9 +10,9 @@ import torch, triton
 
 def benchmark_kernel(
     kernel_func: Callable, 
-    inputs: List,
+    inputs: list | tuple,
     warmup: int = 1000,
-    iterations: int = 5000,
+    iterations: int = 10000,
     quantiles: List[float] = [0.2, 0.5, 0.8]
 ) -> float:
     """
@@ -31,7 +31,7 @@ def benchmark_kernel(
 
 def _simple_perf(
     kernel_func: Callable, 
-    inputs: List[torch.Tensor],
+    inputs: list | tuple,
     warmup: int = 1000,
     iterations: int = 10000,
     quantiles: List[float] = [0.2, 0.5, 0.8],

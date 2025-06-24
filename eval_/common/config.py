@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 from utils.set_env import set_env
 
+DEFAULT_RANDOM_SEED = 42
 
 def _get_cuda_compute_capability() -> int:
     """获取当前CUDA设备的计算能力"""
@@ -55,6 +56,7 @@ class EvalConfig:
     # 性能测试参数
     warmup_runs: int = 1000
     test_runs: int = 10000
+    random_seed: int = DEFAULT_RANDOM_SEED
     
     # 超时设置
     subproc_timeout: int = 300

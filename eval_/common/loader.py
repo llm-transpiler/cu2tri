@@ -5,7 +5,6 @@
 """
 
 import os
-import importlib.util
 from types import ModuleType
 from pathlib import Path
 from typing import Union, Callable
@@ -16,9 +15,28 @@ from .config import EvalConfig, DEFAULT_CONFIG
 
 
 def _load_pyfile_module(pyfile_path: str, module_name: str = None) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(module_name or Path(pyfile_path).stem, pyfile_path)
-    module = importlib.util.module_from_spec(spec) # 名为module_name的module尚未加载
-    spec.loader.exec_module(module) # 加载名为module_name的module, sys.modules[module_name] = module
+    import importlib.util
+    import sys
+    if module_name is None:
+        module_name = Path(pyfile_path).stem
+    
+    spec = importlib.util.spec_from_file_location(module_name, pyfile_path)
+    module = importlib.util.module_from_spec(spec)
+    
+    # 保存之前的模块（如果存在）以备回滚
+    old_module = sys.modules.get(module_name)
+    sys.modules[module_name] = module # 多轮测试如果用了同一个名字可以覆盖加载
+    
+    try:
+        spec.loader.exec_module(module) # 加载名为module_name的module
+    except Exception:
+        # 执行失败时回滚
+        if old_module is not None:
+            sys.modules[module_name] = old_module
+        else:
+            sys.modules.pop(module_name, None)
+        raise
+    
     return module
 
 
@@ -49,7 +67,7 @@ def load_cuda_extension_from_cufile(
     except Exception as e:
         return str(e)
 
-def load_cuda_extension_from_inline(
+def load_cuda_extension_inline(
     name: str,
     cpp_sources: str | list[str],
     cuda_sources: str | list[str],
