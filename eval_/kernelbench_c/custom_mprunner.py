@@ -199,8 +199,8 @@ def _perf_triton_executor(result_queue, triton_file, torch_ref_file, random_seed
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-            import torch # must be here
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
+            import torch
             with torch.no_grad():
                 torch.cuda.empty_cache()
                 
@@ -223,6 +223,8 @@ def _perf_triton_executor(result_queue, triton_file, torch_ref_file, random_seed
                     return torch_ref_model.forward(*triton_inputs, fn=triton_fn)
                     # return triton_fn(*triton_inputs)
                 triton_time = benchmark_kernel(triton_test_func, [], warmup=config.warmup_runs, iterations=config.test_runs)
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
                 
                 result_queue.put(PerformanceResult(perf_exec_success=True, perf_time_ms=triton_time, output_capture=capture.get_output()))
                 
@@ -244,7 +246,7 @@ def _perf_cuda_executor(result_queue, cuda_file, torch_ref_file, random_seed, co
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
             import torch
             with torch.no_grad():
                 torch.cuda.empty_cache()
@@ -265,6 +267,8 @@ def _perf_cuda_executor(result_queue, cuda_file, torch_ref_file, random_seed, co
                 def cuda_test_func():
                     return torch_ref_model.forward(*cuda_inputs, fn=cuda_fn)
                 cuda_time = benchmark_kernel(cuda_test_func, [], warmup=config.warmup_runs, iterations=config.test_runs)
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
                 
                 result_queue.put(PerformanceResult(perf_exec_success=True, perf_time_ms=cuda_time, output_capture=capture.get_output()))
                 
@@ -285,7 +289,7 @@ def _perf_torch_executor(result_queue, torch_file, random_seed, config, log_file
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
             import torch
             with torch.no_grad():
                 torch.cuda.empty_cache()
@@ -306,6 +310,8 @@ def _perf_torch_executor(result_queue, torch_file, random_seed, config, log_file
                 def torch_test_func():
                     return torch_ref_model.forward(*torch_inputs, fn=torch_ref.module_fn)
                 torch_time = benchmark_kernel(torch_test_func, [], warmup=config.warmup_runs, iterations=config.test_runs)
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
                 
                 result_queue.put(PerformanceResult(perf_exec_success=True, perf_time_ms=torch_time, output_capture=capture.get_output()))
                 
