@@ -17,33 +17,33 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-# 设置环境变量
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
-
 # 导入项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(current_dir)
 
-project_root = os.path.dirname(current_dir)
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+from utils.set_env import set_env, PROJECT_ROOT
+set_env()
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 MAX_RETRIES = 5
-MAX_ITERATIONS = 1  # 减少到3轮迭代
+MAX_ITERATIONS = 3  # 减少到3轮迭代
 BASE_SLEEP_TIME = 3
 
-DEFAULT_MODEL_NAME = "gemini-2.5-pro"
+# DEFAULT_MODEL_NAME = "gemini-2.5-pro"
+DEFAULT_MODEL_NAME = "gemini-2.5-flash"
 DEFAULT_TIMEOUT = 300
 
 # 导入LLM提供商系统和eval_triton模块
 try:
     import dotenv
     from llm.providers import (
-        get_provider, PlatformType, ChatRequest, Message
+        get_provider, PlatformType, ChatRequest
     )
     from llm.providers.impl import GeminiChatTree, OpenRouterChatTree
-    from eval_triton import TritonKernelEvaluator  # 直接使用eval_triton中的评估器
-    import prompt
+    from cu2tri.stable.eval_triton import TritonKernelEvaluator  # 直接使用eval_triton中的评估器
+    from cu2tri import prompt
 except ImportError as e:
     print(f"导入错误: {e}")
     print("请确保安装了必要的依赖包并正确配置项目路径")
@@ -277,8 +277,19 @@ class TritonCodeGenerator:
             # 如果提供了迭代信息，添加到日志前缀中
             logfile_prefix = f"round{iteration}_" if iteration is not None else ""
             
-            # 直接调用eval_triton.py中的方法
-            result = await self.evaluator.evaluate_triton_kernel(
+            # 使用 asyncio.to_thread 将同步调用转换为异步调用
+            # result = await asyncio.to_thread(
+            #     self.evaluator.evaluate_triton_kernel,
+            #     base_dir=base_dir,
+            #     model_name=self.model_name,
+            #     time_str=time_str,
+            #     logfile_prefix=logfile_prefix,
+            #     timestamp_log_dir=timestamp_log_dir,
+            #     return_result=True,
+            #     timeout=DEFAULT_TIMEOUT,
+            #     capture_output=True
+            # )
+            result = self.evaluator.evaluate_triton_kernel(
                 base_dir=base_dir,
                 model_name=self.model_name,
                 time_str=time_str,
@@ -288,7 +299,7 @@ class TritonCodeGenerator:
                 timeout=DEFAULT_TIMEOUT,
                 capture_output=True
             )
-            return result
+            return result if result is not None else {"success": False, "error": "No result returned"}
             
         except Exception as e:
             import traceback
@@ -706,7 +717,19 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
             timestamp_log_dir = Path(test_dir) / "logs" / model_name_clean / global_time_str
             timestamp_log_dir = timestamp_log_dir.resolve()
             
-            await generator.evaluator.evaluate_triton_kernel(
+            # # 使用 asyncio.to_thread 将同步调用转换为异步调用
+            # await asyncio.to_thread(
+            #     generator.evaluator.evaluate_triton_kernel,
+            #     base_dir=Path(test_dir),
+            #     model_name=generator.model_name,
+            #     time_str=global_time_str,
+            #     timestamp_log_dir=timestamp_log_dir,
+            #     return_result=False,
+            #     timeout=300,
+            #     capture_output=True
+            # )
+            # 使用 asyncio.to_thread 将同步调用转换为异步调用
+            generator.evaluator.evaluate_triton_kernel(
                 base_dir=Path(test_dir),
                 model_name=generator.model_name,
                 time_str=global_time_str,
@@ -836,7 +859,7 @@ async def main():
     #         print(f"❌ 生成失败: {e}")
     
     # 示例2: 批量生成（取消注释以启用）
-    await batch_generate_kernels(['01_single_op'], max_concurrent=3)
+    await batch_generate_kernels(['01_single_op'], max_concurrent=1)
 
 
 if __name__ == "__main__":

@@ -457,6 +457,61 @@ class OutputCapture:
     def get_output(self):
         return self.captured_output
 
+
+# class OutputCapture:
+#     """用于捕获所有输出（包括子进程）的上下文管理器"""
+#     def __init__(self, output_file_path: str = None):
+#         self.captured_output = ""
+#         self.old_stdout = None
+#         self.old_stderr = None
+#         self.temp_file = None
+#         self.output_file_path = output_file_path
+
+#     def __enter__(self):
+#         # 创建临时文件用于捕获输出
+#         if self.output_file_path is None:
+#             self.temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False)
+#             self.temp_file.close()
+#         else:
+#             self.temp_file = open(self.output_file_path, 'w')
+
+#         # 保存原始的文件描述符
+#         self.old_stdout = os.dup(1)
+#         self.old_stderr = os.dup(2)
+
+#         # 将stdout和stderr重定向到临时文件
+#         temp_fd = os.open(self.temp_file.name, os.O_WRONLY | os.O_CREAT | os.O_APPEND)
+#         os.dup2(temp_fd, 1)  # stdout
+#         os.dup2(temp_fd, 2)  # stderr
+#         os.close(temp_fd)
+
+#         return self
+
+#     def __exit__(self, exc_type, exc_val, exc_tb):
+#         # 刷新缓冲区
+#         sys.stdout.flush()
+#         sys.stderr.flush()
+
+#         # 恢复原始的文件描述符
+#         os.dup2(self.old_stdout, 1)
+#         os.dup2(self.old_stderr, 2)
+#         os.close(self.old_stdout)
+#         os.close(self.old_stderr)
+
+#         # 读取捕获的输出，使用错误处理来处理二进制数据
+#         try:
+#             with open(self.temp_file.name, 'r', encoding='utf-8') as f:
+#                 self.captured_output = f.read()
+#         except UnicodeDecodeError:
+#             # 如果有二进制数据，使用错误替换模式
+#             with open(self.temp_file.name, 'r', encoding='utf-8', errors='replace') as f:
+#                 self.captured_output = f.read()
+        
+#         self.temp_file.close()
+
+#     def get_output(self):
+#         return self.captured_output
+
 def mp_run(
     worker_func: Callable,
     args: list | tuple = (),
@@ -481,6 +536,7 @@ def mp_run(
     process = None
     
     try:
+        print(f"mp_run: {worker_func.__name__}")
         # 创建队列和进程
         result_queue = multiprocessing.Queue()
         process = multiprocessing.Process(
@@ -489,7 +545,10 @@ def mp_run(
             kwargs=kwargs
         )
         process.start()
+        print(f"mp_run process start: {process.pid}")
         process.join(timeout=timeout)
+        print(f"mp_run process end: {process.pid}")
+        print(f"mp_run end: {worker_func.__name__}")
         
         # 处理超时或异常退出
         if process.is_alive():

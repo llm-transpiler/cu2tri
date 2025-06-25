@@ -35,35 +35,6 @@ except ImportError as e:
 import requests
 import time
 
-API_BASE_URL = "http://localhost:8081"
-
-def submit_task(task_data: Dict[str, Any]) -> str:
-    """Submit a task and return task ID"""
-    response = requests.post(f"{API_BASE_URL}/tasks/submit", json=task_data)
-    if response.status_code == 200:
-        result = response.json()
-        return result["task_id"]
-    else:
-        raise Exception(f"Failed to submit task: {response.text}")
-
-def get_task_status(task_id: str) -> Dict[str, Any]:
-    """Get task status"""
-    response = requests.get(f"{API_BASE_URL}/tasks/{task_id}")
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception(f"Failed to get task status: {response.text}")
-
-def wait_for_task_completion(task_id: str, timeout: int = DEFAULT_CONFIG.subproc_timeout) -> Dict[str, Any]:
-    """Wait for task to complete"""
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        status = get_task_status(task_id)
-        if status["status"] in ["completed", "failed", "cancelled"]:
-            return status
-        time.sleep(2)
-    raise Exception(f"Task {task_id} did not complete within {timeout} seconds")
-
 class TritonKernelEvaluator:
     """Triton Kernel Evaluator"""
     
@@ -128,82 +99,32 @@ class TritonKernelEvaluator:
     
     def _run_compare_test(self, worker_func: Callable, test_name: str, 
                          config: EvalConfig, output_capture_file: Optional[str], 
-                         timeout: int = DEFAULT_CONFIG.subproc_timeout, **kwargs) -> Tuple[bool, CompareResult, str]:
+                         timeout: int, **kwargs) -> Tuple[bool, CompareResult, str]:
         """Run comparison test with generic function"""
         self.logger.info(f"🔍 {test_name}...")
         
-        # Convert any Path objects to strings and ensure absolute paths
-        serializable_kwargs = {}
-        for key, value in kwargs.items():
-            if hasattr(value, '__fspath__'):  # Path-like object
-                # Convert to absolute path to ensure GPU server can find files
-                serializable_kwargs[key] = str(Path(value).resolve())
-            else:
-                serializable_kwargs[key] = value
+        result = worker_func(
+            config=config,
+            log_file_path=output_capture_file,
+            timeout=timeout,
+            **kwargs
+        )
         
-        # Build args list based on function signature - don't use kwargs to avoid conflicts
-        args_list = []
-        if worker_func.__name__ == "triton_compare_torch_worker":
-            args_list = [serializable_kwargs.get("triton_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, config.to_dict(), output_capture_file, timeout]
-        elif worker_func.__name__ == "triton_compare_cuda_worker":
-            args_list = [serializable_kwargs.get("triton_file"), serializable_kwargs.get("cuda_ref_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, config.to_dict(), output_capture_file, timeout]
-        elif worker_func.__name__ == "cuda_compare_torch_worker":
-            args_list = [serializable_kwargs.get("cuda_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, config.to_dict(), output_capture_file, timeout]
+        self.logger.info(f"    - {worker_func.__name__} completed")
+        
+        if result.subproc_success:
+            compare_result: CompareResult = result.result
+            self.logger.info(
+                f"    ✓ {test_name}: "
+                f"max_rel_err={compare_result.max_relative_error:.3f}, "
+                f"max_abs_err={compare_result.max_absolute_error:.6f}"
+            )
+            return True, compare_result, ""
         else:
-            args_list = [config.to_dict(), output_capture_file, timeout]
-        from server.xpu.nvgpu.task_queue import TaskType
-        task_data = {
-            "task_type": TaskType.FUNCTIONAL.value,
-            "name": test_name,
-            "description": f"Comparison test: {test_name}",
-            "module_path": "eval_.kernelbench_c.custom_mprunner",
-            "function_name": worker_func.__name__,
-            "args": args_list,
-            "kwargs": {},
-            "preferred_gpu_id": 0,
-            "allow_fallback": False,
-            "require_same_gpu_type": True
-        }
-        task_id = submit_task(task_data)
-        self.logger.info(f"✅ Submitted task: {task_id}")
-        
-        status = wait_for_task_completion(task_id, timeout=config.subproc_timeout + 5)
-        self.logger.info(f"✅ Task completed: {status}")
-        
-        result = get_task_status(task_id)
-        self.logger.info(f"✅ Task result: {result}")
-        self.logger.debug(f"✅ Task result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
-        self.logger.debug(f"✅ Task result['result']: {result.get('result') if isinstance(result, dict) else 'N/A'}")
-        
-        # Handle API result format
-        if result.get("status") == "completed" and result.get("result"):
-            task_result = result["result"]
-            # The result should be a SubProcResult-like object with result field containing CompareResult
-            if hasattr(task_result, 'subproc_success') and task_result.subproc_success:
-                compare_result = task_result.result
-                self.logger.info(
-                    f"    ✓ {test_name}: "
-                    f"max_rel_err={compare_result.max_relative_error:.3f}, "
-                    f"max_abs_err={compare_result.max_absolute_error:.6f}"
-                )
-                return True, compare_result, ""
-            elif isinstance(task_result, dict) and task_result.get("subproc_success"):
-                compare_result_dict = task_result["result"]
-                from eval_.common.verifier import CompareResult
-                compare_result = CompareResult(**compare_result_dict)
-                self.logger.info(
-                    f"    ✓ {test_name}: "
-                    f"max_rel_err={compare_result.max_relative_error:.3f}, "
-                    f"max_abs_err={compare_result.max_absolute_error:.6f}"
-                )
-                return True, compare_result, ""
-            else:
-                error_msg = f"{test_name} failed - {getattr(task_result, 'error', task_result.get('error', 'Unknown error'))}"
-                self.logger.error(f"    ❌ {error_msg}")
-                return False, None, error_msg
-        else:
-            error_msg = f"{test_name} failed - {result.get('error', 'Task failed')} (result key: {result.get('result', 'Missing')})"
+            error_msg = f"{test_name} failed - {result.error}"
             self.logger.error(f"    ❌ {error_msg}")
+            if result.traceback:
+                self.logger.debug(f"    Traceback: {result.traceback}")
             return False, None, error_msg
     
     def _run_perf_test(self, worker_func: Callable, test_name: str,
@@ -212,68 +133,23 @@ class TritonKernelEvaluator:
         """Run performance test with generic function"""
         self.logger.info(f"🚀 {test_name}...")
         
-        # Convert any Path objects to strings and ensure absolute paths
-        serializable_kwargs = {}
-        for key, value in kwargs.items():
-            if hasattr(value, '__fspath__'):  # Path-like object
-                # Convert to absolute path to ensure GPU server can find files
-                serializable_kwargs[key] = str(Path(value).resolve())
-            else:
-                serializable_kwargs[key] = value
+        result = worker_func(
+            config=config,
+            log_file_path=output_capture_file,
+            **kwargs
+        )
         
-        # Build args list based on function signature
-        args_list = []
-        if worker_func.__name__ == "triton_perf_worker":
-            args_list = [serializable_kwargs.get("triton_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, output_capture_file, config.to_dict()]
-        elif worker_func.__name__ == "cuda_perf_worker":
-            args_list = [serializable_kwargs.get("cuda_file"), serializable_kwargs.get("torch_ref_file"), DEFAULT_RANDOM_SEED, output_capture_file, config.to_dict()]
-        elif worker_func.__name__ == "torch_perf_worker":
-            args_list = [serializable_kwargs.get("torch_file"), DEFAULT_RANDOM_SEED, output_capture_file, config.to_dict()]
+        self.logger.info(f"    - {worker_func.__name__} completed")
+        
+        if result.subproc_success:
+            perf_result: PerformanceResult = result.result
+            self.logger.info(f"    ✓ {test_name}: {perf_result.perf_time_ms:.3f} ms")
+            return True, perf_result, ""
         else:
-            args_list = [config.to_dict(), output_capture_file]
-        from server.xpu.nvgpu.task_queue import TaskType
-        task_data = {
-            "task_type": TaskType.PERFORMANCE.value,
-            "name": test_name,
-            "description": f"Performance test: {test_name}",
-            "module_path": "eval_.kernelbench_c.custom_mprunner",
-            "function_name": worker_func.__name__,
-            "args": args_list,
-            "kwargs": {},
-            "preferred_gpu_id": 1,
-            "allow_fallback": False,
-            "require_same_gpu_type": True
-        }
-        task_id = submit_task(task_data)
-        self.logger.info(f"✅ Submitted task: {task_id}")
-        
-        status = wait_for_task_completion(task_id, timeout=config.subproc_timeout + 5)
-        self.logger.info(f"✅ Task completed: {status}")
-        
-        result = get_task_status(task_id)
-        self.logger.info(f"✅ Task result: {result}")
-        
-        # Handle API result format
-        if result.get("status") == "completed" and result.get("result"):
-            task_result = result["result"]
-            # The result should be a SubProcResult-like object with result field containing PerformanceResult
-            if hasattr(task_result, 'subproc_success') and task_result.subproc_success:
-                perf_result = task_result.result
-                self.logger.info(f"    ✓ {test_name}: {perf_result.perf_time_ms:.3f} ms")
-                return True, perf_result, ""
-            elif isinstance(task_result, dict) and task_result.get("subproc_success"):
-                perf_result_dict = task_result["result"]
-                from eval_.common.verifier import PerformanceResult
-                perf_result = PerformanceResult(**perf_result_dict)
-                self.logger.info(f"    ✓ {test_name}: {perf_result.perf_time_ms:.3f} ms")
-                return True, perf_result, ""
-            else:
-                error_msg = f"{test_name} failed - {getattr(task_result, 'error', task_result.get('error', 'Unknown error'))}"
-                self.logger.error(f"    ❌ {error_msg}")
-                return False, None, error_msg
-        else:
-            error_msg = f"{test_name} failed - {result.get('error', 'Task failed')}"
+            error_msg = f"{test_name} failed - {result.error}"
             self.logger.error(f"    ❌ {error_msg}")
+            if hasattr(result, 'traceback') and result.traceback:
+                self.logger.debug(f"    Traceback: {result.traceback}")
             return False, None, error_msg
     
     def _run_evaluation_core(self, triton_file: str, cuda_file: str, torch_ref_file: str,
@@ -285,15 +161,19 @@ class TritonKernelEvaluator:
             self.logger.info("─" * 50)
             
             test_name = "Correctness" if config.cuda_kernel_name == "cuda_kernel" else f"[{config.cuda_kernel_name}] - Correctness"
-            # Triton vs PyTorch
-            success, triton_torch_compare, error = self._run_compare_test(
-                triton_compare_torch_worker, test_name + " - Triton vs PyTorch",
-                config, output_capture_file, timeout,
-                triton_file=triton_file, torch_ref_file=torch_ref_file
-            )
-            if not success:
-                return {"success": False, "error": error, "subprocess_failed": True}
+            # # Triton vs PyTorch
+            # success, triton_torch_compare, error = self._run_compare_test(
+            #     triton_compare_torch_worker, test_name + " - Triton vs PyTorch",
+            #     config, output_capture_file, timeout,
+            #     triton_file=triton_file, torch_ref_file=torch_ref_file
+            # )
+            # if not success:
+            #     return {"success": False, "error": error, "subprocess_failed": True}
             
+            from eval_.kernelbench_c.custom_mprunner import triton_cuda
+            print(f"triton_cuda start")
+            triton_cuda(triton_file, cuda_file, torch_ref_file, config.random_seed, config)
+            exit(0)
             # Triton vs CUDA
             success, triton_cuda_compare, error = self._run_compare_test(
                 triton_compare_cuda_worker, test_name + " - Triton vs CUDA",
@@ -413,7 +293,7 @@ class TritonKernelEvaluator:
             self.logger.error(f"❌ Evaluation error: {e}")
             return {"success": False, "error": str(e)}
 
-    async def evaluate_triton_kernel(self, base_dir: Path, kernel_name: str = None,
+    def evaluate_triton_kernel(self, base_dir: Path, kernel_name: str = None,
                                    model_name: str = "triton_test", time_str: Optional[str] = None,
                                    logfile_prefix: str = "", timestamp_log_dir: Optional[Path] = None,
                                    return_result: bool = False, timeout: int = 300,
@@ -459,12 +339,11 @@ class TritonKernelEvaluator:
                     return {"success": False, "error": error_msg} if return_result else None
             
             kernel_name = Path(base_dir).name
-            build_dir = Path(base_dir).resolve() / "build"
-            self.logger.info(f"build_dir: {build_dir}")
+            
             # Prepare configuration
             config = EvalConfig(
                 cuda_kernel_name=kernel_name,
-                build_dir=str(build_dir),
+                build_dir=str(Path(base_dir).resolve() / "build"),
                 atol=self.config.atol,
                 rtol=self.config.rtol,
                 subproc_timeout=timeout
@@ -483,9 +362,7 @@ class TritonKernelEvaluator:
             self.logger.info("")
             
             # Execute evaluation
-            result = await asyncio.to_thread(
-                self._run_evaluation_core, str(triton_file), str(cuda_file), str(torch_ref_file), config, output_capture_file, timeout
-            )
+            result = self._run_evaluation_core(str(triton_file), str(cuda_file), str(torch_ref_file), config, output_capture_file, timeout)
             
             # Log results
             self.logger.info("")
@@ -520,21 +397,22 @@ class TritonKernelEvaluator:
 
 
 # Test functions
-async def test_square_matrix_multiplication():
+def test_square_matrix_multiplication():
     """Test square matrix multiplication"""
     config = EvalConfig(atol=0.001, rtol=0.001)
     evaluator = TritonKernelEvaluator(config=config)
     # from utils.set_env import PROJECT_ROOT
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     # test_dir = Path("outputs") / "tests" / "1_Square_matrix_multiplication_"
-    test_dir = Path("outputs") / "tests" / "31_ELU"
+    # test_dir = Path("/workspace/cu2tri/outputs/tests/31_ELU")
+    test_dir = Path("/workspace/cu2tri/outputs/cu2tri/kernelbench_c/01_single_op/1_Square_matrix_multiplication_")
     print(test_dir.resolve())
     if not os.path.exists(test_dir):
         print(f"❌ Test directory not found: {test_dir}")
         return
     
     print(f"🚀 Testing directory: {test_dir}")
-    result = await evaluator.evaluate_triton_kernel(
+    result = evaluator.evaluate_triton_kernel(
         base_dir=test_dir,
         model_name="square_matrix_multiplication",
         return_result=True,
@@ -550,12 +428,12 @@ async def test_square_matrix_multiplication():
             print(f"❌ Error: {result.get('error')}")
 
 
-async def main():
+def main():
     """Main function"""
     print("🎯 Triton Kernel Evaluator V3 - Optimized")
     print("=" * 50)
-    await test_square_matrix_multiplication()
+    test_square_matrix_multiplication()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

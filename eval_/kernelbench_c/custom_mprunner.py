@@ -47,6 +47,7 @@ def _compare_triton_torch_executor(result_queue, triton_file, torch_ref_file, ra
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
             import torch
             with torch.no_grad():
@@ -90,37 +91,43 @@ def triton_compare_torch_worker(
     return mp_run(_compare_triton_torch_executor, (triton_file, torch_ref_file, random_seed, config, log_file_path), timeout=timeout)
 
 
+def triton_cuda(triton_file, cuda_ref_file, torch_ref_file, random_seed, config):
+    import torch
+    torch.cuda.empty_cache()
+                
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed(random_seed)
+    cuda_fn = _load_cuda_kernel(cuda_ref_file, config)
+    print(f"Load CUDA kernel done")
+    torch_ref = _load_torch_reference(torch_ref_file)
+    torch_ref_model = torch_ref.Model(*torch_ref.get_init_inputs())
+    torch_ref_model.eval()
+    torch_ref_model.to(torch.device("cuda"))
+    
+    test_inputs = torch_ref.get_inputs()
+    inputs = _normalize_input(test_inputs)
+    
+    triton_fn = _load_triton_kernel(triton_file)
+    triton_outputs = torch_ref_model.forward(*inputs, fn=triton_fn)
+    torch.cuda.synchronize()
+    
+    cuda_inputs_ref = _normalize_input(test_inputs)
+    cuda_result = torch_ref_model.forward(*cuda_inputs_ref,fn=cuda_fn)
+    torch.cuda.synchronize()
+    
+    match_result = _compare_tensor_results(triton_outputs, cuda_result, config.rtol, config.atol)
+    return match_result
+
 def _compare_triton_cuda_executor(result_queue, triton_file, cuda_ref_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for triton vs cuda correctness testing"""
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
             import torch
             with torch.no_grad():
-                torch.cuda.empty_cache()
-                
-                torch.manual_seed(random_seed)
-                torch.cuda.manual_seed(random_seed)
-                cuda_fn = _load_cuda_kernel(cuda_ref_file, config)
-                
-                torch_ref = _load_torch_reference(torch_ref_file)
-                torch_ref_model = torch_ref.Model(*torch_ref.get_init_inputs())
-                torch_ref_model.eval()
-                torch_ref_model.to(torch.device("cuda"))
-                
-                test_inputs = torch_ref.get_inputs()
-                inputs = _normalize_input(test_inputs)
-                
-                triton_fn = _load_triton_kernel(triton_file)
-                triton_outputs = torch_ref_model.forward(*inputs, fn=triton_fn)
-                torch.cuda.synchronize()
-                
-                cuda_inputs_ref = _normalize_input(test_inputs)
-                cuda_result = torch_ref_model.forward(*cuda_inputs_ref, fn=cuda_fn)
-                torch.cuda.synchronize()
-                
-                match_result = _compare_tensor_results(triton_outputs, cuda_result, config.rtol, config.atol)
+                match_result = triton_cuda(triton_file, cuda_ref_file, torch_ref_file, random_seed, config)
                 result_queue.put(match_result)
                 
         except Exception as e:
@@ -143,6 +150,7 @@ def _compare_cuda_torch_executor(result_queue, cuda_file, torch_ref_file, random
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
             import torch
             with torch.no_grad():
@@ -191,6 +199,7 @@ def _perf_triton_executor(result_queue, triton_file, torch_ref_file, random_seed
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
             import torch # must be here
             with torch.no_grad():
                 torch.cuda.empty_cache()
@@ -235,6 +244,7 @@ def _perf_cuda_executor(result_queue, cuda_file, torch_ref_file, random_seed, co
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
             import torch
             with torch.no_grad():
                 torch.cuda.empty_cache()
@@ -275,6 +285,7 @@ def _perf_torch_executor(result_queue, torch_file, random_seed, config, log_file
     config = _ensure_config(config)
     with OutputCapture(log_file_path) as capture:
         try:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
             import torch
             with torch.no_grad():
                 torch.cuda.empty_cache()

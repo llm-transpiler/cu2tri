@@ -21,7 +21,7 @@ class GPUManager:
         refresh_interval_seconds: int = 5,
         max_task_wait_minutes: int = 10,
         log_dir: Optional[str] = None,
-        max_tasks_total: int = 10,
+        max_tasks_total: int = 5,
         logger: logging.Logger = None#logging.getLogger(__name__)
     ):
         self.max_task_wait_minutes = max_task_wait_minutes
@@ -255,13 +255,13 @@ class GPUManager:
                     asyncio.create_task(self._execute_task(task))
                     
                     tasks_scheduled += 1
-                    self.logger.info(f"Scheduled preferred {task.task_type.value} task {task.task_id} on GPU {gpu_id}")
+                    self.logger.info(f"[GPUManager] Scheduled preferred {task.task_type.value} task {task.task_id} on GPU {gpu_id}")
                     
                     if task.task_type == TaskType.PERFORMANCE:
                         break  # Performance tasks are exclusive
                         
             except Exception as e:
-                self.logger.error(f"Error scheduling preferred tasks for GPU {gpu_id}: {e}")
+                self.logger.error(f"[GPUManager] Error scheduling preferred tasks for GPU {gpu_id}: {e}")
     
     async def _schedule_fallback_tasks(self) -> None:
         """Schedule tasks that can fallback to any available GPU"""
@@ -303,9 +303,9 @@ class GPUManager:
     async def _execute_task(self, task: Task) -> None:
         """Execute a task"""
         try:
-            # Set CUDA_VISIBLE_DEVICES for this task
-            original_cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '')
-            os.environ['CUDA_VISIBLE_DEVICES'] = str(task.gpu_id)
+            # # Set CUDA_VISIBLE_DEVICES for this task
+            # original_cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+            # os.environ['CUDA_VISIBLE_DEVICES'] = str(task.gpu_id)
             
             self.logger.info(f"[GPUManager] Executing task {task.task_id} on GPU {task.gpu_id}")
             
@@ -316,16 +316,14 @@ class GPUManager:
             await self.task_queue.complete_task(task.task_id, result=result)
             
         except Exception as e:
-            error_msg = f"Task execution failed: {str(e)}"
-            self.logger.error(f"[GPUManager] Task {task.task_id} failed: {error_msg}")
+            error_msg = f"Task {task.task_id} execution failed: {str(e)}"
+            self.logger.error(f"[GPUManager] {error_msg}")
             
             # Mark task as failed
             await self.task_queue.complete_task(task.task_id, error=error_msg)
             
         finally:
-            # Restore original CUDA_VISIBLE_DEVICES
-            if 'original_cuda_visible' in locals():
-                os.environ['CUDA_VISIBLE_DEVICES'] = original_cuda_visible
+            pass
     
     async def __aenter__(self):
         """Async context manager entry"""
