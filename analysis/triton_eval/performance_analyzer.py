@@ -526,7 +526,8 @@ def create_detailed_reports(analysis_results: Dict, analysis_dir: str = ""):
     print(f"- {analysis_dir}kernel_type_analysis.csv")
 
 def main(analysis_dir):
-    base_dir = f"{analysis_dir}/../cu2tri/outputs/cu2tri/kernelbench_c/01_single_op"
+    # Fix path construction - use proper path normalization
+    base_dir = os.path.normpath(os.path.join(analysis_dir, "../../cu2tri/outputs/cu2tri/kernelbench_c/01_single_op"))
     timestamp = "20250625_040552"
     
     # Configuration options
