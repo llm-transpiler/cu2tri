@@ -45,7 +45,8 @@ def _ensure_config(config: Union[Dict[str, Any], EvalConfig]) -> EvalConfig:
 def _compare_triton_torch_executor(result_queue, triton_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for correctness testing"""
     config = _ensure_config(config)
-    with OutputCapture(log_file_path) as capture:
+    # 禁用real_time_flush以避免后台线程导致的死锁
+    with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -121,7 +122,8 @@ def triton_cuda(triton_file, cuda_ref_file, torch_ref_file, random_seed, config)
 def _compare_triton_cuda_executor(result_queue, triton_file, cuda_ref_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for triton vs cuda correctness testing"""
     config = _ensure_config(config)
-    with OutputCapture(log_file_path) as capture:
+    # 禁用real_time_flush以避免后台线程导致的死锁
+    with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -148,7 +150,8 @@ def triton_compare_cuda_worker(
 def _compare_cuda_torch_executor(result_queue, cuda_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for cuda vs torch correctness testing"""
     config = _ensure_config(config)
-    with OutputCapture(log_file_path) as capture:
+    # 禁用real_time_flush以避免后台线程导致的死锁
+    with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -197,7 +200,8 @@ def cuda_compare_torch_worker(
 def _perf_triton_executor(result_queue, triton_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for performance testing"""
     config = _ensure_config(config)
-    with OutputCapture(log_file_path) as capture:
+    # 禁用real_time_flush以避免后台线程导致的死锁
+    with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
             os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
             import torch
@@ -244,7 +248,8 @@ def triton_perf_worker(
 def _perf_cuda_executor(result_queue, cuda_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for CUDA performance testing"""
     config = _ensure_config(config)
-    with OutputCapture(log_file_path) as capture:
+    # 禁用real_time_flush以避免后台线程导致的死锁
+    with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
             os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
             import torch
@@ -287,7 +292,8 @@ def cuda_perf_worker(
 def _perf_torch_executor(result_queue, torch_file, random_seed, config, log_file_path):
     """Worker function for Torch performance testing"""
     config = _ensure_config(config)
-    with OutputCapture(log_file_path) as capture:
+    # 禁用real_time_flush以避免后台线程导致的死锁
+    with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
             os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
             import torch

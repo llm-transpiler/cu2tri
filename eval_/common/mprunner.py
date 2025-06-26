@@ -25,22 +25,84 @@ _cleanup_lock = threading.Lock()
 def _emergency_cleanup():
     """紧急清理函数，在进程异常终止时调用"""
     global _active_captures
-    with _cleanup_lock:
-        for capture_id, capture in list(_active_captures.items()):
+    
+    # 使用非阻塞锁避免死锁
+    cleanup_timeout = 5.0  # 5秒超时
+    lock_acquired = False
+    
+    try:
+        # 尝试获取锁，如果失败则继续
+        lock_acquired = _cleanup_lock.acquire(timeout=cleanup_timeout)
+        
+        captures_to_clean = list(_active_captures.items()) if lock_acquired else []
+        
+        # 如果无法获取锁，至少尝试清理已知的捕获实例
+        if not lock_acquired:
+            print("Emergency cleanup: Unable to acquire lock, attempting direct cleanup", file=sys.__stderr__)
+            # 直接尝试清理，不依赖全局注册表
             try:
+                # 尝试恢复标准输出
+                if hasattr(sys, '_original_stdout'):
+                    sys.stdout = sys._original_stdout
+                if hasattr(sys, '_original_stderr'):
+                    sys.stderr = sys._original_stderr
+            except:
+                pass
+            return
+        
+        print(f"Emergency cleanup: Found {len(captures_to_clean)} active captures", file=sys.__stderr__)
+        
+        for capture_id, capture in captures_to_clean:
+            try:
+                # 设置超时防止单个清理操作阻塞太久
                 capture._emergency_cleanup()
             except Exception as e:
                 print(f"Emergency cleanup failed for capture {capture_id}: {e}", file=sys.__stderr__)
+        
         _active_captures.clear()
+        
+    except Exception as e:
+        print(f"Emergency cleanup encountered error: {e}", file=sys.__stderr__)
+    finally:
+        if lock_acquired:
+            try:
+                _cleanup_lock.release()
+            except:
+                pass
 
 
 def _signal_handler(signum, frame):
     """信号处理器，捕获进程终止信号"""
     print(f"Received signal {signum}, performing emergency cleanup...", file=sys.__stderr__)
-    _emergency_cleanup()
-    # 恢复默认信号处理器并重新发送信号
-    signal.signal(signum, signal.SIG_DFL)
-    os.kill(os.getpid(), signum)
+    
+    try:
+        # 执行紧急清理，设置更短的超时
+        cleanup_start = time.time()
+        _emergency_cleanup()
+        cleanup_duration = time.time() - cleanup_start
+        print(f"Emergency cleanup completed in {cleanup_duration:.2f}s", file=sys.__stderr__)
+        
+    except Exception as e:
+        print(f"Emergency cleanup failed: {e}", file=sys.__stderr__)
+    
+    # 对于子进程，快速退出而不重新发送信号
+    # 避免与主进程的信号处理器冲突
+    print(f"Exiting subprocess due to signal {signum}", file=sys.__stderr__)
+    
+    # 给一点时间让日志输出完成
+    try:
+        sys.stderr.flush()
+        time.sleep(0.05)  # 减少等待时间
+    except:
+        pass
+    
+    # 使用对应的退出码
+    if signum == signal.SIGTERM:
+        os._exit(128 + signal.SIGTERM)  # 143
+    elif signum == signal.SIGINT:
+        os._exit(128 + signal.SIGINT)   # 130
+    else:
+        os._exit(128 + signum)
 
 
 def _register_cleanup():
@@ -50,15 +112,84 @@ def _register_cleanup():
         # 注册atexit清理函数
         atexit.register(_emergency_cleanup)
         
-        # 注册信号处理器
-        for sig in [signal.SIGTERM, signal.SIGINT, signal.SIGHUP]:
+        # 注册信号处理器 - 包括更多可能导致异常退出的信号
+        signals_to_handle = [
+            signal.SIGTERM,  # 终止信号
+            signal.SIGINT,   # 中断信号 (Ctrl+C)
+            signal.SIGHUP,   # 挂起信号
+            signal.SIGUSR1,  # 用户定义信号1
+            signal.SIGUSR2,  # 用户定义信号2
+        ]
+        
+        # 某些严重错误信号通常不应该被捕获，但我们可以尝试处理
+        # 注意：SIGSEGV, SIGABRT等通常不应该被捕获，因为它们表示程序严重错误
+        critical_signals = [
+            signal.SIGSEGV,  # 段错误
+            signal.SIGABRT,  # 异常终止
+            signal.SIGFPE,   # 浮点异常
+            signal.SIGILL,   # 非法指令
+            signal.SIGBUS,   # 总线错误
+        ]
+        
+        for sig in signals_to_handle:
             try:
                 signal.signal(sig, _signal_handler)
-            except (OSError, ValueError):
-                # 某些信号可能无法注册（如在线程中）
+                print(f"Registered signal handler for {sig.name}", file=sys.__stderr__)
+            except (OSError, ValueError, AttributeError) as e:
+                print(f"Failed to register handler for signal {sig}: {e}", file=sys.__stderr__)
+        
+        # 对于严重错误信号，我们尝试注册但更谨慎
+        for sig in critical_signals:
+            try:
+                # 只在Linux/Unix系统上尝试注册这些信号
+                if hasattr(os, 'name') and os.name == 'posix':
+                    signal.signal(sig, _critical_signal_handler)
+                    print(f"Registered critical signal handler for {sig.name}", file=sys.__stderr__)
+            except (OSError, ValueError, AttributeError) as e:
+                # 这些信号注册失败是正常的，不输出错误
                 pass
         
         _cleanup_registered = True
+
+
+def _critical_signal_handler(signum, frame):
+    """处理严重错误信号的处理器"""
+    try:
+        signal_name = signal.Signals(signum).name
+    except (ValueError, AttributeError):
+        signal_name = f"Signal[{signum}]"
+    
+    print(f"CRITICAL: Received {signal_name} ({signum}) - attempting fast cleanup", file=sys.__stderr__)
+    
+    # 对于严重错误，我们需要更快速的清理
+    try:
+        # 快速恢复标准输出
+        try:
+            if hasattr(sys, '_original_stdout'):
+                sys.stdout = sys._original_stdout
+            if hasattr(sys, '_original_stderr'):
+                sys.stderr = sys._original_stderr
+        except:
+            pass
+        
+        # 尝试快速清理，但不要花太多时间（减少超时时间）
+        cleanup_start = time.time()
+        _emergency_cleanup()
+        cleanup_duration = time.time() - cleanup_start
+        print(f"Critical cleanup completed in {cleanup_duration:.2f}s", file=sys.__stderr__)
+        
+    except Exception as e:
+        print(f"Critical cleanup failed: {e}", file=sys.__stderr__)
+    
+    # 对于严重错误信号，快速退出
+    print(f"Fast exit due to critical signal {signal_name}", file=sys.__stderr__)
+    try:
+        sys.stderr.flush()
+    except:
+        pass
+    
+    # 使用_exit快速退出，不执行清理
+    os._exit(128 + signum)
 
 
 class SubProcResult(BaseModel):
@@ -379,80 +510,105 @@ class OutputCapture:
         if self._cleanup_done:
             return
             
+        cleanup_start = time.time()
+        cleanup_timeout = 3.0  # 3秒超时
+        
         try:
             print(f"Emergency cleanup for OutputCapture {self._capture_id}", file=sys.__stderr__)
             
-            # 停止刷新线程
+            # 停止刷新线程（快速处理）
             if self._flush_thread:
                 self._stop_flush.set()
+                # 不等待线程结束，因为在紧急情况下可能会阻塞
             
-            # 尝试恢复文件描述符
+            # 尝试恢复文件描述符（高优先级操作）
             try:
                 if self.old_stdout is not None:
                     os.dup2(self.old_stdout, 1)
                     os.close(self.old_stdout)
+                    self.old_stdout = None
                 if self.old_stderr is not None:
                     os.dup2(self.old_stderr, 2)
                     os.close(self.old_stderr)
-            except:
-                pass
+                    self.old_stderr = None
+            except Exception as fd_error:
+                print(f"FD restore failed: {fd_error}", file=sys.__stderr__)
             
-            # 在安全模式下，尝试保存临时文件内容
+            # 检查是否超时
+            if time.time() - cleanup_start > cleanup_timeout:
+                print(f"Emergency cleanup timeout after FD restore", file=sys.__stderr__)
+                self._cleanup_done = True
+                return
+            
+            # 在安全模式下，尝试保存临时文件内容（较低优先级）
             if self.safe_mode and self.output_file_path is not None:
                 try:
-                    stdout_content = ""
-                    stderr_content = ""
-                    
-                    if self._temp_stdout_file and os.path.exists(self._temp_stdout_file.name):
-                        try:
-                            with open(self._temp_stdout_file.name, 'r', encoding='utf-8', errors='replace') as f:
-                                stdout_content = f.read()
-                        except:
-                            pass
-                            
-                    if self._temp_stderr_file and os.path.exists(self._temp_stderr_file.name):
-                        try:
-                            with open(self._temp_stderr_file.name, 'r', encoding='utf-8', errors='replace') as f:
-                                stderr_content = f.read()
-                        except:
-                            pass
-                    
-                    # 如果有内容，尝试写入目标文件
-                    if stdout_content.strip() or stderr_content.strip():
-                        emergency_content = f"\n=== EMERGENCY SAVE @ {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n"
-                        emergency_content += "=== PROCESS TERMINATED UNEXPECTEDLY ===\n"
-                        if stdout_content.strip():
-                            emergency_content += f"=== CAPTURED STDOUT ===\n{stdout_content}\n"
-                        if stderr_content.strip():
-                            emergency_content += f"=== CAPTURED STDERR ===\n{stderr_content}\n"
-                        emergency_content += "=== END EMERGENCY SAVE ===\n\n"
-                        
-                        try:
-                            with open(self.output_file_path, 'a', encoding='utf-8') as f:
-                                f.write(emergency_content)
-                                f.flush()
-                        except Exception as e:
-                            print(f"Failed to save emergency content: {e}", file=sys.__stderr__)
-                            
-                            # 如果无法写入目标文件，至少保存到一个紧急文件
-                            try:
-                                emergency_file = f"{self.output_file_path}.emergency_{os.getpid()}"
-                                with open(emergency_file, 'w', encoding='utf-8') as f:
-                                    f.write(emergency_content)
-                                print(f"Emergency content saved to: {emergency_file}", file=sys.__stderr__)
-                            except:
-                                pass
-                                
-                except Exception as e:
-                    print(f"Emergency save failed: {e}", file=sys.__stderr__)
+                    self._emergency_save_content(cleanup_start, cleanup_timeout)
+                except Exception as save_error:
+                    print(f"Emergency save failed: {save_error}", file=sys.__stderr__)
             
-            # 清理临时文件
-            self._cleanup_temp_files()
+            # 清理临时文件（如果还有时间）
+            if time.time() - cleanup_start < cleanup_timeout:
+                try:
+                    self._cleanup_temp_files()
+                except Exception as cleanup_error:
+                    print(f"Temp file cleanup failed: {cleanup_error}", file=sys.__stderr__)
             
         except Exception as e:
             print(f"Emergency cleanup failed: {e}", file=sys.__stderr__)
+        finally:
+            self._cleanup_done = True
+            cleanup_duration = time.time() - cleanup_start
+            print(f"Emergency cleanup for {self._capture_id} completed in {cleanup_duration:.2f}s", file=sys.__stderr__)
+    
+    def _emergency_save_content(self, cleanup_start, cleanup_timeout):
+        """紧急保存内容的辅助方法"""
+        stdout_content = ""
+        stderr_content = ""
         
-        self._cleanup_done = True
+        # 快速读取临时文件内容
+        if self._temp_stdout_file and os.path.exists(self._temp_stdout_file.name):
+            try:
+                # 限制读取大小避免阻塞
+                with open(self._temp_stdout_file.name, 'r', encoding='utf-8', errors='replace') as f:
+                    stdout_content = f.read(1024 * 1024)  # 最多读取1MB
+            except:
+                pass
+                
+        if time.time() - cleanup_start > cleanup_timeout:
+            return
+                
+        if self._temp_stderr_file and os.path.exists(self._temp_stderr_file.name):
+            try:
+                with open(self._temp_stderr_file.name, 'r', encoding='utf-8', errors='replace') as f:
+                    stderr_content = f.read(1024 * 1024)  # 最多读取1MB
+            except:
+                pass
+        
+        # 如果有内容且还有时间，尝试写入目标文件
+        if (stdout_content.strip() or stderr_content.strip()) and time.time() - cleanup_start < cleanup_timeout:
+            emergency_content = f"\n=== EMERGENCY SAVE @ {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n"
+            emergency_content += f"=== PROCESS TERMINATED UNEXPECTEDLY (PID: {os.getpid()}) ===\n"
+            if stdout_content.strip():
+                emergency_content += f"=== CAPTURED STDOUT (truncated) ===\n{stdout_content[:10000]}\n"
+            if stderr_content.strip():
+                emergency_content += f"=== CAPTURED STDERR (truncated) ===\n{stderr_content[:10000]}\n"
+            emergency_content += "=== END EMERGENCY SAVE ===\n\n"
+            
+            try:
+                # 使用非阻塞写入
+                with open(self.output_file_path, 'a', encoding='utf-8') as f:
+                    f.write(emergency_content)
+                    f.flush()
+            except Exception as e:
+                # 如果无法写入目标文件，保存到紧急文件
+                try:
+                    emergency_file = f"{self.output_file_path}.emergency_{os.getpid()}_{int(time.time())}"
+                    with open(emergency_file, 'w', encoding='utf-8') as f:
+                        f.write(emergency_content)
+                    print(f"Emergency content saved to: {emergency_file}", file=sys.__stderr__)
+                except:
+                    pass
 
     def get_output(self):
         return self.captured_output
@@ -552,31 +708,90 @@ def mp_run(
         
         # 处理超时或异常退出
         if process.is_alive():
-            print(f"Process {process.pid} timeout, terminating...")
-            process.terminate()
-            process.join(timeout=5)  # 给更多时间让进程正常退出
+            print(f"Process {process.pid} timeout after {timeout}s, terminating gracefully...")
+            
+            # 第一步：发送SIGTERM信号
+            try:
+                process.terminate()
+                print(f"Sent SIGTERM to process {process.pid}")
+            except Exception as e:
+                print(f"Failed to terminate process {process.pid}: {e}")
+            
+            # 等待进程优雅退出
+            process.join(timeout=10)  # 给更多时间让紧急清理完成
             
             if process.is_alive():
-                print(f"Process {process.pid} still alive after terminate, killing...")
-                process.kill()
-                process.join(timeout=2)
+                print(f"Process {process.pid} still alive after SIGTERM, sending SIGKILL...")
+                try:
+                    process.kill()
+                    print(f"Sent SIGKILL to process {process.pid}")
+                except Exception as e:
+                    print(f"Failed to kill process {process.pid}: {e}")
+                
+                # 最后等待
+                process.join(timeout=5)
                 
                 if process.is_alive():
-                    print(f"Warning: Process {process.pid} still alive after kill")
+                    print(f"Warning: Process {process.pid} still alive after SIGKILL")
+            else:
+                print(f"Process {process.pid} terminated gracefully")
             
-            return SpecSubProcResult(subproc_success=False, result={}, error="Test timeout, process terminated")
+            return SpecSubProcResult(subproc_success=False, result={}, error=f"Process timeout after {timeout}s, terminated")
         
-        # 检查进程退出码
+        # 检查进程退出码并详细分析异常情况
         if process.exitcode is None:
-            return SpecSubProcResult(subproc_success=False, result={}, error="Process exit code is None")
+            return SpecSubProcResult(subproc_success=False, result={}, error="Process exit code is None (process may still be running)")
         elif process.exitcode < 0:
+            # 负数退出码表示被信号终止
+            signal_num = -process.exitcode
             try:
-                signal_name = signal.Signals(-process.exitcode).name
+                signal_name = signal.Signals(signal_num).name
             except (ValueError, AttributeError):
-                signal_name = f"Signal[{process.exitcode}]"
-            return SpecSubProcResult(subproc_success=False, result={}, error=f"Process terminated by signal: {signal_name}")
+                signal_name = f"Signal[{signal_num}]"
+            
+            # 分析具体的信号类型
+            error_msg = f"Process terminated by signal: {signal_name} ({signal_num})"
+            
+            # 检查是否是严重错误信号
+            critical_signals = {
+                signal.SIGSEGV: "Segmentation fault (core dump)",
+                signal.SIGABRT: "Process aborted (core dump)", 
+                signal.SIGFPE: "Floating point exception",
+                signal.SIGILL: "Illegal instruction",
+                signal.SIGBUS: "Bus error (bad memory access)",
+                signal.SIGSYS: "Bad system call",
+                signal.SIGTRAP: "Trace/breakpoint trap"
+            }
+            
+            if signal_num in critical_signals:
+                error_msg += f" - {critical_signals[signal_num]}"
+                print(f"WARNING: Process {process.pid} crashed with {error_msg}", file=sys.stderr)
+            elif signal_num == signal.SIGKILL:
+                error_msg += " - Force killed (likely due to timeout or resource issues)"
+            elif signal_num == signal.SIGTERM:
+                error_msg += " - Graceful termination requested"
+            
+            return SpecSubProcResult(subproc_success=False, result={}, error=error_msg)
         elif process.exitcode > 0:
-            return SpecSubProcResult(subproc_success=False, result={}, error=f"Process exited with code: {process.exitcode}")
+            error_msg = f"Process exited with code: {process.exitcode}"
+            
+            # 分析常见的退出码
+            if process.exitcode == 1:
+                error_msg += " (General error)"
+            elif process.exitcode == 2:
+                error_msg += " (Misuse of shell command)"
+            elif process.exitcode == 126:
+                error_msg += " (Command invoked cannot execute)"
+            elif process.exitcode == 127:
+                error_msg += " (Command not found)"
+            elif process.exitcode == 128:
+                error_msg += " (Invalid argument to exit)"
+            elif process.exitcode > 128:
+                # 128 + signal_num 通常表示被信号终止
+                potential_signal = process.exitcode - 128
+                error_msg += f" (Possibly terminated by signal {potential_signal})"
+            
+            return SpecSubProcResult(subproc_success=False, result={}, error=error_msg)
         
         # 获取结果
         if not result_queue.empty():

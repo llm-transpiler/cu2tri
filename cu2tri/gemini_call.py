@@ -17,9 +17,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
-# 设置环境变量
-os.environ['CUDA_VISIBLE_DEVICES'] = "1"
-
 # 导入项目根目录到路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(current_dir)
@@ -448,9 +445,9 @@ class TritonCodeGenerator:
         Returns:
             生成的Triton代码
         """
-        # 确保初始化
+        # ⚠️ 修复：使用get_provider获取共享实例，而不是每次创建新的
         if not self.provider:
-            await self.initialize()
+            self.provider = get_provider(self.platform_type)
         
         # 设置时间戳
         if time_str is None:
@@ -632,7 +629,7 @@ class TritonCodeGenerator:
 
 
 async def process_single_kernel(generator_config, test_dir, semaphore, global_time_str: str, logger: Optional[logging.Logger] = None):
-    """处理单个内核的生成和评估 - 优化版本，使用eval_triton.py的方法
+    """处理单个内核的生成和评估 - 修复版本，解决Provider共享问题
     
     Args:
         generator_config: TritonCodeGenerator配置字典
@@ -661,8 +658,9 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
         )
         
         try:
-            # 初始化generator
-            await generator.initialize()
+            # ⚠️ 关键修复：不要在每个任务中初始化provider
+            # provider应该被复用，而不是每次都关闭重新初始化
+            # await generator.initialize()  # 注释掉这行
             
             # 设置任务专用的日志记录器，避免日志竞争 - 使用简化的名称
             task_logger = logging.getLogger(f"{simple_task_name}")
@@ -699,6 +697,8 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
             generator.evaluator.logger = task_logger
             
             task_logger.info(f"🚀 Start processing {test_dir} (Batch: {global_time_str})")
+            
+            # ⚠️ 关键修复：使用延迟初始化，让provider在需要时才初始化
             await generator.generate_triton_kernel_with_feedback(test_dir, global_time_str)
             
             # 运行独立的评估 - 使用eval_triton.py的方法
@@ -729,20 +729,27 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
             raise Exception(f"{error_msg}\n{traceback.format_exc()}")
         
         finally:
-            # 确保generator被正确关闭
+            # ⚠️ 关键修复：不要关闭共享的provider！
+            # 只清理任务级别的资源
             try:
-                await generator.close()
+                # 清理日志处理器
+                if hasattr(generator, 'logger'):
+                    for handler in generator.logger.handlers[:]:
+                        handler.close()
+                        generator.logger.removeHandler(handler)
+                # 不要调用 await generator.close()，这会关闭共享的provider
             except Exception as close_error:
                 if logger:
-                    logger.warning(f"Error closing generator for {test_dir}: {close_error}")
+                    logger.warning(f"Error cleaning up resources for {test_dir}: {close_error}")
 
 
-async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: int = 10, logger: Optional[logging.Logger] = None):
+async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: int = 10, start_id: int = 1, specific_global_time_str: str = None, logger: Optional[logging.Logger] = None):
     """批量生成内核代码（并发执行）- 优化版本
     
     Args:
-        levels: 要处理的级别列表，默认为['01_single_op']（现已固定为此目录）
-        max_concurrent: 最大并发数量，默认为1
+        test_dirs: 要处理的级别列表，默认为['01_single_op']（现已固定为此目录）
+        max_concurrent: 最大并发数量，默认为10
+        start_id: 开始处理的id号，默认为1
         logger: 日志记录器
     """
     if test_dirs is None:
@@ -753,6 +760,8 @@ async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: in
     
     # 生成全局时间戳，用于标识整个批次的测试
     global_time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+    if specific_global_time_str is not None:
+        global_time_str = specific_global_time_str
     logger.info(f"📅 Global batch timestamp: {global_time_str}")
     
     # 准备generator配置（避免共享状态）
@@ -774,14 +783,28 @@ async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: in
                 
             all_dirs = sorted(os.listdir(output_dir), key=lambda x: int(x.split('_')[0]))
             
+            # 根据start_id过滤目录
+            filtered_dirs = [d for d in all_dirs if int(d.split('_')[0]) >= start_id]
+            
+            if not filtered_dirs:
+                logger.warning(f"No directories found with id >= {start_id} in {sub_dir}")
+                continue
+            
+            skipped_count = len(all_dirs) - len(filtered_dirs)
+            if skipped_count > 0:
+                logger.info(f"⏭️ Skipped {skipped_count} directories (id < {start_id})")
+            logger.info(f"🎯 Starting from id {start_id}, processing {len(filtered_dirs)} directories")
+            
             # 创建并发任务列表
             tasks = []
-            for dir_name in all_dirs:
+            for dir_name in filtered_dirs:
+                # print(f"Processing {dir_name}")
+                # continue
                 test_dir = f"{output_dir}/{dir_name}"
                 # 创建任务协程（注意传递全局时间戳）
                 task_coro = process_single_kernel(generator_config, test_dir, semaphore, global_time_str, logger)
                 tasks.append(task_coro)
-            
+            # exit(0)
             logger.info(f"🎯 Start concurrent processing {sub_dir} {len(tasks)} kernels (batch: {global_time_str}, max concurrent: {max_concurrent}, max iterations: {MAX_ITERATIONS})")
             
             # 并发执行所有任务
@@ -793,7 +816,7 @@ async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: in
             
             logger.info(f"\n📊 {sub_dir} processing result:")
             for i, result in enumerate(results):
-                dir_name = all_dirs[i]
+                dir_name = filtered_dirs[i]
                 if isinstance(result, Exception):
                     logger.error(f"  ❌ {dir_name}: {str(result).split('\\n')[0]}")
                     error_count += 1
@@ -836,7 +859,8 @@ async def main():
     #         print(f"❌ 生成失败: {e}")
     
     # 示例2: 批量生成（取消注释以启用）
-    await batch_generate_kernels(['01_single_op'], max_concurrent=3)
+    # 可以指定start_id从特定编号开始，比如从68号开始: start_id=68
+    await batch_generate_kernels(['01_single_op'], max_concurrent=1)#, start_id=79, specific_global_time_str="20250625_040552")
 
 
 if __name__ == "__main__":
