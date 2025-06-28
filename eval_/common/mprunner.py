@@ -672,7 +672,7 @@ def mp_run(
     worker_func: Callable,
     args: list | tuple = (),
     kwargs: dict = {},
-    timeout: int = 300,
+    timeout: int = 1000,
     SpecSubProcResult: BaseModel = SubProcResult,
 ) -> SubProcResult:
     """
@@ -693,6 +693,9 @@ def mp_run(
     
     try:
         print(f"mp_run: {worker_func.__name__}")
+        print(f"mp_run args: {args}")
+        print(f"mp_run kwargs: {kwargs}")
+        print(f"mp_run timeout: {timeout}")
         # 创建队列和进程
         result_queue = multiprocessing.Queue()
         process = multiprocessing.Process(

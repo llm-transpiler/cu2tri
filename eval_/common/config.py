@@ -45,7 +45,7 @@ def _get_cuda_compute_capability() -> int:
 @dataclass
 class EvalConfig:
     """评估配置类"""
-    
+    gpu_id: int = 0 # CUDA_VISIBLE_DEVICES id
     # 编译参数
     extra_cuda_cflags: List[str] = None
     build_dir: str = './build'
@@ -55,7 +55,7 @@ class EvalConfig:
     
     # 性能测试参数
     warmup_runs: int = 1000
-    test_runs: int = 10000
+    test_runs: int = 2000
     random_seed: int = DEFAULT_RANDOM_SEED
     
     # 超时设置
@@ -90,4 +90,5 @@ class EvalConfig:
         """Create EvalConfig from dictionary"""
         return cls(**data)
 
-DEFAULT_CONFIG = EvalConfig()
+def DEFAULT_CONFIG():
+    return EvalConfig()

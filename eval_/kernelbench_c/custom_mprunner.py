@@ -39,7 +39,7 @@ def _ensure_config(config: Union[Dict[str, Any], EvalConfig]) -> EvalConfig:
         return config
     else:
         # Default fallback
-        return DEFAULT_CONFIG
+        return DEFAULT_CONFIG()
 
 
 def _compare_triton_torch_executor(result_queue, triton_file, torch_ref_file, random_seed, config, log_file_path):
@@ -48,7 +48,7 @@ def _compare_triton_torch_executor(result_queue, triton_file, torch_ref_file, ra
     # 禁用real_time_flush以避免后台线程导致的死锁
     with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
             import torch
             with torch.no_grad():
@@ -85,10 +85,14 @@ def triton_compare_torch_worker(
     triton_file: str,
     torch_ref_file: str,
     random_seed: int = DEFAULT_RANDOM_SEED,
-    config: EvalConfig = DEFAULT_CONFIG,
+    config: EvalConfig = DEFAULT_CONFIG(),
     log_file_path: str = None,
-    timeout: int = DEFAULT_CONFIG.subproc_timeout
+    timeout: int = DEFAULT_CONFIG().subproc_timeout
 ) -> SubProcResult:
+    """Execute triton vs torch comparison in subprocess"""
+    # 如果config是字典，转换为EvalConfig对象
+    if isinstance(config, dict):
+        config = EvalConfig.from_dict(config)
     return mp_run(_compare_triton_torch_executor, (triton_file, torch_ref_file, random_seed, config, log_file_path), timeout=timeout)
 
 
@@ -125,7 +129,7 @@ def _compare_triton_cuda_executor(result_queue, triton_file, cuda_ref_file, torc
     # 禁用real_time_flush以避免后台线程导致的死锁
     with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
             import torch
             with torch.no_grad():
@@ -140,10 +144,14 @@ def triton_compare_cuda_worker(
     cuda_ref_file: str,
     torch_ref_file: str,
     random_seed: int = DEFAULT_RANDOM_SEED,
-    config: EvalConfig = DEFAULT_CONFIG,
+    config: EvalConfig = DEFAULT_CONFIG(),
     log_file_path: str = None,
-    timeout: int = DEFAULT_CONFIG.subproc_timeout
+    timeout: int = DEFAULT_CONFIG().subproc_timeout
 ) -> SubProcResult:
+    """Execute triton vs cuda comparison in subprocess"""
+    # 如果config是字典，转换为EvalConfig对象
+    if isinstance(config, dict):
+        config = EvalConfig.from_dict(config)
     return mp_run(_compare_triton_cuda_executor, (triton_file, cuda_ref_file, torch_ref_file, random_seed, config, log_file_path), timeout=timeout)
 
 
@@ -153,7 +161,7 @@ def _compare_cuda_torch_executor(result_queue, cuda_file, torch_ref_file, random
     # 禁用real_time_flush以避免后台线程导致的死锁
     with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
             import torch
             with torch.no_grad():
@@ -190,10 +198,14 @@ def cuda_compare_torch_worker(
     cuda_file: str,
     torch_ref_file: str,
     random_seed: int = DEFAULT_RANDOM_SEED,
-    config: EvalConfig = DEFAULT_CONFIG,
+    config: EvalConfig = DEFAULT_CONFIG(),
     log_file_path: str = None,
-    timeout: int = DEFAULT_CONFIG.subproc_timeout
+    timeout: int = DEFAULT_CONFIG().subproc_timeout
 ) -> SubProcResult:
+    """Execute cuda vs torch comparison in subprocess"""
+    # 如果config是字典，转换为EvalConfig对象
+    if isinstance(config, dict):
+        config = EvalConfig.from_dict(config)
     return mp_run(_compare_cuda_torch_executor, (cuda_file, torch_ref_file, random_seed, config, log_file_path), timeout=timeout)
 
 
@@ -203,7 +215,8 @@ def _perf_triton_executor(result_queue, triton_file, torch_ref_file, random_seed
     # 禁用real_time_flush以避免后台线程导致的死锁
     with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
+            # os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
             import torch
             with torch.no_grad():
                 torch.cuda.empty_cache()
@@ -241,9 +254,13 @@ def triton_perf_worker(
     torch_ref_file: str,
     random_seed: int = DEFAULT_RANDOM_SEED,
     log_file_path: str = None,
-    config: EvalConfig = DEFAULT_CONFIG,
+    config: EvalConfig = DEFAULT_CONFIG(),
 ) -> SubProcResult:
-    return mp_run(_perf_triton_executor, (triton_file, torch_ref_file, random_seed, config, log_file_path), timeout=config.subproc_timeout if hasattr(config, 'subproc_timeout') else DEFAULT_CONFIG.subproc_timeout)
+    print(f"triton_perf_worker config: {config}")
+    # 如果config是字典，转换为EvalConfig对象
+    if isinstance(config, dict):
+        config = EvalConfig.from_dict(config)
+    return mp_run(_perf_triton_executor, (triton_file, torch_ref_file, random_seed, config, log_file_path), timeout=config.subproc_timeout)
 
 def _perf_cuda_executor(result_queue, cuda_file, torch_ref_file, random_seed, config, log_file_path):
     """Worker function for CUDA performance testing"""
@@ -251,7 +268,8 @@ def _perf_cuda_executor(result_queue, cuda_file, torch_ref_file, random_seed, co
     # 禁用real_time_flush以避免后台线程导致的死锁
     with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
+            # os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
             import torch
             with torch.no_grad():
                 torch.cuda.empty_cache()
@@ -285,9 +303,12 @@ def cuda_perf_worker(
     torch_ref_file: str,
     random_seed: int = DEFAULT_RANDOM_SEED,
     log_file_path: str = None,
-    config: EvalConfig = DEFAULT_CONFIG,
+    config: EvalConfig = DEFAULT_CONFIG(),
 ) -> SubProcResult:
-    return mp_run(_perf_cuda_executor, (cuda_file, torch_ref_file, random_seed, config, log_file_path), timeout=config.subproc_timeout if hasattr(config, 'subproc_timeout') else DEFAULT_CONFIG.subproc_timeout)
+    # 如果config是字典，转换为EvalConfig对象
+    if isinstance(config, dict):
+        config = EvalConfig.from_dict(config)
+    return mp_run(_perf_cuda_executor, (cuda_file, torch_ref_file, random_seed, config, log_file_path), timeout=config.subproc_timeout if hasattr(config, 'subproc_timeout') else DEFAULT_CONFIG().subproc_timeout)
 
 def _perf_torch_executor(result_queue, torch_file, random_seed, config, log_file_path):
     """Worker function for Torch performance testing"""
@@ -295,7 +316,8 @@ def _perf_torch_executor(result_queue, torch_file, random_seed, config, log_file
     # 禁用real_time_flush以避免后台线程导致的死锁
     with OutputCapture(log_file_path, safe_mode=False, real_time_flush=False) as capture:
         try:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
+            # os.environ["CUDA_VISIBLE_DEVICES"] = "1" # 性能队列观察到持久性显存占用
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
             import torch
             with torch.no_grad():
                 torch.cuda.empty_cache()
@@ -328,9 +350,12 @@ def torch_perf_worker(
     torch_file: str,
     random_seed: int = DEFAULT_RANDOM_SEED,
     log_file_path: str = None,
-    config: EvalConfig = DEFAULT_CONFIG,
+    config: EvalConfig = DEFAULT_CONFIG(),
 ) -> SubProcResult:
-    return mp_run(_perf_torch_executor, (torch_file, random_seed, config, log_file_path), timeout=config.subproc_timeout if hasattr(config, 'subproc_timeout') else DEFAULT_CONFIG.subproc_timeout)
+    # 如果config是字典，转换为EvalConfig对象
+    if isinstance(config, dict):
+        config = EvalConfig.from_dict(config)
+    return mp_run(_perf_torch_executor, (torch_file, random_seed, config, log_file_path), timeout=config.subproc_timeout if hasattr(config, 'subproc_timeout') else DEFAULT_CONFIG().subproc_timeout)
 
 def _load_torch_reference(torch_ref_file: str):
     return _load_pyfile_module(torch_ref_file)

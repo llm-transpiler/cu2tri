@@ -54,7 +54,7 @@ def get_task_status(task_id: str) -> Dict[str, Any]:
     else:
         raise Exception(f"Failed to get task status: {response.text}")
 
-def wait_for_task_completion(task_id: str, timeout: int = DEFAULT_CONFIG.subproc_timeout) -> Dict[str, Any]:
+def wait_for_task_completion(task_id: str, timeout: int = DEFAULT_CONFIG().subproc_timeout) -> Dict[str, Any]:
     """Wait for task to complete"""
     start_time = time.time()
     while time.time() - start_time < timeout:
@@ -360,7 +360,7 @@ class CUDAKernelEvaluator:
     
     def _run_compare_test(self, worker_func: Callable, test_name: str, 
                          config: EvalConfig, output_capture_file: Optional[str], 
-                         timeout: int = DEFAULT_CONFIG.subproc_timeout, **kwargs) -> Tuple[bool, CompareResult, str]:
+                         timeout: int = DEFAULT_CONFIG().subproc_timeout, **kwargs) -> Tuple[bool, CompareResult, str]:
         """Run comparison test with generic function"""
         self.logger.info(f"🔍 {test_name}...")
         
@@ -497,7 +497,7 @@ class CUDAKernelEvaluator:
             return False, None, error_msg
     
     def _run_evaluation_core(self, cuda_file: str, torch_ref_file: str,
-                           config: EvalConfig, output_capture_file: Optional[str], timeout: int = DEFAULT_CONFIG.subproc_timeout) -> Dict[str, Any]:
+                           config: EvalConfig, output_capture_file: Optional[str], timeout: int = DEFAULT_CONFIG().subproc_timeout) -> Dict[str, Any]:
         """Core evaluation logic - Only CUDA vs PyTorch"""
         try:
             # ═══════════════ Correctness Testing ═══════════════

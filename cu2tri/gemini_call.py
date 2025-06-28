@@ -40,6 +40,7 @@ try:
     )
     from llm.providers.impl import GeminiChatTree, OpenRouterChatTree
     from eval_triton import TritonKernelEvaluator  # 直接使用eval_triton中的评估器
+    from eval_.common.config import EvalConfig
     import prompt
 except ImportError as e:
     print(f"导入错误: {e}")
@@ -57,6 +58,7 @@ class TritonCodeGenerator:
         self, 
         platform_type: PlatformType = PlatformType.GOOGLE_OFFICIAL,
         model_name: str = DEFAULT_MODEL_NAME,
+        config: EvalConfig = EvalConfig(),
         logger: Optional[logging.Logger] = None
     ):
         """初始化代码生成器
@@ -70,8 +72,9 @@ class TritonCodeGenerator:
         self.model_name = model_name
         self.logger = logger or self._create_logger()
         self.provider = None
-        # 直接使用eval_triton.py中的TritonKernelEvaluator
-        self.evaluator = TritonKernelEvaluator(logger=self.logger)
+        # config = EvalConfig()
+        # config.test_runs = 2000
+        self.evaluator = TritonKernelEvaluator(logger=self.logger, config=config)
         
         # 配置参数
         self.max_retries = MAX_RETRIES
@@ -152,14 +155,6 @@ class TritonCodeGenerator:
                 self.logger.warning(f"⚠️ Error closing LLM provider connection: {e}")
     
     def create_chat_tree(self, system_prompt: Optional[str] = None):
-        """创建聊天树对象
-        
-        Args:
-            system_prompt: 系统提示词
-            
-        Returns:
-            相应的ChatTree对象
-        """
         if self.platform_type == PlatformType.GOOGLE_OFFICIAL:
             return GeminiChatTree(system_prompt=system_prompt)
         elif self.platform_type == PlatformType.OPENROUTER:
@@ -169,18 +164,6 @@ class TritonCodeGenerator:
             return OpenRouterChatTree(system_prompt=system_prompt)
     
     async def generate_with_retries(self, chat_tree, request: ChatRequest) -> str:
-        """带重试的生成请求
-        
-        Args:
-            chat_tree: 聊天树对象
-            request: 聊天请求
-            
-        Returns:
-            生成的响应内容
-            
-        Raises:
-            Exception: 当所有重试都失败时
-        """
         for retry in range(self.max_retries):
             try:
                 response = await self.provider.chat(request)
@@ -259,17 +242,6 @@ class TritonCodeGenerator:
         iteration: Optional[int] = None, 
         timestamp_log_dir: Optional[Path] = None
     ) -> Dict[str, Any]:
-        """测试Triton内核 - 直接使用eval_triton.py中的evaluate_triton_kernel方法
-        
-        Args:
-            base_dir: 测试目录
-            time_str: 时间戳字符串
-            iteration: 迭代次数
-            timestamp_log_dir: 时间戳日志目录
-            
-        Returns:
-            测试结果字典
-        """
         try:
             # 如果提供了迭代信息，添加到日志前缀中
             logfile_prefix = f"round{iteration}_" if iteration is not None else ""
@@ -482,7 +454,9 @@ class TritonCodeGenerator:
         chat_tree = self.create_chat_tree(system_prompt)
         
         # 第一轮：初始生成请求
-        initial_prompt = prompt.complex_initial_prompt.format(cuda_code=cuda_code)
+        from debugger.triton_tl.support import tl_supported_ops
+        tl_supported_ops_str = ", ".join(tl_supported_ops)
+        initial_prompt = prompt.complex_initial_prompt.format(cuda_code=cuda_code, tl_supported_ops_str=tl_supported_ops_str)
         chat_tree.add_user_message(initial_prompt)
         
         # 记录初始prompt
@@ -712,7 +686,7 @@ async def process_single_kernel(generator_config, test_dir, semaphore, global_ti
                 time_str=global_time_str,
                 timestamp_log_dir=timestamp_log_dir,
                 return_result=False,
-                timeout=300,
+                timeout=1000,
                 capture_output=True
             )
             
@@ -835,10 +809,11 @@ async def batch_generate_kernels(test_dirs: List[str] = None, max_concurrent: in
 
 # 主函数示例
 async def main():
-    """主函数示例"""
+    # """主函数示例"""
     # # 示例1: 单个内核生成
-    # test_dir = "outputs/kernelbench_c/level1/1_Square_matrix_multiplication_"
+    # # test_dir = "outputs/kernelbench_c/level1/1_Square_matrix_multiplication_"
     # test_dir = "/workspace/cu2tri/outputs/tests/31_ELU"
+    # test_dir = "/workspace/cu2tri/outputs/cu2tri/kernelbench_c/02_fused_op/4_Conv2d_Mish_Mish"
     # if os.path.exists(test_dir):
     #     try:
     #         # 生成单次测试的时间戳
@@ -856,11 +831,13 @@ async def main():
     #         print(f"生成的代码长度: {len(code)} 字符")
             
     #     except Exception as e:
-    #         print(f"❌ 生成失败: {e}")
+    #         import traceback
+    #         print(f"❌ 生成失败: {e}, {traceback.format_exc()}")
     
     # 示例2: 批量生成（取消注释以启用）
     # 可以指定start_id从特定编号开始，比如从68号开始: start_id=68
     await batch_generate_kernels(['01_single_op'], max_concurrent=1)#, start_id=79, specific_global_time_str="20250625_040552")
+    # await batch_generate_kernels(['02_fused_op'], max_concurrent=1)#, start_id=79, specific_global_time_str="20250625_040552")
 
 
 if __name__ == "__main__":

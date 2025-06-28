@@ -50,7 +50,7 @@ def _load_pyfile_module_attr(pyfile_path: str, attr_name: str, module_name: str 
 
 def load_cuda_extension_from_cufile(
     cuda_file: str,
-    config: EvalConfig = DEFAULT_CONFIG
+    config: EvalConfig = DEFAULT_CONFIG()
 ) -> Union[object, str]:
     if not os.path.exists(config.build_dir):
         os.makedirs(config.build_dir)

@@ -137,7 +137,14 @@ def _compare_single_tensor(tensor1, tensor2, rtol: float, atol: float):
             
             # 计算误差
             diff = torch.abs(tensor1_cmp - tensor2_cmp)
-            max_rel_error = torch.max(diff / (torch.abs(tensor2_cmp) + 1e-10))
+            # 避免除零错误的相对误差计算
+            mask_zero = torch.abs(tensor2_cmp) < 1e-10
+            rel_error_tensor = torch.where(
+                mask_zero,
+                torch.where(torch.abs(tensor1_cmp) < 1e-10, 0.0, 1000000.0),
+                diff / torch.abs(tensor2_cmp)
+            )
+            max_rel_error = torch.max(rel_error_tensor)
             max_abs_error = torch.max(diff)
             
         except Exception:
