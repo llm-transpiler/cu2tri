@@ -9,7 +9,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any
 from utils.set_env import set_env
 
-DEFAULT_RANDOM_SEED = 42
+DEFAULT_RANDOM_SEED = 46
 
 def _get_cuda_compute_capability() -> int:
     """获取当前CUDA设备的计算能力"""
@@ -48,6 +48,7 @@ class EvalConfig:
     gpu_id: int = 0 # CUDA_VISIBLE_DEVICES id
     # 编译参数
     extra_cuda_cflags: List[str] = None
+    extra_ldflags: List[str] = None
     build_dir: str = './build'
     cuda_kernel_name: str = "cuda_kernel"
     # 延迟初始化CUDA计算能力，避免在模块导入时就检测GPU
@@ -77,6 +78,9 @@ class EvalConfig:
                 '-O3', 
                 '--use_fast_math', 
             ]
+        if self.extra_ldflags is None:
+            self.extra_ldflags = []
+        # TODO 其实这里没用，因为gencode参数通过TORCH_CUDA_ARCH_LIST环境变量控制，不需要手动添加, 这里是加到最后面
         for arch_number in self.cuda_arch_number:
             flag_template = '-gencode=arch=compute_{arch_number},code=sm_{arch_number}'
             self.extra_cuda_cflags.append(flag_template.format(arch_number=arch_number))

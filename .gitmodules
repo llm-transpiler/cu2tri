@@ -10,3 +10,30 @@
 [submodule "third_party/NVIDIA/compute-eval"]
 	path = third_party/NVIDIA/compute-eval
 	url = https://github.com/NVIDIA/compute-eval.git
+[submodule "third_party/mirage"]
+	path = third_party/mirage
+	url = git@github.com:llm-transpiler/mirage.git
+[submodule "third_party/ThunderKittens"]
+	path = third_party/ThunderKittens
+	url = git@github.com:llm-transpiler/ThunderKittens.git
+[submodule "third_party/xpiler-eval"]
+	path = third_party/xpiler-eval
+	url = https://github.com/ShouyangDong/xpiler-eval.git
+[submodule "third_party/nano-vllm"]
+	path = third_party/nano-vllm
+	url = https://github.com/GeeeekExplorer/nano-vllm.git
+[submodule "third_party/FlagOpen/optimize_softmax"]
+	path = third_party/FlagOpen/optimize_softmax
+	url = https://github.com/iclementine/optimize_softmax.git
+[submodule "third_party/triton"]
+	path = third_party/triton
+	url = https://github.com/triton-lang/triton.git
+[submodule "third_party/kperfir_artifact"]
+	path = third_party/kperfir_artifact
+	url = https://github.com/ChandlerGuan/kperfir_artifact.git
+[submodule "third_party/FlagOpen/FlagGems"]
+	path = third_party/FlagOpen/FlagGems
+	url = https://github.com/FlagOpen/FlagGems.git
+[submodule "third_party/Liger-Kernel"]
+	path = third_party/Liger-Kernel
+	url = https://github.com/linkedin/Liger-Kernel.git

@@ -49,7 +49,7 @@ def _load_pyfile_module_attr(pyfile_path: str, attr_name: str, module_name: str 
 
 
 def load_cuda_extension_from_cufile(
-    cuda_file: str,
+    cuda_file: str | list[str],
     config: EvalConfig = DEFAULT_CONFIG()
 ) -> Union[object, str]:
     if not os.path.exists(config.build_dir):
@@ -57,11 +57,12 @@ def load_cuda_extension_from_cufile(
         
     try:
         extension = load(
-            name=config.cuda_kernel_name,
-            sources=[cuda_file],
-            extra_cuda_cflags=config.extra_cuda_cflags,
-            verbose=True,
-            build_directory=config.build_dir
+            name=getattr(config, 'cuda_kernel_name', 'cuda_kernel'),
+            sources=cuda_file if isinstance(cuda_file, list) or isinstance(cuda_file, tuple) else [cuda_file],
+            extra_cuda_cflags=getattr(config, 'extra_cuda_cflags', []),
+            extra_ldflags=getattr(config, 'extra_ldflags', []),
+            verbose=getattr(config, 'verbose', True),
+            build_directory=getattr(config, 'build_dir', './build')
         )
         return extension
     except Exception as e:

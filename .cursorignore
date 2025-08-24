@@ -1,6 +1,17 @@
 # Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
 .env
 **__pycache__**
-*deprecated*
+**deprecated**
 */tests/*
 */dev/*
+models/
+tests/
+logs
+third_party/*
+# *build/*
+# **build/**
+# **/build/**
+**/build
+**/dev/
+dev
+**.log

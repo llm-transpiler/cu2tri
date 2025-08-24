@@ -1,6 +1,31 @@
 {
     "python.envFile": "${workspaceFolder}/.env",
     "python.analysis.extraPaths": [
-        "${workspaceFolder}"
-    ]
+        "${workspaceFolder}",
+        // "${workspaceFolder}/third_party/ThunderKittens/tests/python"
+    ],
+    "cursorpyright.analysis.extraPaths": [
+        "${workspaceFolder}",
+        // "${workspaceFolder}/third_party/ThunderKittens/tests/python"
+    ],
+    // "cmake.sourceDirectory": "/workspace/third_party/NVIDIA/cutlass",
+    "files.associations": {
+        "random": "cpp",
+        "charconv": "cpp",
+        "chrono": "cpp",
+        "expected": "cpp",
+        "optional": "cpp",
+        "format": "cpp",
+        "ratio": "cpp",
+        "system_error": "cpp",
+        "array": "cpp",
+        "functional": "cpp",
+        "regex": "cpp",
+        "tuple": "cpp",
+        "type_traits": "cpp",
+        "utility": "cpp",
+        "algorithm": "cpp",
+        "limits": "cpp",
+        "vector": "cpp"
+    }
 }
