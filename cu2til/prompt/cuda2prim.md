@@ -405,45 +405,91 @@ block_sync();
 ### 8. Warp Shuffle Operations
 Replace raw shuffle instructions with semantic primitives:
 
+**🚨 CRITICAL: Sub-Warp vs Full-Warp Operations**
+
+Most Flash Attention and similar algorithms use **sub-warp operations** (e.g., within 4-thread groups), NOT full 32-thread warp operations. Always check the original code for `width` parameters!
+
 **Basic Shuffle Operations:**
 ```cpp
 // FROM:
-__shfl_sync(0xffffffff, value, src_lane);
+__shfl_sync(0xffffffff, value, src_lane);                    // Full warp (32 threads)
+__shfl_sync(0xffffffff, value, src_lane, 4);               // Sub-warp (4 threads)
 
 // TO:
-warp_shuffle(value, src_lane);
+warp_shuffle(value, src_lane);                              // Full warp (32 threads)
+warp_shuffle_width(value, src_lane, 4);                     // Sub-warp (4 threads)
 ```
 
 **MMA Result Redistribution Pattern:**
 ```cpp
-// FROM: Typical MMA post-processing
+// FROM: Typical MMA post-processing - NOTE THE WIDTH=4 PARAMETER!
 RC0[j][0] = RC[i][j][0];
-RC0[j][1] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 1);
-RC0[j][2] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 2);
-RC0[j][3] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 3);
+RC0[j][1] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 1, 4);  // width=4!
+RC0[j][2] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 2, 4);  // width=4!
+RC0[j][3] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 3, 4);  // width=4!
 RC1[j][0] = RC[i][j][1];
-RC1[j][1] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 1);
-RC1[j][2] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 2);
-RC1[j][3] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 3);
+RC1[j][1] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 1, 4);  // width=4!
+RC1[j][2] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 2, 4);  // width=4!
+RC1[j][3] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 3, 4);  // width=4!
 
-// TO: Semantic pattern
-warp_shuffle_spread_dual_x4(RC[i][j][0], RC[i][j][1], RC0[j], RC1[j], lane_id);
+// TO: Semantic pattern with correct width
+warp_shuffle_spread_dual_x4(RC[i][j][0], RC[i][j][1], RC0[j], RC1[j], lane_id, 4);  // width=4
+// OR for explicit clarity:
+warp_shuffle_spread_dual_x4_width(RC[i][j][0], RC[i][j][1], RC0[j], RC1[j], lane_id, 4);
 ```
 
-**Warp Reduction Operations (Type-Aware):**
+**Warp Reduction Operations - WATCH FOR WIDTH PARAMETERS!**
 ```cpp
-// FROM: Manual butterfly reduction with XOR
-for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
-    val += __shfl_xor_sync(0xffffffff, val, mask);
+// FROM: Manual butterfly reduction with XOR - FULL WARP (32 threads)
+for (int offset = WARP_SIZE >> 1; offset >= 1; offset >>= 1) {
+    val += __shfl_xor_sync(0xffffffff, val, offset);  // No width = full warp
 }
 
-// TO: Type-aware semantic reduction
-fp32 result = warp_shuffle_sum(value);  // FP32
-fp16 result = warp_shuffle_sum(value);  // FP16 (uses __hadd)
-bf16 result = warp_shuffle_sum(value);  // BF16 (uses __hadd)
-fp32 result = warp_shuffle_sum_f16_to_f32(value);  // FP16→FP32 precision
-fp32 result = warp_shuffle_sum_bf16_to_f32(value); // BF16→FP32 precision
-IndexInt result = warp_shuffle_sum_i8_to_i32(value);  // INT8→INT32
+// FROM: Manual butterfly reduction with XOR - SUB-WARP (e.g., 4 threads)  
+for (int mask = 4 >> 1; mask >= 1; mask >>= 1) {
+    val += __shfl_xor_sync(0xffffffff, val, mask, 4);  // width=4!
+}
+
+// TO: Correct semantic reduction based on original code
+// Full warp (32 threads):
+fp32 result = warp_shuffle_sum(value);                  // Full warp
+fp16 result = warp_shuffle_sum(value);                  // Full warp
+
+// Sub-warp (4 threads) - COMMON IN FLASH ATTENTION:  
+fp32 result = warp_shuffle_sum_width(value, 4);         // 4-thread sub-warp
+fp16 result = warp_shuffle_sum_width(value, 4);         // 4-thread sub-warp
+fp32 result = warp_shuffle_max_width(value, 4);         // 4-thread sub-warp
+
+// Type conversion reductions:
+fp32 result = warp_shuffle_sum_f16_to_f32(value);       // FP16→FP32 precision  
+fp32 result = warp_shuffle_sum_bf16_to_f32(value);      // BF16→FP32 precision
+IndexInt result = warp_shuffle_sum_i8_to_i32(value);   // INT8→INT32
+```
+
+**🚨 RECOGNITION PATTERNS:**
+1. **Check original PTX for width parameter**: `__shfl_xor_sync(mask, value, offset, WIDTH)` 
+2. **Look at loop bounds**: `for (int mask = 4 >> 1; ...)` indicates 4-thread sub-warp
+3. **Flash Attention typically uses 4-thread sub-warps**
+4. **GEMM typically uses full 32-thread warps**
+
+**🔧 FLASH ATTENTION SPECIFIC FIXES:**
+
+The original kernel_expanded.cu vs kernel_prim.cu bug was caused by missing width parameters. Here's how to fix it:
+
+```cpp
+// ❌ WRONG - Original buggy DSL conversion
+lane_row_max_new[0][0] = warp_shuffle_max<fp32>(lane_row_max_new[0][0], 4);  // 4 is mask, not width!
+
+// ✅ CORRECT - Fixed DSL conversion  
+lane_row_max_new[0][0] = warp_shuffle_max_width<fp32>(lane_row_max_new[0][0], 4);  // 4 is width!
+lane_row_sum_new[0][0] = warp_shuffle_sum_width<fp32>(lane_row_sum_new[0][0], 4);  // 4 is width!
+
+// Same for MMA result redistribution:
+// ❌ WRONG - Missing width parameter
+warp_shuffle_spread_dual_x4(R_D[0][j][0], R_D[0][j][1], R_Q[0][0], R_Q[1][0], lane_id);  
+
+// ✅ CORRECT - With width parameter
+warp_shuffle_spread_dual_x4(R_D[0][j][0], R_D[0][j][1], R_Q[0][0], R_Q[1][0], lane_id, 4);
 ```
 
 **Advanced Data Type Support:**
@@ -731,8 +777,15 @@ After conversion, verify:
 7. **Complex Loop Bounds**: Pre-compute dynamic start/end values when needed
 8. **Pointer Type Selection**: Use SmemAddr only for copy instruction addresses, SharedPtr/GlobalPtr for everything else
 9. **Warp Shuffle Patterns**: Replace raw __shfl_sync with semantic primitives (broadcast, reduce, redistribute, etc.)
-10. **MMA Result Processing**: Use `warp_shuffle_spread_x4` or `warp_shuffle_spread_dual_x4` for typical redistribution patterns  
-11. **Multi-Type Reductions**: Use type-specific reductions (`warp_shuffle_sum<fp16>`, `warp_shuffle_sum_f16_to_f32`, etc.)
+   - **🚨 CRITICAL**: Always check for width parameters in original shuffle calls!
+   - **Flash Attention**: Typically uses 4-thread sub-warps → use `_width` variants
+   - **GEMM**: Typically uses full 32-thread warps → use standard variants
+10. **MMA Result Processing**: Use `warp_shuffle_spread_x4` or `warp_shuffle_spread_dual_x4` for typical redistribution patterns
+   - **With width param**: `warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id, 4)`  
+   - **Full warp**: `warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id)`
+11. **Multi-Type Reductions**: Use type-specific reductions with correct width
+   - **Sub-warp**: `warp_shuffle_sum_width<fp32>(value, 4)`, `warp_shuffle_max_width<fp32>(value, 4)`
+   - **Full warp**: `warp_shuffle_sum<fp16>(value)`, `warp_shuffle_sum_f16_to_f32(value)`
 12. **Block-Level Reductions**: Replace manual shared memory patterns with `block_reduce_sum<T, NUM_THREADS>`
 13. **Struct Data Shuffle**: Use `pair_struct<T1,T2>` and `warp_shuffle_struct_xor` for multi-field structs
 
@@ -790,34 +843,55 @@ warp_copy<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(lane_ptr, reg0, reg1, reg
 
 **MMA Result Redistribution (the most common pattern):**
 ```cpp
-// ❌ WRONG - Manual shuffle operations
+// STEP 1: Check original code for width parameters
+// ❌ WRONG ANALYSIS - Missing width parameters
+RC0[j][1] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 1);
+RC0[j][2] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 2);
+
+// ✅ CORRECT ANALYSIS - Original code has width=4
+RC0[j][1] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 1, 4);  // width=4!
+RC0[j][2] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 2, 4);  // width=4!
+
+// STEP 2: Apply correct DSL conversion
+// ❌ WRONG - Missing width parameter
 serial_range_for(j, 0, WARP_TILE_N, 1) {
-  RC0[j][0] = RC[i][j][0];
-  RC1[j][0] = RC[i][j][1];
-  RC0[j][1] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 1);
-  RC0[j][2] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 2);
-  RC0[j][3] = __shfl_sync(0xffffffff, RC[i][j][0], lane_id + 3);
-  RC1[j][1] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 1);
-  RC1[j][2] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 2);
-  RC1[j][3] = __shfl_sync(0xffffffff, RC[i][j][1], lane_id + 3);
+  warp_shuffle_spread_dual_x4(RC[i][j][0], RC[i][j][1], RC0[j], RC1[j], lane_id);  // MISSING WIDTH!
 }
 
-// ✅ CORRECT - Semantic shuffle pattern
+// ✅ CORRECT - With width parameter for sub-warp operation
 serial_range_for(j, 0, WARP_TILE_N, 1) {
-  warp_shuffle_spread_dual_x4(RC[i][j][0], RC[i][j][1], RC0[j], RC1[j], lane_id);
+  warp_shuffle_spread_dual_x4(RC[i][j][0], RC[i][j][1], RC0[j], RC1[j], lane_id, 4);  // width=4
+}
+
+// Alternative explicit version:
+serial_range_for(j, 0, WARP_TILE_N, 1) {
+  warp_shuffle_spread_dual_x4_width(RC[i][j][0], RC[i][j][1], RC0[j], RC1[j], lane_id, 4);
 }
 ```
 
 **Warp Reduction Pattern:**
 ```cpp
-// ❌ WRONG - Manual butterfly reduction  
-for (IndexInt offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
-    fp32 other = __shfl_down_sync(0xffffffff, sum, offset);
-    sum += other;
+// STEP 1: Analyze original reduction loop bounds
+// ❌ WRONG ANALYSIS - Full warp reduction
+for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+    sum += __shfl_xor_sync(0xffffffff, sum, offset);  // No width = 32 threads
 }
 
-// ✅ CORRECT - Semantic reduction
-fp32 total = warp_shuffle_sum(sum);
+// ✅ CORRECT ANALYSIS - Sub-warp reduction (common in Flash Attention)
+for (int mask = 4 >> 1; mask >= 1; mask >>= 1) {
+    sum += __shfl_xor_sync(0xffffffff, sum, mask, 4);  // width=4!
+}
+
+// STEP 2: Apply correct DSL conversion
+// ❌ WRONG - Wrong reduction scope (32 threads instead of 4)
+fp32 total = warp_shuffle_sum(sum);  // This does 32-thread reduction!
+
+// ✅ CORRECT - Sub-warp reduction (4 threads)
+fp32 total = warp_shuffle_sum_width(sum, 4);  // This does 4-thread reduction
+
+// For type-specific optimizations:
+fp32 max_val = warp_shuffle_max_width<fp32>(value, 4);     // 4-thread max
+fp16 sum_f16 = warp_shuffle_sum_width<fp16>(value, 4);     // 4-thread sum
 ```
 
 **Broadcast Pattern:**
@@ -915,5 +989,47 @@ SharedPtr<fp16> ptr3 = shared_ptr_cast<fp16>(dynamic_smem); // Clearly typed sha
 2. **Type safety** - Always know what data type the pointer points to
 3. **Clear purpose** - SmemAddr is only for copy instructions, everything else uses typed pointers
 4. **No complex decisions** - No need to distinguish byte vs element offsets
+
+## ⚠️ CRITICAL BUG FIXES (v2.0)
+
+The original DSL template had **SERIOUS BUGS** in shuffle operations that caused incorrect results in Flash Attention and similar kernels. These have been fixed in v2.0:
+
+### 🚨 Fixed Issues:
+
+1. **Missing Width Parameters in Shuffle Spread**: 
+   - **Bug**: `warp_shuffle_spread_x4()` and `warp_shuffle_spread_dual_x4()` lacked width parameters
+   - **Fix**: Added optional `width` parameter with default=32, plus explicit `_width` variants
+
+2. **Wrong Reduction Scope**:
+   - **Bug**: All `warp_shuffle_*` reductions operated on 32 threads instead of sub-warps
+   - **Fix**: Added `warp_shuffle_*_width()` functions for sub-warp reductions
+
+3. **Parameter Semantic Confusion**:
+   - **Bug**: In calls like `warp_shuffle_max(value, 4)`, the `4` was treated as mask instead of width
+   - **Fix**: Clear API separation: `warp_shuffle_max(value)` vs `warp_shuffle_max_width(value, 4)`
+
+### 🔧 Migration Guide:
+
+If you used the old buggy DSL:
+```cpp
+// OLD (BUGGY):
+warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id);           // Missing width
+fp32 result = warp_shuffle_sum(value, 4);                               // Wrong parameter semantics
+
+// NEW (FIXED):
+warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id, 4);       // Explicit width=4
+fp32 result = warp_shuffle_sum_width(value, 4);                         // Correct width parameter
+```
+
+### 📋 Validation Checklist:
+
+For every converted kernel, verify:
+- [ ] All shuffle operations have correct width parameters
+- [ ] Sub-warp reductions use `_width` variants  
+- [ ] Flash Attention uses 4-thread sub-warps
+- [ ] GEMM uses full 32-thread warps
+- [ ] No semantic mismatches between mask and width parameters
+
+---
 
 Now convert the provided CUDA kernel following these rules exactly:

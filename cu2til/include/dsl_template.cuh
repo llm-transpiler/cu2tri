@@ -124,7 +124,19 @@ __device__ inline int swizzle_permuted_index(int i, int j) {
 // Dynamic shared memory accessor - creates typed pointers from raw dynamic shared memory
 template<typename T>
 __device__ inline SharedPtr<T> shared_ptr_cast(void* raw_ptr) {
-    return static_cast<SharedPtr<T>>(raw_ptr);
+    return reinterpret_cast<SharedPtr<T>>(raw_ptr);
+}
+
+// Register pointer casting - creates typed pointers from register arrays
+template<typename T, typename U>
+__device__ inline RegisterPtr<T> register_ptr_cast(U* reg_ptr) {
+    return reinterpret_cast<RegisterPtr<T>>(reg_ptr);
+}
+
+// Safe address calculation that avoids 64-bit type promotion
+template<typename BaseAddr, typename Offset>
+__device__ inline SmemAddr safe_addr_add(BaseAddr base, Offset offset) {
+    return static_cast<SmemAddr>(base) + static_cast<uint32_t>(offset);
 }
 
 // Memory fill helper for recursive template implementation
@@ -260,12 +272,15 @@ struct copy_dispatcher {
         // Async copy operations (only for G2S and S2G)
         if constexpr (IsAsync) {
             if constexpr (Task == CopyTask::G2S) {
+                // Ensure dst_ptr is cast to uint32_t for PTX constraint 'r'
+                uint32_t dst_addr = static_cast<uint32_t>(dst_ptr);
                 asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" 
-                    :: "r"(dst_ptr), "l"(src_ptr), "n"(bytes));
+                    :: "r"(dst_addr), "l"(src_ptr), "n"(bytes));
             } else if constexpr (Task == CopyTask::S2G) {
                 // S2G async copy uses same instruction (implementation may vary)
+                uint32_t dst_addr = static_cast<uint32_t>(dst_ptr);
                 asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" 
-                    :: "r"(dst_ptr), "l"(src_ptr), "n"(bytes));
+                    :: "r"(dst_addr), "l"(src_ptr), "n"(bytes));
             }
         } 
         // Synchronous copy operations
@@ -549,13 +564,18 @@ __device__ inline void serial_range_for_template(Func&& func) {
 
 // ========================= Warp Shuffle Primitives =========================
 
-// Warp shuffle operations
+// Basic warp shuffle operations - support both full-warp and sub-warp modes
 template<typename T>
 __device__ inline T warp_shuffle(T value, int src_lane, unsigned mask = 0xffffffff) {
     return __shfl_sync(mask, value, src_lane);
 }
 
-// Warp shuffle with offset
+template<typename T>
+__device__ inline T warp_shuffle_width(T value, int src_lane, int width, unsigned mask = 0xffffffff) {
+    return __shfl_sync(mask, value, src_lane, width);
+}
+
+// Warp shuffle with offset - full warp operations
 template<typename T>  
 __device__ inline T warp_shuffle_down(T value, int offset, unsigned mask = 0xffffffff) {
     return __shfl_down_sync(mask, value, offset);
@@ -571,22 +591,44 @@ __device__ inline T warp_shuffle_xor(T value, int mask_val, unsigned mask = 0xff
     return __shfl_xor_sync(mask, value, mask_val);
 }
 
+// Sub-warp shuffle operations with explicit width parameter
+template<typename T>
+__device__ inline T warp_shuffle_xor_width(T value, int mask_val, int width, unsigned mask = 0xffffffff) {
+    return __shfl_xor_sync(mask, value, mask_val, width);
+}
+
 // ========================= Advanced Warp Shuffle Patterns =========================
 
 // MMA result redistribution - spread single value to consecutive lanes
 template<typename T>
-__device__ inline void warp_shuffle_spread_x4(T value, T output[4], IndexInt lane_id, unsigned mask = 0xffffffff) {
+__device__ inline void warp_shuffle_spread_x4(T value, T output[4], IndexInt lane_id, int width = 32, unsigned mask = 0xffffffff) {
     output[0] = value;                                        // Current lane
-    output[1] = __shfl_sync(mask, value, lane_id + 1);       // Next lane
-    output[2] = __shfl_sync(mask, value, lane_id + 2);       // Lane + 2  
-    output[3] = __shfl_sync(mask, value, lane_id + 3);       // Lane + 3
+    output[1] = __shfl_sync(mask, value, lane_id + 1, width); // Next lane
+    output[2] = __shfl_sync(mask, value, lane_id + 2, width); // Lane + 2  
+    output[3] = __shfl_sync(mask, value, lane_id + 3, width); // Lane + 3
+}
+
+// Sub-warp version for explicit width specification (common in Flash Attention)
+template<typename T>
+__device__ inline void warp_shuffle_spread_x4_width(T value, T output[4], IndexInt lane_id, int width, unsigned mask = 0xffffffff) {
+    output[0] = value;
+    output[1] = __shfl_sync(mask, value, lane_id + 1, width);
+    output[2] = __shfl_sync(mask, value, lane_id + 2, width);
+    output[3] = __shfl_sync(mask, value, lane_id + 3, width);
 }
 
 // MMA result redistribution for dual accumulator pattern (common in GEMM)
 template<typename T>
-__device__ inline void warp_shuffle_spread_dual_x4(T src0, T src1, T dst0[4], T dst1[4], IndexInt lane_id, unsigned mask = 0xffffffff) {
-    warp_shuffle_spread_x4(src0, dst0, lane_id, mask);
-    warp_shuffle_spread_x4(src1, dst1, lane_id, mask);
+__device__ inline void warp_shuffle_spread_dual_x4(T src0, T src1, T dst0[4], T dst1[4], IndexInt lane_id, int width = 32, unsigned mask = 0xffffffff) {
+    warp_shuffle_spread_x4(src0, dst0, lane_id, width, mask);
+    warp_shuffle_spread_x4(src1, dst1, lane_id, width, mask);
+}
+
+// Sub-warp version for explicit width specification
+template<typename T>
+__device__ inline void warp_shuffle_spread_dual_x4_width(T src0, T src1, T dst0[4], T dst1[4], IndexInt lane_id, int width, unsigned mask = 0xffffffff) {
+    warp_shuffle_spread_x4_width(src0, dst0, lane_id, width, mask);
+    warp_shuffle_spread_x4_width(src1, dst1, lane_id, width, mask);
 }
 
 // Broadcast value from specific lane to all lanes in warp
@@ -597,7 +639,7 @@ __device__ inline T warp_shuffle_broadcast(T value, IndexInt src_lane, unsigned 
 
 // ========================= Warp Reduction Primitives =========================
 
-// Generic warp reduction using butterfly shuffle (XOR-based)
+// Generic warp reduction using butterfly shuffle (XOR-based) - full warp
 template<typename T, typename BinaryOp>
 __device__ inline T warp_shuffle_reduce(T value, BinaryOp op, unsigned mask = 0xffffffff) {
     #pragma unroll
@@ -608,11 +650,22 @@ __device__ inline T warp_shuffle_reduce(T value, BinaryOp op, unsigned mask = 0x
     return value;
 }
 
-// Specialized reductions for different data types
+// Generic sub-warp reduction using butterfly shuffle with explicit width
+template<typename T, typename BinaryOp>
+__device__ inline T warp_shuffle_reduce_width(T value, BinaryOp op, int width, unsigned mask = 0xffffffff) {
+    #pragma unroll
+    for (int offset = width / 2; offset > 0; offset /= 2) {
+        T other = __shfl_xor_sync(mask, value, offset, width);
+        value = op(value, other);
+    }
+    return value;
+}
+
+// Specialized reductions for different data types - full warp
 template<typename T>
 __device__ inline T warp_shuffle_sum(T value, unsigned mask = 0xffffffff);
 
-// FP32 sum reduction
+// FP32 sum reduction - full warp
 template<>
 __device__ inline fp32 warp_shuffle_sum<fp32>(fp32 value, unsigned mask) {
     #pragma unroll
@@ -622,12 +675,36 @@ __device__ inline fp32 warp_shuffle_sum<fp32>(fp32 value, unsigned mask) {
     return value;
 }
 
-// FP16 sum reduction
+// Sub-warp sum reductions with explicit width
+template<typename T>
+__device__ inline T warp_shuffle_sum_width(T value, int width, unsigned mask = 0xffffffff);
+
+// FP32 sum reduction - sub-warp with width
+template<>
+__device__ inline fp32 warp_shuffle_sum_width<fp32>(fp32 value, int width, unsigned mask) {
+    #pragma unroll
+    for (int offset = width / 2; offset > 0; offset /= 2) {
+        value += __shfl_xor_sync(mask, value, offset, width);
+    }
+    return value;
+}
+
+// FP16 sum reduction - full warp
 template<>
 __device__ inline fp16 warp_shuffle_sum<fp16>(fp16 value, unsigned mask) {
     #pragma unroll
     for (IndexInt offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
         value = __hadd(value, __shfl_xor_sync(mask, value, offset));
+    }
+    return value;
+}
+
+// FP16 sum reduction - sub-warp with width  
+template<>
+__device__ inline fp16 warp_shuffle_sum_width<fp16>(fp16 value, int width, unsigned mask) {
+    #pragma unroll
+    for (int offset = width / 2; offset > 0; offset /= 2) {
+        value = __hadd(value, __shfl_xor_sync(mask, value, offset, width));
     }
     return value;
 }
@@ -701,7 +778,7 @@ __device__ inline fp16 warp_shuffle_sum_fp8_e5m2_to_f16(__nv_fp8_storage_t value
     return value_f16;
 }
 
-// Generic max reduction
+// Generic max reduction - full warp
 template<typename T>
 __device__ inline T warp_shuffle_max(T value, unsigned mask = 0xffffffff) {
     #pragma unroll
@@ -712,7 +789,18 @@ __device__ inline T warp_shuffle_max(T value, unsigned mask = 0xffffffff) {
     return value;
 }
 
-// FP32 max reduction (using fmaxf)
+// Generic max reduction - sub-warp with width
+template<typename T>
+__device__ inline T warp_shuffle_max_width(T value, int width, unsigned mask = 0xffffffff) {
+    #pragma unroll
+    for (int offset = width / 2; offset > 0; offset /= 2) {
+        T other = __shfl_xor_sync(mask, value, offset, width);
+        value = value > other ? value : other;
+    }
+    return value;
+}
+
+// FP32 max reduction (using fmaxf) - full warp
 template<>
 __device__ inline fp32 warp_shuffle_max<fp32>(fp32 value, unsigned mask) {
     #pragma unroll
@@ -722,7 +810,17 @@ __device__ inline fp32 warp_shuffle_max<fp32>(fp32 value, unsigned mask) {
     return value;
 }
 
-// Generic min reduction
+// FP32 max reduction (using fmaxf) - sub-warp with width
+template<>
+__device__ inline fp32 warp_shuffle_max_width<fp32>(fp32 value, int width, unsigned mask) {
+    #pragma unroll
+    for (int offset = width / 2; offset > 0; offset /= 2) {
+        value = fmaxf(value, __shfl_xor_sync(mask, value, offset, width));
+    }
+    return value;
+}
+
+// Generic min reduction - full warp
 template<typename T>
 __device__ inline T warp_shuffle_min(T value, unsigned mask = 0xffffffff) {
     #pragma unroll
@@ -733,12 +831,33 @@ __device__ inline T warp_shuffle_min(T value, unsigned mask = 0xffffffff) {
     return value;
 }
 
-// FP32 min reduction (using fminf)
+// Generic min reduction - sub-warp with width
+template<typename T>
+__device__ inline T warp_shuffle_min_width(T value, int width, unsigned mask = 0xffffffff) {
+    #pragma unroll
+    for (int offset = width / 2; offset > 0; offset /= 2) {
+        T other = __shfl_xor_sync(mask, value, offset, width);
+        value = value < other ? value : other;
+    }
+    return value;
+}
+
+// FP32 min reduction (using fminf) - full warp
 template<>
 __device__ inline fp32 warp_shuffle_min<fp32>(fp32 value, unsigned mask) {
     #pragma unroll
     for (IndexInt offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
         value = fminf(value, __shfl_xor_sync(mask, value, offset));
+    }
+    return value;
+}
+
+// FP32 min reduction (using fminf) - sub-warp with width
+template<>
+__device__ inline fp32 warp_shuffle_min_width<fp32>(fp32 value, int width, unsigned mask) {
+    #pragma unroll
+    for (int offset = width / 2; offset > 0; offset /= 2) {
+        value = fminf(value, __shfl_xor_sync(mask, value, offset, width));
     }
     return value;
 }
