@@ -150,19 +150,11 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
 #pragma unroll 1
   for (int tile_K_seqlen = 0; tile_K_seqlen < Tc; ++tile_K_seqlen) {
     if (tile_K_seqlen == 0) {
-      /*
-      * copy G2S
-      * copy_shape: copy_block_tile_shape: (Bc, kHeadDim)
-      * block_coord: (tile_K_seqlen, 0); step_tile:(Bc, kHeadDim)
-      * thread_copy_coord, in block_tile: 
-      *   smem_coord: (load_smem_K_Bc, load_smem_K_d):(kHeadDim, 1):(0,0):(Bc, kHeadDim):smem_K_base_ptr
-      *   gmem_coord: (load_gmem_K_Bc, load_gmem_K_d)=(load_smem_K_Bc, load_smem_K_d):(kHeadDim, 1):(tile_K_seqlen * Bc, 0):(QKV_seqlen, kHeadDim):&K[K_gmem_offset]
-      * (crd_dim1, crd_dim2):(crd_stride_dim1, crd_stride_dim2):(start_offset_dim1, start_offset_dim2):(crd_space_dim1, crd_space_dim2)
-      */
+      // load_gmem_K_Bc_offset = tile_K_seqlen * Bc;
       int load_gmem_K_Bc = tile_K_seqlen * Bc + load_smem_K_Bc;
       int load_gmem_K_d = load_smem_K_d;
       int load_gmem_K_addr = K_gmem_offset + load_gmem_K_Bc * kHeadDim + load_gmem_K_d;
-      uint32_t load_smem_K_ptr = smem_K_base_ptr + (load_smem_K_Bc * kHeadDim + load_smem_K_d) * sizeof(half); // 每个线程拷贝的目标smem地址
+      uint32_t load_smem_K_ptr = smem_K_base_ptr + (load_smem_K_Bc * kHeadDim + load_smem_K_d) * sizeof(half);
 #pragma unroll
       for (int i = 0; i < (kHeadDim / (kNumThreads / Bc)); i += 8) {
         asm volatile( 
@@ -175,15 +167,7 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
       __syncthreads();
     }
     {
-      /*
-      * copy G2S
-      * copy_shape: copy_block_tile_shape: (Bc, kHeadDim)
-      * block_coord: (tile_K_seqlen, 0); step_tile:(Bc, kHeadDim)
-      * thread_copy_coord, in block_tile: 
-      *   smem_coord: (load_smem_V_Bc, load_smem_V_d):(kHeadDim, 1):(0,0):(Bc, kHeadDim):smem_V_base_ptr + V_tile_size * sizeof(half)
-      *   gmem_coord: (load_gmem_V_Bc, load_gmem_V_d)=(load_smem_V_Bc, load_smem_V_d):(kHeadDim, 1):(tile_K_seqlen * Bc, 0):(QKV_seqlen, kHeadDim):&V[V_gmem_offset]
-      * (crd_dim1, crd_dim2):(crd_stride_dim1, crd_stride_dim2):(start_offset_dim1, start_offset_dim2):(crd_space_dim1, crd_space_dim2)
-      */
+      // load_gmem_V_Bc_offset = tile_K_seqlen * Bc;
       int load_gmem_V_Bc = tile_K_seqlen * Bc + load_smem_V_Bc;
       int load_gmem_V_d = load_smem_V_d;
       int load_gmem_V_addr = V_gmem_offset + load_gmem_V_Bc * kHeadDim + load_gmem_V_d;
@@ -198,9 +182,9 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
     }
     {
 #pragma unroll
-      for (int i = 0; i < kWarpTileSeqLenQ; ++i) { // 1
+      for (int i = 0; i < kWarpTileSeqLenQ; ++i) {
 #pragma unroll
-        for (int j = 0; j < kWarpTileSeqLenK; ++j) { // 4
+        for (int j = 0; j < kWarpTileSeqLenK; ++j) {
 #pragma unroll
           for (int k = 0; k < 2; ++k) {
             R_S[i][j][k] = 0;
@@ -209,12 +193,9 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
       }
     }
 #pragma unroll
-    for (int tile_K_d = 0; tile_K_d < (kHeadDim / kMmaAtomK); ++tile_K_d) { // d / 16
+    for (int tile_K_d = 0; tile_K_d < (kHeadDim / kMmaAtomK); ++tile_K_d) {
 #pragma unroll
-      for (int i = 0; i < kWarpTileSeqLenQ; ++i) { // 1
-        /**
-         * 
-         */
+      for (int i = 0; i < kWarpTileSeqLenQ; ++i) {
         int warp_smem_Q_Br =
             warp_QP * (kMmaAtomM * kWarpTileSeqLenQ) + i * kMmaAtomM;
         int lane_smem_Q_Br = warp_smem_Q_Br + lane_id % 16;
@@ -230,7 +211,7 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
       }
 
 #pragma unroll
-      for (int j = 0; j < kWarpTileSeqLenK; ++j) { // 4
+      for (int j = 0; j < kWarpTileSeqLenK; ++j) {
         int warp_smem_K_Bc =
             warp_KV * (kMmaAtomN * kWarpTileSeqLenK) + j * kMmaAtomN;
         int lane_smem_K_Bc = warp_smem_K_Bc + lane_id % 8;
@@ -242,9 +223,10 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
                    : "r"(lane_smem_K_ptr));
       }
 
+      static_assert(kWarpTileSeqLenQ == 1);
       {
 #pragma unroll
-        for (int j = 0; j < kWarpTileSeqLenK; ++j) { // 4
+        for (int j = 0; j < kWarpTileSeqLenK; ++j) {
           asm volatile( 
               "mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3, " 
               "%4, %5}, {%6, %7}, {%8, %9};\n" 

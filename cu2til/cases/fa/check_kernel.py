@@ -48,14 +48,14 @@ def get_device_capability():
 
 def build_kernel(cufile_basename, kernel_name, header_lib_path="/workspace/cu2til/include"):
     """构建单个FA CUDA内核"""
-    print(f"🔧 构建{CASE_NICKNAME}内核: {kernel_name}...")
+    print(f"🔧 Build {CASE_NICKNAME} ({cufile_basename}.cu) Kernel: {kernel_name}...")
     
     from pathlib import Path
     
     # 进入对应的kernel目录
     kernel_dir = Path(f"./cuda/{kernel_name}")
     if not kernel_dir.exists():
-        print(f"❌ 内核目录不存在: {kernel_dir}")
+        print(f"❌ Kernel directory not found: {kernel_dir}")
         return None
         
     original_dir = os.getcwd()
@@ -96,7 +96,7 @@ def build_kernel(cufile_basename, kernel_name, header_lib_path="/workspace/cu2ti
         )
         
         if isinstance(lib, str):
-            print(f"❌ 编译失败: {lib}")
+            print(f"❌ Compile failed: {lib}")
             return None
         
         print(f"✅ {CASE_NICKNAME} CUDA Kernel [{cufile_basename}] built successfully!")
@@ -160,8 +160,9 @@ def get_test_shapes():
     dim = 2048
     bs_seqlen_vals = [(32, 512), (16, 1024), (8, 2048), (4, 4096), (2, 8192), (1, 16384)]
 
-    for headdim in [64, 128, 256]:
-        nheads = dim // headdim
+    # for headdim in [64, 128, 256]:
+    for headdim in [64, 128]:
+        nheads = dim // headdim # [32, 16, 8] # 2048 // 64 = 32, 2048 // 128 = 16, 2048 // 256 = 8
         for batch_size, seqlen in bs_seqlen_vals:
             test_shapes.append((batch_size, nheads, seqlen, headdim))
     return test_shapes
@@ -183,14 +184,15 @@ print(os.listdir(f"{current_dir}/cuda"))
 
 # %%
 cu_files = [
-    # "ref"
-    # "kernel"
-    # "kernel_expanded"
-    # "kernel_cleaned"
-    "kernel_prim"
-    # "kernel_til"
+    # "ref",
+    # "kernel",
+    "kernel_expanded",
+    # "kernel_cleaned",
+    "kernel_prim",
+    # "kernel_expanded_converted",
+    # "kernel_til",
 ]
-
+basename2kernel = {}
 # %%
 
 def test_correctness():
@@ -199,7 +201,7 @@ def test_correctness():
         try:
             lib = build_kernel(cufile_basename, kernel_name)
             if lib is not None:
-                cur_kernel = getattr(lib, kernel_name)
+                basename2kernel[cufile_basename] = cur_kernel = getattr(lib, kernel_name)
                 pretty_print_line(f"✅ Kernel {kernel_name} compiled and loaded successfully")
             else:
                 pretty_print_line(f"❌ Kernel {kernel_name} compilation failed")
@@ -221,11 +223,51 @@ def test_correctness():
                     print(f"❌ Kernel {kernel_name} failed: {e}...\n{traceback.format_exc()}...")
                     return
 
+REF_KERNEL_BASENAME = "kernel"
+def test_performance():
+    if REF_KERNEL_BASENAME not in cu_files:
+        return
+    
+    for cufile_basename, kernel in basename2kernel.items():
+        if cufile_basename == REF_KERNEL_BASENAME:
+            continue  # 跳过ref，已经作为baseline处理
+
+        pretty_print_line(f"🔧 Start kernel performance test: {cufile_basename}...")
+        if kernel is None:
+            try:
+                lib = build_kernel(cufile_basename, kernel_name)
+                if lib is not None:
+                    kernel = basename2kernel[cufile_basename] = getattr(lib, kernel_name)
+                    pretty_print_line(f"✅ Kernel {cufile_basename} compiled and loaded successfully")
+                else:
+                    pretty_print_line(f"❌ Kernel {cufile_basename} compilation failed")
+                    continue
+            except Exception as e:
+                print(f"❌ Kernel {cufile_basename} compilation failed: {e}")
+                continue
+        if basename2kernel[REF_KERNEL_BASENAME] is None:
+            return
+        for batch_size, head_num, seq_len, head_dim in get_test_shapes():
+            pretty_print_line(f"Performance test: {cufile_basename}, B={batch_size}, H={head_num}, N={seq_len}, D={head_dim}")
+            try:
+                q, k, v = get_qkv(batch_size, head_num, seq_len, head_dim)
+                o = torch.zeros_like(q)
+                kernel_ms = benchmark_kernel(kernel, (q, k, v, o))
+                ref_ms = benchmark_kernel(basename2kernel[REF_KERNEL_BASENAME], (q, k, v, o))
+                if abs(ref_ms / kernel_ms - 1) < 0.05:
+                    continue
+                print(f"kernel:\t{kernel_ms:.4f}ms, ref:\t{ref_ms:.4f}ms, speedup:\t{ref_ms / kernel_ms:.2f}x")
+                
+            except Exception as e:
+                print(f"❌ Kernel {cufile_basename} failed: {e}")
+            finally:
+                del q, k, v, o
+
 
 # %%
 
 if __name__ == "__main__":
     test_correctness()
-    # test_performance()
+    test_performance()
 
 

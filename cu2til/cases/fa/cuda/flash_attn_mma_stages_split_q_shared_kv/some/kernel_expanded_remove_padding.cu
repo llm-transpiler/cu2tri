@@ -59,27 +59,20 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
   const int V_gmem_offset = Q_gmem_offset;
   const int O_gmem_offset = Q_gmem_offset;
 
-  // (kNumThreads / Br) = (128 / 64) = 2: (Br, kHeadDim)的smem块每行有 2 个线程处理
-  int load_smem_Q_Br = (tid / (kNumThreads / Br)); // 标记当前tid在哪个Br块中, tid:(0,...,kNumThreads-1)
-  int load_smem_Q_d = (tid % (kNumThreads / Br)) * (kHeadDim / (kNumThreads / Br)); // (tid % 2) * (d / 2)
-  // coord of smem of q tid -> (load_smem_Q_Br, load_smem_Q_d) => (tid / 2, (tid % 2) * col/2 )
-  // 可以让llm尝试推断模式, 失败则保留原代码
-  // load_smem_Q_Br: block_tile(Br, kHeadDim)的行id(每个线程都对应一个行id)
-  // load_smem_Q_d: block_tile(Br, kHeadDim)的列id(每个线程都对应一个列id)
-  // 这是一个(Br, 128/Br):(128/Br, 1)=>(Br, 2):(2, 1) -> (1, d/2) of Tile(Br, kHeadDim)的映射
+  int load_smem_Q_Br = (tid / (kNumThreads / Br));
+  int load_smem_Q_d = (tid % (kNumThreads / Br)) * (kHeadDim / (kNumThreads / Br));
   int load_smem_K_Bc = (tid / (kNumThreads / Bc));
   int load_smem_K_d = (tid % (kNumThreads / Bc)) * (kHeadDim / (kNumThreads / Bc));
   int load_smem_V_Bc = (tid / (kNumThreads / Bc));
   int load_smem_V_d = (tid % (kNumThreads / Bc)) * (kHeadDim / (kNumThreads / Bc));
   int load_gmem_Q_Br = Q_tile_id * Br + load_smem_Q_Br;
-  // tid 需要去gmem上load的 行坐标
   if (load_gmem_Q_Br >= QKV_seqlen) return;
   int load_gmem_K_Bc_offset = 0;
-  // int load_gmem_V_Bc_offset = 0;
+  int load_gmem_V_Bc_offset = 0;
 
   extern __shared__ half smem[];
   constexpr int Q_tile_size = Br * kHeadDim;
-  // constexpr int K_tile_size = Bc * kHeadDim;
+  constexpr int K_tile_size = Bc * kHeadDim;
   constexpr int V_tile_size = Bc * kHeadDim;
   half *Q_tile_smem = smem;
   half *K_tile_smem = Q_tile_smem + Q_tile_size;
@@ -89,8 +82,8 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
   uint32_t smem_K_base_ptr = __cvta_generic_to_shared(K_tile_smem);
   uint32_t smem_V_base_ptr = __cvta_generic_to_shared(V_tile_smem);
 
-  float lane_block_row_max_old[kWarpTileSeqLenQ][2]; // [1][2]
-  float lane_block_row_sum_old[kWarpTileSeqLenQ][2]; // [1][2]
+  float lane_block_row_max_old[kWarpTileSeqLenQ][2];
+  float lane_block_row_sum_old[kWarpTileSeqLenQ][2];
   {
 #pragma unroll
     for (int i = 0; i < kWarpTileSeqLenQ; ++i) {
@@ -110,12 +103,15 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
     }
   }
 
-  uint32_t R_Q[kWarpTileSeqLenQ][4]; // [1][4]
-  uint32_t R_K[kWarpTileSeqLenK][2]; // [4][2]
-  uint32_t R_V[kWarpTileHeadDimV][2]; // [(kHeadDim / 8)][2]
-  uint32_t R_S[kWarpTileSeqLenQ][kWarpTileSeqLenK][2]; // [1][4][2]
-  uint32_t R_O[kWarpTileSeqLenP][kWarpTileHeadDimV][2]; // [1][(kHeadDim / 8)][2]
-  uint32_t R_D[kWarpTileSeqLenP][kWarpTileHeadDimV][4]; // [1][(kHeadDim / 8)][4]
+  constexpr int kPrefetchKg2sSmemId = 0;
+  constexpr int kPrefetchVg2sSmemId = 1;
+  constexpr int kNumPrefetchQs2r = 1;
+  uint32_t R_Q[kNumPrefetchQs2r][kWarpTileSeqLenQ][4];
+  uint32_t R_K[kWarpTileSeqLenK][2];
+  uint32_t R_V[kWarpTileHeadDimV][2];
+  uint32_t R_S[kWarpTileSeqLenQ][kWarpTileSeqLenK][2];
+  uint32_t R_O[kWarpTileSeqLenP][kWarpTileHeadDimV][2];
+  uint32_t R_D[kWarpTileSeqLenP][kWarpTileHeadDimV][4];
   {
 #pragma unroll
     for (int i = 0; i < kWarpTileSeqLenP; ++i) {
@@ -133,16 +129,14 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
     int load_gmem_Q_d = load_smem_Q_d;
     int load_gmem_Q_addr =
         (Q_gmem_offset + load_gmem_Q_Br * kHeadDim + load_gmem_Q_d);
-    // gmem_coord => (load_gmem_Q_Br, load_gmem_Q_d):(kHeadDim, 1)
     uint32_t load_smem_Q_ptr =
         (smem_Q_base_ptr +
          (load_smem_Q_Br * kHeadDim + load_smem_Q_d) * sizeof(half));
-    // smem_coord => (load_smem_Q_Br, load_smem_Q_d):(kHeadDim, 1)
 #pragma unroll
     for (int i = 0; i < (kHeadDim / (kNumThreads / Br)); i += 8) {
       asm volatile( 
       "cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" ::"r"(load_smem_Q_ptr + i * 2), 
-      "l"(&Q[load_gmem_Q_addr + i]), "n"(16)); // 传输16字节 = 8个half元素
+      "l"(&Q[load_gmem_Q_addr + i]), "n"(16));
     }
     asm volatile("cp.async.commit_group;\n" ::);
   }
@@ -150,19 +144,16 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
 #pragma unroll 1
   for (int tile_K_seqlen = 0; tile_K_seqlen < Tc; ++tile_K_seqlen) {
     if (tile_K_seqlen == 0) {
-      /*
-      * copy G2S
-      * copy_shape: copy_block_tile_shape: (Bc, kHeadDim)
-      * block_coord: (tile_K_seqlen, 0); step_tile:(Bc, kHeadDim)
-      * thread_copy_coord, in block_tile: 
-      *   smem_coord: (load_smem_K_Bc, load_smem_K_d):(kHeadDim, 1):(0,0):(Bc, kHeadDim):smem_K_base_ptr
-      *   gmem_coord: (load_gmem_K_Bc, load_gmem_K_d)=(load_smem_K_Bc, load_smem_K_d):(kHeadDim, 1):(tile_K_seqlen * Bc, 0):(QKV_seqlen, kHeadDim):&K[K_gmem_offset]
-      * (crd_dim1, crd_dim2):(crd_stride_dim1, crd_stride_dim2):(start_offset_dim1, start_offset_dim2):(crd_space_dim1, crd_space_dim2)
-      */
-      int load_gmem_K_Bc = tile_K_seqlen * Bc + load_smem_K_Bc;
+      load_gmem_K_Bc_offset = tile_K_seqlen * Bc;
+      int load_gmem_K_Bc = load_gmem_K_Bc_offset + load_smem_K_Bc;
       int load_gmem_K_d = load_smem_K_d;
-      int load_gmem_K_addr = K_gmem_offset + load_gmem_K_Bc * kHeadDim + load_gmem_K_d;
-      uint32_t load_smem_K_ptr = smem_K_base_ptr + (load_smem_K_Bc * kHeadDim + load_smem_K_d) * sizeof(half); // 每个线程拷贝的目标smem地址
+      int load_gmem_K_addr =
+          (K_gmem_offset + load_gmem_K_Bc * kHeadDim + load_gmem_K_d);
+      uint32_t load_smem_K_ptr =
+          (smem_K_base_ptr +
+           (kPrefetchKg2sSmemId * K_tile_size +
+            load_smem_K_Bc * kHeadDim + load_smem_K_d) *
+               sizeof(half));
 #pragma unroll
       for (int i = 0; i < (kHeadDim / (kNumThreads / Bc)); i += 8) {
         asm volatile( 
@@ -175,19 +166,16 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
       __syncthreads();
     }
     {
-      /*
-      * copy G2S
-      * copy_shape: copy_block_tile_shape: (Bc, kHeadDim)
-      * block_coord: (tile_K_seqlen, 0); step_tile:(Bc, kHeadDim)
-      * thread_copy_coord, in block_tile: 
-      *   smem_coord: (load_smem_V_Bc, load_smem_V_d):(kHeadDim, 1):(0,0):(Bc, kHeadDim):smem_V_base_ptr + V_tile_size * sizeof(half)
-      *   gmem_coord: (load_gmem_V_Bc, load_gmem_V_d)=(load_smem_V_Bc, load_smem_V_d):(kHeadDim, 1):(tile_K_seqlen * Bc, 0):(QKV_seqlen, kHeadDim):&V[V_gmem_offset]
-      * (crd_dim1, crd_dim2):(crd_stride_dim1, crd_stride_dim2):(start_offset_dim1, start_offset_dim2):(crd_space_dim1, crd_space_dim2)
-      */
-      int load_gmem_V_Bc = tile_K_seqlen * Bc + load_smem_V_Bc;
+      load_gmem_V_Bc_offset = tile_K_seqlen * Bc;
+      int load_gmem_V_Bc = load_gmem_V_Bc_offset + load_smem_V_Bc;
       int load_gmem_V_d = load_smem_V_d;
-      int load_gmem_V_addr = V_gmem_offset + load_gmem_V_Bc * kHeadDim + load_gmem_V_d;
-      uint32_t load_smem_V_ptr = smem_V_base_ptr + (V_tile_size + load_smem_V_Bc * kHeadDim + load_smem_V_d) * sizeof(half);
+      int load_gmem_V_addr =
+          (V_gmem_offset + load_gmem_V_Bc * kHeadDim + load_gmem_V_d);
+      uint32_t load_smem_V_ptr =
+          (smem_V_base_ptr +
+           (kPrefetchVg2sSmemId * V_tile_size +
+            load_smem_V_Bc * kHeadDim + load_smem_V_d) *
+               sizeof(half));
 #pragma unroll
       for (int i = 0; i < (kHeadDim / (kNumThreads / Bc)); i += 8) {
         asm volatile( 
@@ -198,9 +186,9 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
     }
     {
 #pragma unroll
-      for (int i = 0; i < kWarpTileSeqLenQ; ++i) { // 1
+      for (int i = 0; i < kWarpTileSeqLenQ; ++i) {
 #pragma unroll
-        for (int j = 0; j < kWarpTileSeqLenK; ++j) { // 4
+        for (int j = 0; j < kWarpTileSeqLenK; ++j) {
 #pragma unroll
           for (int k = 0; k < 2; ++k) {
             R_S[i][j][k] = 0;
@@ -209,12 +197,9 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
       }
     }
 #pragma unroll
-    for (int tile_K_d = 0; tile_K_d < (kHeadDim / kMmaAtomK); ++tile_K_d) { // d / 16
+    for (int tile_K_d = 0; tile_K_d < (kHeadDim / kMmaAtomK); ++tile_K_d) {
 #pragma unroll
-      for (int i = 0; i < kWarpTileSeqLenQ; ++i) { // 1
-        /**
-         * 
-         */
+      for (int i = 0; i < kWarpTileSeqLenQ; ++i) {
         int warp_smem_Q_Br =
             warp_QP * (kMmaAtomM * kWarpTileSeqLenQ) + i * kMmaAtomM;
         int lane_smem_Q_Br = warp_smem_Q_Br + lane_id % 16;
@@ -225,31 +210,35 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
                  sizeof(half));
         asm volatile( 
             "ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n" 
-            : "=r"(R_Q[i][0]), "=r"(R_Q[i][1]), "=r"(R_Q[i][2]), "=r"(R_Q[i][3]) 
+            : "=r"(R_Q[0][i][0]), "=r"(R_Q[0][i][1]), "=r"(R_Q[0][i][2]), "=r"(R_Q[0][i][3]) 
             : "r"(lane_smem_Q_ptr));
       }
 
 #pragma unroll
-      for (int j = 0; j < kWarpTileSeqLenK; ++j) { // 4
+      for (int j = 0; j < kWarpTileSeqLenK; ++j) {
         int warp_smem_K_Bc =
             warp_KV * (kMmaAtomN * kWarpTileSeqLenK) + j * kMmaAtomN;
         int lane_smem_K_Bc = warp_smem_K_Bc + lane_id % 8;
         int lane_smem_K_d = tile_K_d * kMmaAtomK + ((lane_id / 8) % 2) * 8;
         uint32_t lane_smem_K_ptr =
-            (smem_K_base_ptr + (lane_smem_K_Bc * kHeadDim + lane_smem_K_d) * sizeof(half));
+            (smem_K_base_ptr +
+             (kPrefetchKg2sSmemId * K_tile_size +
+              lane_smem_K_Bc * kHeadDim + lane_smem_K_d) *
+                 sizeof(half));
         asm volatile("ldmatrix.sync.aligned.x2.m8n8.shared.b16 {%0, %1}, [%2];\n" 
                    : "=r"(R_K[j][0]), "=r"(R_K[j][1]) 
                    : "r"(lane_smem_K_ptr));
       }
 
+      static_assert(kWarpTileSeqLenQ == 1);
       {
 #pragma unroll
-        for (int j = 0; j < kWarpTileSeqLenK; ++j) { // 4
+        for (int j = 0; j < kWarpTileSeqLenK; ++j) {
           asm volatile( 
               "mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {%0, %1}, {%2, %3, " 
               "%4, %5}, {%6, %7}, {%8, %9};\n" 
               : "=r"(R_S[0][j][0]), "=r"(R_S[0][j][1]) 
-              : "r"(R_Q[0][0]), "r"(R_Q[0][1]), "r"(R_Q[0][2]), "r"(R_Q[0][3]), "r"(R_K[j][0]), "r"(R_K[j][1]), "r"(R_S[0][j][0]), 
+              : "r"(R_Q[0][0][0]), "r"(R_Q[0][0][1]), "r"(R_Q[0][0][2]), "r"(R_Q[0][0][3]), "r"(R_K[j][0]), "r"(R_K[j][1]), "r"(R_S[0][j][0]), 
                 "r"(R_S[0][j][1]));
         }
       }
@@ -263,7 +252,10 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
       int load_gmem_K_addr =
           (K_gmem_offset + load_gmem_K_Bc * kHeadDim + load_gmem_K_d);
       uint32_t load_smem_K_ptr =
-          (smem_K_base_ptr + (load_smem_K_Bc * kHeadDim + load_smem_K_d) * sizeof(half));
+          (smem_K_base_ptr +
+           (kPrefetchKg2sSmemId * K_tile_size +
+            load_smem_K_Bc * kHeadDim + load_smem_K_d) *
+               sizeof(half));
 #pragma unroll
       for (int i = 0; i < (kHeadDim / (kNumThreads / Bc)); i += 8) {
         asm volatile( 
@@ -401,7 +393,10 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
         int lane_smem_V_Bc = tile_V_Bc * kMmaAtomK + lane_id % 16;
         int lane_smem_V_d = warp_smem_V_d;
         uint32_t lane_smem_V_ptr =
-            (smem_V_base_ptr + (V_tile_size + lane_smem_V_Bc * kHeadDim + lane_smem_V_d) * sizeof(half));
+            (smem_V_base_ptr +
+             (kPrefetchVg2sSmemId * V_tile_size +
+              lane_smem_V_Bc * kHeadDim + lane_smem_V_d) *
+                 sizeof(half));
         asm volatile( 
             "ldmatrix.sync.aligned.x2.trans.m8n8.shared.b16 {%0, %1}, [%2];\n" 
             : "=r"(R_V[j][0]), "=r"(R_V[j][1]) 

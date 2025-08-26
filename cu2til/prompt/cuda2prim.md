@@ -114,35 +114,36 @@ RegisterPtr<uint32_t> reg_data = register_array;
 **Critical Distinction - Memory Pointer Types vs SmemAddr:**
 ```cpp
 // ❌ WRONG - Don't use SmemAddr for regular memory access
-SmemAddr bad_addr = some_array;  // NO! SmemAddr is for copy addresses only
+SmemAddr bad_addr = some_array;  // NO! SmemAddr is for PTX instructions only
 
 // ✅ CORRECT - Use semantic pointer types for memory access  
-SharedPtr<fp16> good_shared_ptr = shared_array;       // Shared memory access
-GlobalPtr<fp32> good_global_ptr = global_array;       // Global memory access
-SmemAddr copy_addr = generic_to_shared_addr(shared_array); // Copy instruction address ONLY
+SharedPtr<fp16> good_shared_ptr = shared_array;       // Regular shared memory access
+GlobalPtr<fp32> good_global_ptr = global_array;       // Global memory parameters
+SmemAddr ptx_addr = generic_to_shared_addr(shared_array); // For PTX instructions (cp.async, ldmatrix)
 ```
 
 **Memory Access Pattern:**
-1. **Use `SharedPtr<T>` / `GlobalPtr<T>`** → ALL memory operations, array indexing, pointer arithmetic
-2. **Use `SmemAddr`** → ONLY shared memory addresses for PTX instructions (ldmatrix, cp.async) - direct __cvta_generic_to_shared results or computed from them
-3. **Never mix** → Don't use SmemAddr for normal C++ pointer operations
+1. **Use `SharedPtr<T>` / `GlobalPtr<T>`** → Regular C++ operations, array indexing, pointer arithmetic
+2. **Use `SmemAddr`** → PTX instructions requiring shared memory addresses (cp.async, ldmatrix, stmatrix)
+3. **Convert at call site** → Use `generic_to_shared_addr()` when calling warp copy functions
 
-**Simple Decision Rule:**
-**Will this address be used in PTX instruction requiring shared memory address?** → Use `SmemAddr`. **Everything else?** → Use `SharedPtr<T>` / `GlobalPtr<T>`
+**Simplified Decision Rule:**
+**Will this address be used in PTX instruction (cp.async, ldmatrix, stmatrix)?** → Use `SmemAddr`. **Everything else?** → Use `SharedPtr<T>` / `GlobalPtr<T>`
 
-**PTX Instruction Address Examples:**
+**Memory Address Usage Examples:**
 ```cpp
-// ✅ CORRECT - Direct __cvta_generic_to_shared result
+// ✅ CORRECT - SharedPtr for regular operations
+SharedPtr<fp16> s_a = shared_ptr_cast<fp16>(smem);
+SharedPtr<fp16> lane_ptr = s_a + (m * stride + k);  // Pointer arithmetic
+
+// ✅ CORRECT - SmemAddr for async copy instructions
 SmemAddr smem_base_addr = generic_to_shared_addr(s_a);
+SmemAddr load_addr = smem_base_addr + (m * stride + k) * sizeof(fp16);
+warp_copy_async<fp16, 128, CopyTask::G2S>(&A[addr], load_addr);
 
-// ✅ CORRECT - Computed address for PTX instruction  
-SmemAddr load_addr = (smem_base_addr + 
-    (k * stage_offset + m * (BK + A_PAD) + k_offset) * sizeof(fp16));
-thread_copy_async<fp16, 128, CopyTask::G2S>(&A[addr], load_addr);
-
-// ✅ CORRECT - SharedPtr for all other operations
-SharedPtr<fp16> lane_ptr = s_a + (stage * stage_offset + m * stride + k);
-warp_copy<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(lane_ptr, reg0, reg1, reg2, reg3);
+// ✅ CORRECT - SmemAddr for sync warp copy operations
+SmemAddr matrix_addr = generic_to_shared_addr(lane_ptr);
+warp_copy_sync<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(matrix_addr, reg0, reg1, reg2, reg3);
 ```
 
 #### **Predefined Data Types**
@@ -217,7 +218,42 @@ mem_fill(var_name, init_value);
 
 ### 4. Memory Copy Operations
 
-**Thread-Level Copy:**
+**Memory Copy Operation Hierarchy:**
+
+The DSL provides a clear three-tier hierarchy for memory operations, each optimized for different use cases:
+
+1. **Thread-Level Operations (`thread_copy_sync`)**: 
+   - **Purpose**: Simple, direct memory transfers within a single thread
+   - **Use Cases**: Basic data movement, element-wise operations
+   - **Memory Spaces**: All combinations (G2S, S2G, G2R, R2G, S2R, R2S)
+   - **Synchronization**: Immediate, thread-local
+
+2. **Warp-Level Async Operations (`warp_copy_async`)**: 
+   - **Purpose**: High-throughput memory pipeline using CP.ASYNC hardware
+   - **Use Cases**: Global → Shared memory bulk transfers ONLY
+   - **Memory Spaces**: G2S only (CP.ASYNC hardware limitation)
+   - **Address Requirements**: `SmemAddr` for shared memory destination
+   - **Synchronization**: Asynchronous with explicit commit/wait groups
+   - **Hardware**: Direct CP.ASYNC PTX instructions
+   - **Note**: For Shared → Global, use `thread_copy_sync` instead
+
+3. **Warp-Level Sync Operations (`warp_copy_sync`)**: 
+   - **Purpose**: Matrix fragment operations using LDMATRIX/STMATRIX hardware
+   - **Use Cases**: Loading matrix tiles for tensor core MMA operations  
+   - **Memory Spaces**: S2R, R2S (optimized for matrix fragments)
+   - **Address Requirements**: Requires `SmemAddr` for shared memory access
+   - **Synchronization**: Warp-synchronous execution
+   - **Hardware**: Direct LDMATRIX/STMATRIX PTX instructions
+
+**API Design Principles:**
+- **Semantic Clarity**: Function names clearly indicate operation level and synchronization model
+- **Performance Optimization**: Each tier targets specific hardware acceleration features
+- **Type Safety**: Template parameters ensure compile-time correctness
+- **Memory Space Awareness**: Clear distinction between pointer types and address spaces
+
+---
+
+**Thread-Level Synchronous Copy:**
 Use clean template-based API with all parameters as template arguments:
 
 ```cpp
@@ -227,9 +263,9 @@ Use clean template-based API with all parameters as template arguments:
 (reinterpret_cast<half2 *>(&dst)[0]) = (reinterpret_cast<half2 *>(&src)[0]);
 
 // TO:
-thread_copy<dtype, 128, CopyTask::G2S>(&src, &dst);
-thread_copy<dtype, 64,  CopyTask::S2R>(&src, &dst); 
-thread_copy<dtype, 32,  CopyTask::R2G>(&src, &dst);
+thread_copy_sync<dtype, 128, CopyTask::G2S>(&src, &dst);
+thread_copy_sync<dtype, 64,  CopyTask::S2R>(&src, &dst); 
+thread_copy_sync<dtype, 32,  CopyTask::R2G>(&src, &dst);
 ```
 
 **CopyTask enum values:**
@@ -262,30 +298,39 @@ warp_copy<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(&s_a[...], RA[0], RA[1], 
 //        ^^^^^ Use fp16 (data semantics), not uint32_t (storage format)
 ```
 
-**Async Copy Operations:**
-Use clean template-based API with all parameters as template arguments:
+### 5. Warp-Level Async Copy Operations
+
+**CP.ASYNC Instructions (Global → Shared Memory ONLY):**
+CP.ASYNC hardware only supports Global → Shared direction:
 
 ```cpp
 // FROM:
 asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" ::"r"(dst_ptr), "l"(&src[addr]), "n"(16));
 
-// TO:
-thread_copy_async<fp16, 128, CopyTask::G2S>(&src[addr], dst_ptr);
+// TO:  
+warp_copy_async<fp16, 128, CopyTask::G2S>(&src[addr], smem_addr);
 ```
 
-The `thread_copy_async` template API:
+The `warp_copy_async` template API:
 - `T`: Data type being copied (fp16, fp32, etc.)  
 - `BitWidth`: Total bits to copy (128 bits = 16 bytes)
-- `CopyTask`: Copy task enum (CopyTask::G2S, CopyTask::S2G, CopyTask::G2R, CopyTask::R2G, CopyTask::S2R, CopyTask::R2S)
-- Arguments: source pointer, destination pointer
+- `CopyTask`: Only `CopyTask::G2S` supported (hardware limitation)
+- **Format**: `warp_copy_async<T, BitWidth, CopyTask::G2S>(global_ptr, smem_addr)`
+- **PTX Constraints**: `[shared_addr]` uses `"r"` (32-bit), `[global_addr]` uses `"l"` (64-bit)
 
-**Async Copy Control:**
+**For Shared → Global transfers:**
+```cpp
+// Use thread_copy_sync instead of warp_copy_async
+thread_copy_sync<fp16, 128, CopyTask::S2G>(smem_ptr, global_ptr);
+```
+
+**Warp-Level Async Copy Control:**
 ```cpp
 // FROM:
 asm volatile("cp.async.commit_group;\n" ::);
 
 // TO:
-thread_copy_async_commit_group();
+warp_copy_async_commit_group();
 ```
 
 ```cpp
@@ -293,7 +338,7 @@ thread_copy_async_commit_group();
 asm volatile("cp.async.wait_group %0;\n" ::"n"(n));
 
 // TO:
-thread_copy_async_wait_group<N>();  // Template version for compile-time constants
+warp_copy_async_wait_group<N>();  // Template version for compile-time constants
 ```
 
 **Shared Memory Pointer Conversion:**
@@ -307,8 +352,10 @@ uint32_t smem_ptr = __cvta_generic_to_shared(shared_array);
 PtrInt smem_ptr = generic_to_shared_ptr(shared_array);
 ```
 
-**Warp-Level Copy (ldmatrix/stmatrix operations):**
-Use clean template-based API with CopyTask and layout as template parameters:
+### 6. Warp-Level Synchronous Copy Operations
+
+**Matrix Fragment Operations (ldmatrix/stmatrix):**
+Use clean template-based API with SmemAddr for shared memory access:
 
 ```cpp
 // FROM: ldmatrix (Shared to Register)
@@ -317,7 +364,8 @@ asm volatile("ldmatrix.sync.aligned.x4.m8n8.shared.b16 {%0, %1, %2, %3}, [%4];\n
     : "=r"(dst0), "=r"(dst1), "=r"(dst2), "=r"(dst3) : "r"(ptr));
 
 // TO:
-warp_copy<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(&src, dst0, dst1, dst2, dst3);
+SmemAddr src_addr = generic_to_shared_addr(&src);
+warp_copy_sync<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(src_addr, dst0, dst1, dst2, dst3);
 ```
 
 ```cpp
@@ -327,7 +375,8 @@ asm volatile("ldmatrix.sync.aligned.x2.trans.m8n8.shared.b16 {%0, %1}, [%2];\n"
     : "=r"(dst0), "=r"(dst1) : "r"(ptr));
 
 // TO:
-warp_copy<fp16, 64, CopyTask::S2R, Layout::COL_MAJOR>(&src, dst0, dst1);
+SmemAddr src_addr = generic_to_shared_addr(&src);
+warp_copy_sync<fp16, 64, CopyTask::S2R, Layout::COL_MAJOR>(src_addr, dst0, dst1);
 ```
 
 ```cpp
@@ -337,45 +386,17 @@ asm volatile("stmatrix.sync.aligned.x4.m8n8.shared.b16 [%0], {%1, %2, %3, %4};\n
     ::"r"(ptr), "r"(src0), "r"(src1), "r"(src2), "r"(src3));
 
 // TO:
-warp_copy<fp16, 128, CopyTask::R2S, Layout::ROW_MAJOR>(&dst, src0, src1, src2, src3);
+SmemAddr dst_addr = generic_to_shared_addr(&dst);
+warp_copy_sync<fp16, 128, CopyTask::R2S, Layout::ROW_MAJOR>(dst_addr, src0, src1, src2, src3);
 ```
 
 **Layout enum values:**
 - `Layout::ROW_MAJOR` - Row-major (non-transposed)
 - `Layout::COL_MAJOR` - Column-major (transposed)
 
-### 5. Async Copy Operations
 
-**CP.ASYNC Instructions:**
-Use clean template-based API with all parameters as template arguments:
 
-```cpp
-// FROM:
-asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" 
-    ::"r"(dst_ptr), "l"(&src[addr]), "n"(16));
-
-// TO:  
-thread_copy_async<fp16, 128, CopyTask::G2S>(&src[addr], dst_ptr);
-```
-
-**Async Copy Control:**
-```cpp
-// FROM:
-asm volatile("cp.async.commit_group;\n" ::);
-
-// TO:
-thread_copy_async_commit_group();
-```
-
-```cpp
-// FROM:
-asm volatile("cp.async.wait_group %0;\n" ::"n"(N));
-
-// TO:
-thread_copy_async_wait_group<N>();  // Template version for compile-time constants
-```
-
-### 6. MMA Operations
+### 7. MMA Operations
 Use clean template-based API with all parameters as template arguments:
 
 ```cpp
@@ -393,7 +414,7 @@ mma<MmaShape::M16N8K16, MmaLayout::TN, fp16, fp16>(rd0, rd1, ra0, ra1, ra2, ra3,
 - `MmaLayout::TN` - Transposed A, Non-transposed B (row.col)
 - `MmaLayout::NT` - Non-transposed A, Transposed B (col.row)
 
-### 7. Synchronization
+### 8. Synchronization
 ```cpp
 // FROM:
 __syncthreads();
@@ -402,7 +423,7 @@ __syncthreads();
 block_sync();
 ```
 
-### 8. Warp Shuffle Operations
+### 9. Warp Shuffle Operations
 Replace raw shuffle instructions with semantic primitives:
 
 **🚨 CRITICAL: Sub-Warp vs Full-Warp Operations**
@@ -546,7 +567,7 @@ fp32 prefix_sum = warp_shuffle_prefix_sum(value);
 fp32 rotated = warp_shuffle_rotate(value, 4);
 ```
 
-### 9. Control Flow - Loop Operations
+### 10. Control Flow - Loop Operations
 Replace ALL for loops with DSL loop primitives for consistency:
 
 **Unrolled Loops:**
@@ -597,7 +618,7 @@ serial_range_for(i, grid_stride_start, N, grid_stride_step) {
 - Support dynamic start/end/step values (runtime computed)
 - Use `IndexInt` for loop variables consistently
 
-### 10. Architecture Constants Mapping
+### 11. Architecture Constants Mapping
 **MANDATORY**: Remove ALL local architecture constant definitions and use predefined DSL macros:
 
 ```cpp
@@ -640,7 +661,58 @@ Define MMA register constants in your specific kernel as needed.
 3. **INCLUDE**: Add `#include "dsl_template.cuh"` at the top
 4. **BYTES**: All memory constants are in bytes (not KB)
 
-### 11. Utility Functions
+### 12. Architecture-Aware Development
+
+The DSL automatically detects GPU architecture and enables appropriate features:
+
+**Architecture Detection Macros:**
+```cpp
+#if __CUDA_ARCH__ >= 700   // SM70+ Volta, Turing, Ampere, Ada, Hopper
+    // thread_copy_sync always available
+#endif
+
+#if __CUDA_ARCH__ >= 800   // SM80+ Ampere, Ada, Hopper  
+    // warp_copy_async (CP.ASYNC) available
+    // warp_copy_sync (LDMATRIX S2R) available
+#endif
+
+#if __CUDA_ARCH__ >= 900   // SM90+ Hopper
+    // warp_copy_sync (STMATRIX R2S) available  
+#endif
+```
+
+**Conditional Compilation Patterns:**
+```cpp
+// Optimal code with architecture fallbacks
+#if __CUDA_ARCH__ >= 800
+    // Use high-performance CP.ASYNC for bulk transfers
+    warp_copy_async<fp16, 128, CopyTask::G2S>(&global[addr], smem_addr);
+    warp_copy_async_commit_group();
+    warp_copy_async_wait_group<0>();
+#else
+    // Fallback to thread-level synchronous copy
+    thread_copy_sync<fp16, 128, CopyTask::G2S>(&global[addr], &shared[idx]);
+#endif
+
+// Matrix fragment loading with architecture detection
+#if __CUDA_ARCH__ >= 800
+    // Use LDMATRIX for optimal tensor core loading
+    warp_copy_sync<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(smem_addr, reg0, reg1, reg2, reg3);
+#else
+    // Fallback to thread-level copies  
+    thread_copy_sync<fp16, 32, CopyTask::S2R>(&shared[idx], &reg0);
+    thread_copy_sync<fp16, 32, CopyTask::S2R>(&shared[idx+1], &reg1);
+    thread_copy_sync<fp16, 32, CopyTask::S2R>(&shared[idx+2], &reg2);
+    thread_copy_sync<fp16, 32, CopyTask::S2R>(&shared[idx+3], &reg3);
+#endif
+```
+
+**Default Architecture Target:**
+- **Primary**: SM80+ (Ampere A100, Ada RTX40xx)
+- **Secondary**: SM89+ (Ada L40S, RTX40xx Super)
+- **Modern**: SM90+ (Hopper H100)
+
+### 13. Utility Functions
 ```cpp
 // FROM:
 __device__ __host__ inline int div_ceil(int a, int b) { return (a + b - 1) / b; }
@@ -650,7 +722,7 @@ __device__ __host__ inline int div_ceil(int a, int b) { return (a + b - 1) / b; 
 // Usage: ceil_div(a, b)  // macro provided in template
 ```
 
-### 12. Preserve Original Logic Structure
+### 14. Preserve Original Logic Structure
 - Keep the same kernel launch configuration
 - Maintain identical thread indexing logic
 - Preserve all boundary checking and conditional logic
@@ -689,7 +761,7 @@ __global__ void gemm_kernel(GlobalPtr<fp32> A, GlobalPtr<fp32> B, GlobalPtr<fp32
   // Use typed shared memory pointers - semantic clarity
   SharedPtr<fp16> s_a = shared_ptr_cast<fp16>(smem);                    // Matrix A tile
   SharedPtr<fp16> s_b = shared_ptr_cast<fp16>(smem + TILE_M * TILE_K); // Matrix B tile
-  SmemAddr smem_addr = generic_to_shared_addr(smem);                       // For copy instructions ONLY
+  SmemAddr smem_addr = generic_to_shared_addr(smem);                   // For async copy instructions ONLY
   
   // kernel logic...
 }
@@ -736,13 +808,13 @@ __global__ void kernel(GlobalPtr<fp32> A, ShapeInt M, ShapeInt N) {
   
   IndexInt tid = threadIdx.x;
   IndexInt warp_id = tid / WARP_SIZE;  // Use predefined WARP_SIZE
-  SmemAddr smem_addr = generic_to_shared_addr(s_a);      // For copy instructions
-  SharedPtr<fp16> s_ptr = s_a;                       // Typed shared memory access
+  SmemAddr smem_addr = generic_to_shared_addr(s_a);     // For async copy instructions
+  SharedPtr<fp16> s_ptr = s_a;                          // Typed shared memory access
   
   serial_range_for(i, 0, N, 1) {
-    thread_copy_async<fp16, 128, CopyTask::G2S>(&A[addr], dst_ptr);
-    thread_copy_async_commit_group();
-    thread_copy_async_wait_group<0>();
+    warp_copy_async<fp16, 128, CopyTask::G2S>(&A[addr], dst_ptr);
+    warp_copy_async_commit_group();
+    warp_copy_async_wait_group<0>();
     block_sync();
   }
 }
@@ -768,26 +840,36 @@ After conversion, verify:
 
 ## Common Patterns to Watch For
 
-1. **Matrix Fragment Loading**: Always becomes `warp_copy` with appropriate layout
-2. **Accumulator Initialization**: Use `mem_fill` for zero initialization  
-3. **Shared Memory Banking**: Preserve original indexing patterns
-4. **Thread Mapping**: Keep original thread-to-data mapping logic intact
-5. **Boundary Checks**: Maintain all safety checks and early returns
-6. **Loop Operations**: ALL for loops must become `serial_range_for` (not just unrolled ones)
-7. **Complex Loop Bounds**: Pre-compute dynamic start/end values when needed
-8. **Pointer Type Selection**: Use SmemAddr only for copy instruction addresses, SharedPtr/GlobalPtr for everything else
-9. **Warp Shuffle Patterns**: Replace raw __shfl_sync with semantic primitives (broadcast, reduce, redistribute, etc.)
+1. **Matrix Fragment Loading**: Always becomes `warp_copy_sync(smem_addr, regs...)` for ldmatrix/stmatrix operations
+2. **Async Global→Shared Transfers**: Use `warp_copy_async(global_ptr, smem_addr)` for cp.async operations with commit/wait patterns
+3. **Accumulator Initialization**: Use `mem_fill` for zero initialization  
+4. **Shared Memory Banking**: Preserve original indexing patterns
+5. **Thread Mapping**: Keep original thread-to-data mapping logic intact
+6. **Boundary Checks**: Maintain all safety checks and early returns
+7. **Loop Operations**: ALL for loops must become `serial_range_for` (not just unrolled ones)
+8. **Complex Loop Bounds**: Pre-compute dynamic start/end values when needed
+9. **Pointer Type Selection**: Use SmemAddr for PTX instruction addresses (cp.async, ldmatrix), SharedPtr/GlobalPtr for C++ operations
+10. **Warp Shuffle Patterns**: Replace raw __shfl_sync with semantic primitives (broadcast, reduce, redistribute, etc.)
    - **🚨 CRITICAL**: Always check for width parameters in original shuffle calls!
    - **Flash Attention**: Typically uses 4-thread sub-warps → use `_width` variants
    - **GEMM**: Typically uses full 32-thread warps → use standard variants
-10. **MMA Result Processing**: Use `warp_shuffle_spread_x4` or `warp_shuffle_spread_dual_x4` for typical redistribution patterns
+11. **MMA Result Processing**: Use `warp_shuffle_spread_x4` or `warp_shuffle_spread_dual_x4` for typical redistribution patterns
    - **With width param**: `warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id, 4)`  
    - **Full warp**: `warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id)`
-11. **Multi-Type Reductions**: Use type-specific reductions with correct width
+12. **Multi-Type Reductions**: Use type-specific reductions with correct width
    - **Sub-warp**: `warp_shuffle_sum_width<fp32>(value, 4)`, `warp_shuffle_max_width<fp32>(value, 4)`
    - **Full warp**: `warp_shuffle_sum<fp16>(value)`, `warp_shuffle_sum_f16_to_f32(value)`
-12. **Block-Level Reductions**: Replace manual shared memory patterns with `block_reduce_sum<T, NUM_THREADS>`
-13. **Struct Data Shuffle**: Use `pair_struct<T1,T2>` and `warp_shuffle_struct_xor` for multi-field structs
+13. **Block-Level Reductions**: Replace manual shared memory patterns with `block_reduce_sum<T, NUM_THREADS>`
+14. **Struct Data Shuffle**: Use `pair_struct<T1,T2>` and `warp_shuffle_struct_xor` for multi-field structs
+15. **Copy Operation Hierarchy**: 
+   - **Thread-level**: `thread_copy_sync(src_ptr, dst_ptr)` - all directions, all architectures
+   - **Warp-level async**: `warp_copy_async(global_ptr, smem_addr)` - G2S only, SM80+
+   - **Warp-level sync**: `warp_copy_sync(smem_addr, regs...)` - S2R (SM80+), R2S (SM90+)
+
+16. **Architecture-Specific Capabilities**:
+   - **SM70-79 (Volta/Turing)**: Only `thread_copy_sync` available
+   - **SM80-89 (Ampere/Ada)**: Add `warp_copy_async` (CP.ASYNC), `warp_copy_sync` (LDMATRIX)
+   - **SM90+ (Hopper)**: Add `warp_copy_sync` (STMATRIX) support
 
 ### Specific Loop Conversion Examples
 
@@ -821,23 +903,24 @@ serial_range_for(tid, tid_start, total_elements, tid_step) {
 
 ### Specific Pointer Type Selection Examples
 
-**Shared Memory Address for Copy Instructions:**
+**SmemAddr for Both Async and Sync PTX Instructions:**
 ```cpp
-// ✅ CORRECT - SmemAddr for copy instructions  
+// ✅ CORRECT - SmemAddr for async copy instructions  
 SmemAddr load_addr = generic_to_shared_addr(&s_a[stage][m][k]);
-thread_copy_async<fp16, 128, CopyTask::G2S>(&A[addr], load_addr);
+warp_copy_async<fp16, 128, CopyTask::G2S>(&A[addr], load_addr);
 ```
 
-**All Other Operations Use Typed Pointers:**
+**SmemAddr for Matrix Fragment Operations:**
 ```cpp  
-// ✅ CORRECT - SharedPtr for all other operations
-SharedPtr<fp16> lane_ptr = s_a + (stage * stage_offset + m * stride + k);
-warp_copy<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(lane_ptr, reg0, reg1, reg2, reg3);
+// ✅ CORRECT - SmemAddr for warp sync copy operations
+SmemAddr lane_addr = generic_to_shared_addr(&s_a[m][k]);
+warp_copy_sync<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(lane_addr, reg0, reg1, reg2, reg3);
 ```
 
 **Simple Recognition Pattern:**
-- **For PTX instructions (ldmatrix, cp.async), need shared memory address?** → Use `SmemAddr`
-- **Everything else?** → Use `SharedPtr<T>` / `GlobalPtr<T>`
+- **For PTX instructions (cp.async, ldmatrix, stmatrix)?** → Use `SmemAddr`
+- **For regular C++ operations (indexing, arithmetic)?** → Use `SharedPtr<T>` / `GlobalPtr<T>`
+- **At call site conversion:** `SmemAddr addr = generic_to_shared_addr(shared_ptr)`
 
 ### Specific Warp Shuffle Pattern Examples
 
@@ -990,45 +1073,104 @@ SharedPtr<fp16> ptr3 = shared_ptr_cast<fp16>(dynamic_smem); // Clearly typed sha
 3. **Clear purpose** - SmemAddr is only for copy instructions, everything else uses typed pointers
 4. **No complex decisions** - No need to distinguish byte vs element offsets
 
-## ⚠️ CRITICAL BUG FIXES (v2.0)
+## 🎆 API DESIGN IMPROVEMENTS (v3.0)
 
-The original DSL template had **SERIOUS BUGS** in shuffle operations that caused incorrect results in Flash Attention and similar kernels. These have been fixed in v2.0:
+The DSL has been significantly enhanced with a cleaner, more semantic API design that eliminates previous inconsistencies:
 
-### 🚨 Fixed Issues:
+### 🚀 Major Improvements:
 
-1. **Missing Width Parameters in Shuffle Spread**: 
+1. **Hierarchical Copy Operations**: 
+   - **Enhancement**: Clear separation between thread-level, warp-async, and warp-sync operations
+   - **Benefits**: Semantic clarity, performance optimization targeting, better code organization
+   - **New API**: `thread_copy_sync`, `warp_copy_async`, `warp_copy_sync` with distinct use cases
+
+2. **Eliminated API Ambiguity**:
+   - **Previous Issue**: Confusing mix of `thread_copy_async` and `warp_copy` nomenclature
+   - **Solution**: Consistent naming that reflects operation level and synchronization model
+   - **Result**: Code that clearly expresses programmer intent and hardware utilization
+
+3. **Memory Address Type Safety**:
+   - **Enhancement**: Refined SmemAddr usage to only async copy operations
+   - **Benefits**: Clearer separation of concerns, reduced pointer type confusion
+   - **Rule**: SmemAddr for cp.async only, SharedPtr/GlobalPtr for everything else
+
+4. **Fixed Shuffle Operation Bugs**:
    - **Bug**: `warp_shuffle_spread_x4()` and `warp_shuffle_spread_dual_x4()` lacked width parameters
-   - **Fix**: Added optional `width` parameter with default=32, plus explicit `_width` variants
-
-2. **Wrong Reduction Scope**:
    - **Bug**: All `warp_shuffle_*` reductions operated on 32 threads instead of sub-warps
-   - **Fix**: Added `warp_shuffle_*_width()` functions for sub-warp reductions
-
-3. **Parameter Semantic Confusion**:
-   - **Bug**: In calls like `warp_shuffle_max(value, 4)`, the `4` was treated as mask instead of width
-   - **Fix**: Clear API separation: `warp_shuffle_max(value)` vs `warp_shuffle_max_width(value, 4)`
+   - **Bug**: Parameter semantic confusion between mask and width
+   - **Fix**: Complete API with explicit width variants and correct default behaviors
 
 ### 🔧 Migration Guide:
 
-If you used the old buggy DSL:
+Key API changes for the new hierarchical design:
 ```cpp
-// OLD (BUGGY):
-warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id);           // Missing width
-fp32 result = warp_shuffle_sum(value, 4);                               // Wrong parameter semantics
+// OLD API:
+thread_copy_async<fp16, 128, CopyTask::G2S>(&src, dst_ptr);            // Confusing level
+warp_copy<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(&src, ...);     // Ambiguous sync/async
+warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id);          // Missing width
 
-// NEW (FIXED):
+// NEW API:
+warp_copy_async<fp16, 128, CopyTask::G2S>(&src, dst_ptr);              // Clear async warp-level
+warp_copy_sync<fp16, 128, CopyTask::S2R, Layout::ROW_MAJOR>(&src, ..); // Clear sync warp-level
 warp_shuffle_spread_dual_x4(src0, src1, dst0, dst1, lane_id, 4);       // Explicit width=4
-fp32 result = warp_shuffle_sum_width(value, 4);                         // Correct width parameter
 ```
 
 ### 📋 Validation Checklist:
 
 For every converted kernel, verify:
+- [ ] Memory operations use appropriate hierarchy level (thread/warp-async/warp-sync)
 - [ ] All shuffle operations have correct width parameters
 - [ ] Sub-warp reductions use `_width` variants  
 - [ ] Flash Attention uses 4-thread sub-warps
 - [ ] GEMM uses full 32-thread warps
-- [ ] No semantic mismatches between mask and width parameters
+- [ ] SmemAddr only used for async copy operations
+- [ ] Consistent use of semantic pointer types throughout kernel
+
+---
+
+## 💡 New API Design Summary
+
+### Memory Copy Operations - Three Clear Tiers:
+
+1. **`thread_copy_sync<T, BitWidth, CopyTask>(src, dst)`**
+   - **When**: Simple memory transfers within single thread
+   - **Examples**: Basic data movement, element copies
+   - **All memory spaces supported**
+
+2. **`warp_copy_async<T, BitWidth, CopyTask::G2S>(global_ptr, smem_addr)`**
+   - **When**: High-throughput Global → Shared pipeline (cp.async)
+   - **Examples**: Loading matrix tiles from global to shared memory
+   - **Requires**: `warp_copy_async_commit_group()` and `warp_copy_async_wait_group<N>()`
+   - **Address Type**: Global pointer + `SmemAddr` for destination
+   - **Limitation**: Only G2S direction supported by CP.ASYNC hardware
+
+3. **`warp_copy_sync<T, BitWidth, CopyTask, Layout>(smem_addr, regs...)`**
+   - **When**: Matrix fragment operations (ldmatrix/stmatrix)
+   - **Examples**: Loading matrix tiles for MMA, tensor core operations
+   - **Address Type**: Use `SmemAddr` for shared memory access
+   - **Formats**: `warp_copy_sync<T, BitWidth, CopyTask::S2R, Layout>(smem_addr, regs...)`
+
+### Key Decision Points:
+
+🤔 **"What kind of memory operation am I doing?"**
+- **Simple copy (any direction)** → `thread_copy_sync`
+- **Bulk async Global → Shared** → `warp_copy_async` 
+- **Matrix fragment (ldmatrix/stmatrix)** → `warp_copy_sync`
+
+🤔 **"What address type should I use?"**
+- **PTX instructions (cp.async, ldmatrix, stmatrix)** → `SmemAddr` 
+- **Regular C++ operations (indexing, arithmetic)** → `SharedPtr<T>` / `GlobalPtr<T>`
+
+🤔 **"Warp shuffle width parameter?"**
+- **Flash Attention** → Usually 4-thread sub-warps
+- **GEMM** → Usually full 32-thread warps
+- **Check original** → Look for width parameter in `__shfl_*` calls
+
+### Benefits of New Design:
+- **💯 Performance**: Each operation targets optimal hardware path
+- **📈 Clarity**: Function names clearly express intent and synchronization
+- **🔒 Safety**: Type system prevents common address/pointer mistakes
+- **🚀 Maintainability**: Consistent API reduces cognitive load
 
 ---
 

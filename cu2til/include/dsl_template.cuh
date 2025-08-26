@@ -262,75 +262,84 @@ enum class Layout {
     COL_MAJOR = 't'
 };
 
-// Template-based copy dispatcher for thread-level operations
-template<typename T, size_t BitWidth, CopyTask Task, bool IsAsync = false>
-struct copy_dispatcher {
+// Thread-level synchronous copy dispatcher - simple vectorized loads/stores
+template<typename T, size_t BitWidth, CopyTask Task>
+struct thread_copy_sync_dispatcher {
     template<typename SrcPtr, typename DstPtr>
     __device__ static void execute(SrcPtr src_ptr, DstPtr dst_ptr) {
-        constexpr size_t bytes = BitWidth / 8;
-        
-        // Async copy operations (only for G2S and S2G)
-        if constexpr (IsAsync) {
-            if constexpr (Task == CopyTask::G2S) {
-                // Ensure dst_ptr is cast to uint32_t for PTX constraint 'r'
-                uint32_t dst_addr = static_cast<uint32_t>(dst_ptr);
-                asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" 
-                    :: "r"(dst_addr), "l"(src_ptr), "n"(bytes));
-            } else if constexpr (Task == CopyTask::S2G) {
-                // S2G async copy uses same instruction (implementation may vary)
-                uint32_t dst_addr = static_cast<uint32_t>(dst_ptr);
-                asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" 
-                    :: "r"(dst_addr), "l"(src_ptr), "n"(bytes));
-            }
-        } 
-        // Synchronous copy operations
-        else {
-            if constexpr (BitWidth == 128) {
-                (reinterpret_cast<float4 *>(dst_ptr)[0]) = (reinterpret_cast<float4 *>(src_ptr)[0]);
-            } else if constexpr (BitWidth == 64) {
-                (reinterpret_cast<float2 *>(dst_ptr)[0]) = (reinterpret_cast<float2 *>(src_ptr)[0]);
-            } else if constexpr (BitWidth == 32) {
-                (reinterpret_cast<half2 *>(dst_ptr)[0]) = (reinterpret_cast<half2 *>(src_ptr)[0]);
-            }
+        // Thread-level synchronous copies using vectorized loads/stores
+        // Supported on all architectures (SM70+)
+        if constexpr (BitWidth == 128) {
+            (reinterpret_cast<float4 *>(dst_ptr)[0]) = (reinterpret_cast<float4 *>(src_ptr)[0]);
+        } else if constexpr (BitWidth == 64) {
+            (reinterpret_cast<float2 *>(dst_ptr)[0]) = (reinterpret_cast<float2 *>(src_ptr)[0]);
+        } else if constexpr (BitWidth == 32) {
+            (reinterpret_cast<half2 *>(dst_ptr)[0]) = (reinterpret_cast<half2 *>(src_ptr)[0]);
+        } else if constexpr (BitWidth == 16) {
+            (reinterpret_cast<half *>(dst_ptr)[0]) = (reinterpret_cast<half *>(src_ptr)[0]);
+        } else {
+            static_assert(BitWidth == 128 || BitWidth == 64 || BitWidth == 32 || BitWidth == 16, 
+                          "Unsupported BitWidth for thread_copy_sync");
         }
     }
 };
 
-// Thread-level synchronous copy template
+// Thread-level synchronous copy API - supports all memory space combinations
 template<typename T, size_t BitWidth, CopyTask Task, typename SrcPtr, typename DstPtr>
-__device__ inline void thread_copy_template(SrcPtr src_ptr, DstPtr dst_ptr) {
-    copy_dispatcher<T, BitWidth, Task, false>::execute(src_ptr, dst_ptr);
+__device__ inline void thread_copy_sync(SrcPtr src_ptr, DstPtr dst_ptr) {
+    // Supports all CopyTask combinations: G2S, S2G, G2R, R2G, S2R, R2S
+    // Available on all architectures (SM70+)
+    static_assert(Task == CopyTask::G2S || Task == CopyTask::S2G || 
+                  Task == CopyTask::G2R || Task == CopyTask::R2G ||
+                  Task == CopyTask::S2R || Task == CopyTask::R2S,
+                  "thread_copy_sync supports all memory space combinations");
+    thread_copy_sync_dispatcher<T, BitWidth, Task>::execute(src_ptr, dst_ptr);
 }
 
-// Thread-level asynchronous copy template  
-template<typename T, size_t BitWidth, CopyTask Task, typename SrcPtr, typename DstPtr>
-__device__ inline void thread_copy_async_template(SrcPtr src_ptr, DstPtr dst_ptr) {
-    copy_dispatcher<T, BitWidth, Task, true>::execute(src_ptr, dst_ptr);
-}
+// ========================= Warp-Level Async Copy Primitives =========================
 
-// Clean template-based API - all parameters as template arguments
-template<typename T, size_t BitWidth, CopyTask Task, typename SrcPtr, typename DstPtr>
-__device__ inline void thread_copy(SrcPtr src_ptr, DstPtr dst_ptr) {
-    copy_dispatcher<T, BitWidth, Task, false>::execute(src_ptr, dst_ptr);
-}
-
-template<typename T, size_t BitWidth, CopyTask Task, typename SrcPtr, typename DstPtr>
-__device__ inline void thread_copy_async(SrcPtr src_ptr, DstPtr dst_ptr) {
-    if constexpr (Task == CopyTask::G2S || Task == CopyTask::S2G) {
-        copy_dispatcher<T, BitWidth, Task, true>::execute(src_ptr, dst_ptr);
-    } else {
-        // Async copy only supported for G2S and S2G, others fall back to sync
-        copy_dispatcher<T, BitWidth, Task, false>::execute(src_ptr, dst_ptr);
+// CP.ASYNC instruction template dispatcher (SM80+ Ampere/Ada/Hopper)
+template<typename T, size_t BitWidth, CopyTask Task>
+struct warp_copy_async_dispatcher {
+    template<typename SrcPtr, typename DstPtr>
+    __device__ static void execute(SrcPtr src_ptr, DstPtr dst_ptr) {
+        constexpr size_t bytes = BitWidth / 8;
+        
+        static_assert(Task == CopyTask::G2S, 
+                      "CP.ASYNC only supports G2S transfers (Global to Shared)");
+        
+        // Check architecture support
+#if __CUDA_ARCH__ >= 800  // SM80+ (Ampere, Ada, Hopper)
+        // Global to Shared: src is global pointer, dst is SmemAddr
+        SmemAddr dst_addr = static_cast<SmemAddr>(dst_ptr);
+        asm volatile("cp.async.cg.shared.global.L2::128B [%0], [%1], %2;\n" 
+            :: "r"(dst_addr), "l"(src_ptr), "n"(bytes));
+#else
+        // static_assert(false, "CP.ASYNC requires SM80+ (Ampere/Ada/Hopper). Use thread_copy_sync for older architectures.");
+        // 有 static_assert(false, ...) - 这在模板实例化时会无条件失败，即使代码永远不会执行到那个分支。
+        // CP.ASYNC not available, fallback to regular copy
+        thread_copy_sync_dispatcher<T, BitWidth, Task>::execute(src_ptr, dst_ptr);
+#endif
     }
+};
+
+// Warp-level asynchronous copy operations (CP.ASYNC - SM80+)
+template<typename T, size_t BitWidth, CopyTask Task, typename SrcPtr, typename DstPtr>
+__device__ inline void warp_copy_async(SrcPtr src_ptr, DstPtr dst_ptr) {
+    // Only supports CopyTask::G2S (Global to Shared)
+    // Requires SM80+ (Ampere/Ada/Hopper architectures)
+    static_assert(Task == CopyTask::G2S, 
+                  "warp_copy_async only supports G2S transfers (Global to Shared). Use thread_copy_sync for other directions.");
+    warp_copy_async_dispatcher<T, BitWidth, Task>::execute(src_ptr, dst_ptr);
 }
 
-// Async copy control functions
-__device__ inline void thread_copy_async_commit_group() {
+// Warp-level async copy control functions
+__device__ inline void warp_copy_async_commit_group() {
     asm volatile("cp.async.commit_group;\n" ::);
 }
 
 template<int N>
-__device__ inline void thread_copy_async_wait_group() {
+__device__ inline void warp_copy_async_wait_group() {
     asm volatile("cp.async.wait_group %0;\n" ::"n"(N));
 }
 
@@ -419,62 +428,75 @@ __device__ __host__ constexpr auto& get_arg(Args&... args) {
     return get_nth_arg<N, Args...>::get(args...);
 }
 
-// Warp-level copy dispatcher
+// LDMATRIX/STMATRIX instruction template dispatcher
 template<typename T, size_t BitWidth, CopyTask Task, Layout LayoutType>
-struct warp_copy_dispatcher {
-    template<typename SrcPtr, typename... Args>
-    __device__ static void execute(SrcPtr src_ptr, Args&... args) {
+struct warp_sync_copy_dispatcher {
+    template<typename... Args>
+    __device__ static void execute(SmemAddr smem_addr, Args&... args) {
         if constexpr (Task == CopyTask::S2R) {
-            // Shared to Register - ldmatrix instructions
-            SmemAddr s_src_ptr = __cvta_generic_to_shared(src_ptr);
-            
+            // LDMATRIX: Shared to Register (SM80+ Ampere/Ada/Hopper)
+#if __CUDA_ARCH__ >= 800  // SM80+
             if constexpr (LayoutType == Layout::ROW_MAJOR) {
                 if constexpr (BitWidth == 32 && sizeof...(args) == 1) {
-                    LDMATRIX_X1(get_arg<0>(args...), s_src_ptr);
+                    LDMATRIX_X1(get_arg<0>(args...), smem_addr);
                 } else if constexpr (BitWidth == 64 && sizeof...(args) == 2) {
-                    LDMATRIX_X2(get_arg<0>(args...), get_arg<1>(args...), s_src_ptr);
+                    LDMATRIX_X2(get_arg<0>(args...), get_arg<1>(args...), smem_addr);
                 } else if constexpr (BitWidth == 128 && sizeof...(args) == 4) {
-                    LDMATRIX_X4(get_arg<0>(args...), get_arg<1>(args...), get_arg<2>(args...), get_arg<3>(args...), s_src_ptr);
+                    LDMATRIX_X4(get_arg<0>(args...), get_arg<1>(args...), get_arg<2>(args...), get_arg<3>(args...), smem_addr);
                 }
             } else if constexpr (LayoutType == Layout::COL_MAJOR) {
                 if constexpr (BitWidth == 32 && sizeof...(args) == 1) {
-                    LDMATRIX_X1_T(get_arg<0>(args...), s_src_ptr);
+                    LDMATRIX_X1_T(get_arg<0>(args...), smem_addr);
                 } else if constexpr (BitWidth == 64 && sizeof...(args) == 2) {
-                    LDMATRIX_X2_T(get_arg<0>(args...), get_arg<1>(args...), s_src_ptr);
+                    LDMATRIX_X2_T(get_arg<0>(args...), get_arg<1>(args...), smem_addr);
                 } else if constexpr (BitWidth == 128 && sizeof...(args) == 4) {
-                    LDMATRIX_X4_T(get_arg<0>(args...), get_arg<1>(args...), get_arg<2>(args...), get_arg<3>(args...), s_src_ptr);
+                    LDMATRIX_X4_T(get_arg<0>(args...), get_arg<1>(args...), get_arg<2>(args...), get_arg<3>(args...), smem_addr);
                 }
             }
+#else
+            // static_assert(false, "LDMATRIX requires SM80+ (Ampere/Ada/Hopper). Use thread_copy_sync for older architectures.");
+            // LDMATRIX not available, fallback to regular copy
+            // LDMATRIX/STMATRIX fallback not implemented - requires manual register handling
+            // TODO
+#endif
         } else if constexpr (Task == CopyTask::R2S) {
-            // Register to Shared - stmatrix instructions (SM90+)
-            SmemAddr s_dst_ptr = __cvta_generic_to_shared(src_ptr);
-            
+            // STMATRIX: Register to Shared (SM90+ Hopper only)
+#if __CUDA_ARCH__ >= 900  // SM90+ Hopper
             if constexpr (LayoutType == Layout::ROW_MAJOR) {
                 if constexpr (BitWidth == 32 && sizeof...(args) == 1) {
-                    STMATRIX_X1(s_dst_ptr, get_arg<0>(args...));
+                    STMATRIX_X1(smem_addr, get_arg<0>(args...));
                 } else if constexpr (BitWidth == 64 && sizeof...(args) == 2) {
-                    STMATRIX_X2(s_dst_ptr, get_arg<0>(args...), get_arg<1>(args...));
+                    STMATRIX_X2(smem_addr, get_arg<0>(args...), get_arg<1>(args...));
                 } else if constexpr (BitWidth == 128 && sizeof...(args) == 4) {
-                    STMATRIX_X4(s_dst_ptr, get_arg<0>(args...), get_arg<1>(args...), get_arg<2>(args...), get_arg<3>(args...));
+                    STMATRIX_X4(smem_addr, get_arg<0>(args...), get_arg<1>(args...), get_arg<2>(args...), get_arg<3>(args...));
                 }
             } else if constexpr (LayoutType == Layout::COL_MAJOR) {
                 if constexpr (BitWidth == 32 && sizeof...(args) == 1) {
-                    STMATRIX_X1_T(s_dst_ptr, get_arg<0>(args...));
+                    STMATRIX_X1_T(smem_addr, get_arg<0>(args...));
                 } else if constexpr (BitWidth == 64 && sizeof...(args) == 2) {
-                    STMATRIX_X2_T(s_dst_ptr, get_arg<0>(args...), get_arg<1>(args...));
+                    STMATRIX_X2_T(smem_addr, get_arg<0>(args...), get_arg<1>(args...));
                 } else if constexpr (BitWidth == 128 && sizeof...(args) == 4) {
-                    STMATRIX_X4_T(s_dst_ptr, get_arg<0>(args...), get_arg<1>(args...), get_arg<2>(args...), get_arg<3>(args...));
+                    STMATRIX_X4_T(smem_addr, get_arg<0>(args...), get_arg<1>(args...), get_arg<2>(args...), get_arg<3>(args...));
                 }
             }
+#else
+            // static_assert(false, "STMATRIX requires SM90+ (Hopper). Use thread_copy_sync for Ampere/Ada architectures.");
+            // STMATRIX not available, fallback to regular copy
+            // LDMATRIX/STMATRIX fallback not implemented - requires manual register handling
+            // TODO
+#endif
         }
-        // Note: Other CopyTask values (G2R, etc.) would need different instruction implementations
     }
 };
 
-// Clean template-based warp copy API - all parameters as template arguments
-template<typename T, size_t BitWidth, CopyTask Task, Layout LayoutType, typename SrcPtr, typename... Args>
-__device__ inline void warp_copy(SrcPtr src_ptr, Args&... args) {
-    warp_copy_dispatcher<T, BitWidth, Task, LayoutType>::execute(src_ptr, args...);
+// Warp-level synchronous copy API - LDMATRIX/STMATRIX operations
+template<typename T, size_t BitWidth, CopyTask Task, Layout LayoutType, typename... Args>
+__device__ inline void warp_copy_sync(SmemAddr smem_addr, Args&... args) {
+    // LDMATRIX (S2R): SM80+ Ampere/Ada/Hopper
+    // STMATRIX (R2S): SM90+ Hopper only
+    static_assert(Task == CopyTask::S2R || Task == CopyTask::R2S, 
+                  "warp_copy_sync only supports S2R (ldmatrix) and R2S (stmatrix) transfers");
+    warp_sync_copy_dispatcher<T, BitWidth, Task, LayoutType>::execute(smem_addr, args...);
 }
 
 // ========================= MMA Compute Primitives =========================
@@ -1103,8 +1125,7 @@ __device__ inline fp32 block_reduce_sum_bf16_to_f32(bf16 thread_value) {
     return block_sum;
 }
 
-// Macro for backward compatibility
-#define warp_shuffle(value, src_lane) warp_shuffle(value, src_lane)
+
 
 // ========================= Address Conversion Primitives =========================
 
