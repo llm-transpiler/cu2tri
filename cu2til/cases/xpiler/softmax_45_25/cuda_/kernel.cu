@@ -1,0 +1,32 @@
+#include <assert.h>
+
+__global__ void __launch_bounds__(45)
+    kernel(float *__restrict__ A, float *__restrict__ T_softmax_norm) {
+  if (threadIdx.x < 45) {
+    int rowStart = threadIdx.x * 25;
+
+    float maxVal = A[rowStart];
+    for (int i = 1; i < 25; ++i) {
+      if (A[rowStart + i] > maxVal) {
+        maxVal = A[rowStart + i];
+      }
+    }
+
+    float denom = 0.0f;
+    for (int i = 0; i < 25; ++i) {
+      T_softmax_norm[rowStart + i] = expf(A[rowStart + i] - maxVal);
+      denom += T_softmax_norm[rowStart + i];
+    }
+
+    for (int i = 0; i < 25; ++i) {
+      T_softmax_norm[rowStart + i] /= denom;
+    }
+  }
+}
+
+extern "C" void cuda_kernel(float *A, float *C, int size1, int size2) {
+  dim3 blockSize(45);
+  dim3 numBlocks((size1 + 45 - 1) / 45);
+
+  kernel<<<numBlocks, blockSize>>>(A, C);
+}

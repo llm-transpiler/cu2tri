@@ -1,0 +1,29 @@
+#include <assert.h>
+
+__global__ void __launch_bounds__(1024)
+    kernel(float *__restrict__ A, float *__restrict__ pool_avg) {
+  float pool_sum[1];
+  pool_sum[0] = 0.000000e+00f;
+  for (int rv0 = 0; rv0 < 5; ++rv0) {
+    for (int rv1 = 0; rv1 < 5; ++rv1) {
+      if (((int)threadIdx.x) < 64) {
+        pool_sum[0] = (pool_sum[0] +
+                       A[(((int)threadIdx.x * 25) + (rv0 * 5) + rv1)]);
+      }
+    }
+  }
+  if (((int)threadIdx.x) < 64) {
+    pool_avg[((int)threadIdx.x)] = (pool_sum[0] * 4.000000e-02f);
+  }
+}
+
+extern "C" void cuda_kernel(float *input, float *output, int batch_size,
+                               int channels, int input_H, int kernel_size,
+                               int stride) {
+  int output_H = (input_H - kernel_size) / stride + 1;
+  int output_size = batch_size * output_H * output_H * channels;
+  dim3 blockSize(1024);
+  dim3 numBlocks((output_size + blockSize.x - 1) / blockSize.x);
+
+  kernel<<<numBlocks, blockSize>>>(input, output);
+}

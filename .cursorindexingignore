@@ -6,3 +6,6 @@ repo/*
 **/outputs/**
 **/tests/**
 **/logs/**
+# cu2til/paper/*
+# cu2til/paper/main.tex
+*.so

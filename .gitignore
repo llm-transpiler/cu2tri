@@ -21,3 +21,5 @@ cu2tri/outputs/kernelbench_c/*
 cu2tri/outputs/tests/*
 cu2tri/outputs/cu2tri/kernelbench_c_concu_wrong
 models/
+# cu2til/paper
+*.so
