@@ -1,5 +1,3 @@
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 import numpy as np
 import ctypes
@@ -62,9 +60,8 @@ def run_performance_test(inputs, cuda_kernel):
     """Run GPU performance test"""
     print(f"\n🚀 GPU performance test:")
     
-    from eval_.common.benchmark import _simple_perf
-    torch_gpu_avg = _simple_perf(torch_kernel, inputs, warmup=0, iterations=1)
-    torch_gpu_avg = torch_gpu_avg["median"]
+    from eval_.common.benchmark import benchmark_kernel
+    torch_gpu_avg = benchmark_kernel(torch_kernel, inputs)
     """Call CUDA Deformable kernel - simplified version"""
     value, value_spatial_shapes, level_start_index, sampling_locations, attention_weights = inputs
     
@@ -81,8 +78,7 @@ def run_performance_test(inputs, cuda_kernel):
     output_ptr = output_gpu.data_ptr()
     
     # Note: This is a simplified interface - actual deformable attention is very complex
-    cuda_avg = _simple_perf(cuda_kernel, (value_ptr, value_spatial_shapes_ptr, level_start_index_ptr, sampling_locations_ptr, attention_weights_ptr, output_ptr), warmup=0, iterations=1)
-    cuda_avg = cuda_avg["median"]
+    cuda_avg = benchmark_kernel(cuda_kernel, (value_ptr, value_spatial_shapes_ptr, level_start_index_ptr, sampling_locations_ptr, attention_weights_ptr, output_ptr))
     print(f"\n📊 GPU performance comparison:")
     print(f"  PyTorch (GPU): {torch_gpu_avg:7.3f} ms")
     print(f"  CUDA kernel:   {cuda_avg:7.3f} ms")

@@ -19,7 +19,7 @@ case_type_list=(
     "conv1d"
     "conv2d"
     "conv2dnchw"
-    # "deformable"
+    "deformable"
     "depthwiseconv"
     "gelu"
     "gemm"
