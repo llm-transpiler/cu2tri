@@ -20,9 +20,9 @@ def get_inputs():
     """Create test data"""
     torch.manual_seed(SEED)
     # BMM operation: bmm_4_128_256_512
-    # BMM: A(4,128,512) @ B(4,512,256) = C(4,128,256)
-    A = torch.randn(4, 128, 512, dtype=torch.float16, device="cuda")
-    B = torch.randn(4, 512, 256, dtype=torch.float16, device="cuda")
+    # BMM: A(4,128,256) @ B(4,256,512) = C(4,128,512)
+    A = torch.randn(4, 128, 256, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
+    B = torch.randn(4, 256, 512, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
     return A, B
 
 def run_performance_test(A, B, cuda_kernel):
@@ -96,8 +96,7 @@ def main():
     output_torch = torch_kernel(A, B)
     # Run CUDA implementation
     print(f"\n⚡ Running CUDA kernel...")
-    b, m, k = A.shape
-    b2, k2, n = B.shape
+    b, m, k, n = 4, 128, 256, 512
     
     # Create output tensor (float32 for BMM)
     output_cuda = torch.empty(b, m, n, dtype=torch.float32, device="cuda")

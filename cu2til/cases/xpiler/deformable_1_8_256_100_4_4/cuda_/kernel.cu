@@ -134,8 +134,15 @@ extern "C" void cuda_kernel(float *value, int *value_spatial_shapes,
                                   int *level_start_index,
                                   float *sampling_locations,
                                   float *attention_weights, float *output) {
-  dim3 blockSize(256);
-  dim3 numBlocks(1);  // 需要根据具体参数调整
+  int n = 1;
+  int l = 4;
+  int lq = 100;
+  int m = 8;
+  int d = 256;
   
-  kernel<<<numBlocks, blockSize>>>(input, offset, output);
+  // 定义块和网格尺寸
+  dim3 blockSize(d / 4);  // blockSize(64)
+  dim3 numBlocks(lq, n, m);  // numBlocks(100, 1, 8)
+  
+  kernel<<<numBlocks, blockSize>>>(attention_weights, output, sampling_locations, value, level_start_index, value_spatial_shapes);
 }

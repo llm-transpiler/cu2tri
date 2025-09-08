@@ -19,10 +19,10 @@ from cu2til.tools.checker import compare_results
 def get_inputs():
     """Create test data"""
     torch.manual_seed(SEED)
-    # BMM operation: bmm_1_128_256_512
-    # BMM: A(1,128,512) @ B(1,512,256) = C(1,128,256)
-    A = torch.randn(1, 128, 512, dtype=torch.float16, device="cuda")
-    B = torch.randn(1, 512, 256, dtype=torch.float16, device="cuda")
+    # BMM operation: bmm_1_128_512_256
+    # BMM: A(1,128,256) @ B(1,256,512) = C(1,128,512)
+    A = torch.randn(1, 128, 256, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
+    B = torch.randn(1, 256, 512, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
     return A, B
 
 def run_performance_test(A, B, cuda_kernel):
@@ -70,7 +70,7 @@ def main():
     print(f"💾 GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.1f} GB")
     
     # Parameter settings (inferred from filename)
-    b, m, n, k = 1, 128, 256, 512
+    b, m, k, n = 1, 128, 256, 512
     print(f"📊 Test parameters: BMM batch={b}, A({m},{k}) @ B({k},{n}) = C({m},{n})")
     
     # Automatically compile and load CUDA library

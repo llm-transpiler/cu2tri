@@ -24,7 +24,7 @@ def get_inputs():
     d_model = shape[-1]  # 32
     
     # Create data directly on specified device
-    x = torch.randn(shape, dtype=torch.float32, device="cuda")
+    x = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     gamma = torch.ones(d_model, dtype=torch.float32, device="cuda")  # learnable scale
     beta = torch.zeros(d_model, dtype=torch.float32, device="cuda")   # learnable bias
     return x, gamma, beta

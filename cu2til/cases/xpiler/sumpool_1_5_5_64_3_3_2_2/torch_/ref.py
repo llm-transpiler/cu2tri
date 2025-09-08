@@ -1,4 +1,4 @@
 import torch
 
-def torch_kernel(x: torch.Tensor) -> torch.Tensor:
-    return torch.nn.functional.avg_pool2d(x, kernel_size=3, stride=2) * 9
+def torch_kernel(x: torch.Tensor, kernel_size: int, stride: int) -> torch.Tensor:
+    return torch.nn.functional.avg_pool2d(x, kernel_size=kernel_size, stride=stride) * (kernel_size * kernel_size)

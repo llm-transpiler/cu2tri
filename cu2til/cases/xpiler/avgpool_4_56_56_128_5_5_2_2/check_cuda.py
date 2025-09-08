@@ -15,6 +15,7 @@ sys.path.insert(0, TESTCASE_ROOT_DIR)
 
 from torch_.ref import torch_kernel
 from cu2til.tools.checker import compare_results
+from cu2til.tools.layout import convert_nhwc_to_nchw
 
 def get_inputs():
     """Create test data"""
@@ -23,33 +24,22 @@ def get_inputs():
     shape_nhwc = (4, 56, 56, 128)  # NHWC format
     
     # Create data directly on specified device in NHWC format
-    x_nhwc = torch.randn(shape_nhwc, dtype=torch.float32, device="cuda")
+    x_nhwc = torch.randn(shape_nhwc, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     
-    # Also create NCHW version for PyTorch reference
-    x_nchw = convert_nhwc_to_nchw(x_nhwc)
-    
-    return x_nchw, x_nhwc
+    return x_nhwc
 
-def convert_nchw_to_nhwc(x):
-    """Convert tensor from NCHW to NHWC layout"""
-    return x.permute(0, 2, 3, 1).contiguous()
-
-def convert_nhwc_to_nchw(x):
-    """Convert tensor from NHWC to NCHW layout"""  
-    return x.permute(0, 3, 1, 2).contiguous()
-
-def run_performance_test(x, cuda_kernel, kernel_size, stride):
+def run_performance_test(x_nhwc, cuda_kernel, kernel_size, stride):
     """Run GPU performance test"""
     print(f"\n🚀 GPU performance test:")
     
     from eval_.common.benchmark import benchmark_kernel
-    torch_gpu_avg = benchmark_kernel(torch_kernel, (x, kernel_size, stride))
+    torch_gpu_avg = benchmark_kernel(torch_kernel, (x_nhwc, kernel_size, stride))
     
     """Call CUDA avgpool kernel - directly use GPU tensor"""
-    batch_size, channels, input_h, input_w = x.shape
+    batch_size, input_h, input_w, channels = x_nhwc.shape
     
     # Convert input from NCHW to NHWC for CUDA kernel (for performance test we need to convert)
-    x_nhwc = convert_nchw_to_nhwc(x)
+    x_nhwc = convert_nhwc_to_nchw(x_nhwc)
     
     # Calculate output dimensions
     output_h = (input_h - kernel_size) // stride + 1
@@ -87,8 +77,8 @@ def main():
     print(f"💾 GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.1f} GB")
     
     # Parameter settings (inferred from filename)
-    shape = (4, 128, 56, 56)  # (batch_size, channels, height, width)
-    batch_size, channels, input_h, input_w = shape
+    shape = (4, 56, 56, 128)  # (batch_size, height, width, channels)
+    batch_size, input_h, input_w, channels = shape
     kernel_size = 5
     stride = 2
     print(f"📊 Test parameters: shape={shape}, kernel_size={kernel_size}, stride={stride}")
@@ -111,11 +101,12 @@ def main():
         return
 
     print(f"\n📋 Creating GPU test data...")
-    x_nchw, x_nhwc = get_inputs()
+    x_nhwc = get_inputs()
+    x_nchw = convert_nhwc_to_nchw(x_nhwc)
     output_torch = torch_kernel(x_nchw, kernel_size, stride)
     # Run CUDA implementation
     print(f"\n⚡ Running CUDA kernel...")
-    batch_size, channels, input_h, input_w = x_nchw.shape
+    batch_size, input_h, input_w, channels = x_nhwc.shape
     
     # Calculate output dimensions
     output_h = (input_h - kernel_size) // stride + 1
@@ -135,7 +126,7 @@ def main():
     # Convert output back from NHWC to NCHW for comparison
     output_cuda = convert_nhwc_to_nchw(output_cuda_nhwc)
     compare_results(output_torch, output_cuda, atol=1e-4)
-    run_performance_test(x_nchw, cuda_kernel, kernel_size, stride)
+    run_performance_test(x_nhwc, cuda_kernel, kernel_size, stride)
     
     # Display sample results
     print(f"\n🔬 Sample Output (first 5 values):")

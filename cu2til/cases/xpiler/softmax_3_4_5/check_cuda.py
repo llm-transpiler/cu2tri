@@ -1,3 +1,5 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 import numpy as np
 import ctypes
@@ -16,13 +18,19 @@ sys.path.insert(0, TESTCASE_ROOT_DIR)
 from torch_.ref import torch_kernel
 from cu2til.tools.checker import compare_results
 
+# 测试参数配置
+DIM1, DIM2, DIM3 = 3, 4, 5
+SHAPE = (DIM1, DIM2, DIM3)
+SIZE1 = DIM1 * DIM2  # 12个softmax
+SIZE2 = DIM3         # 每个softmax长度为5
+TOTAL_ELEMENTS = DIM1 * DIM2 * DIM3
+
 def get_inputs():
     """Create test data"""
     torch.manual_seed(SEED)
-    size1, size2 = 3, 4
     
-    # Create data directly on specified device
-    x = torch.randn(3, 4, dtype=torch.float32, device="cuda")
+    # Create data with configured shape
+    x = torch.randn(*SHAPE, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     return x,
 
 def run_performance_test(x, cuda_kernel):
@@ -33,8 +41,6 @@ def run_performance_test(x, cuda_kernel):
     torch_gpu_avg = benchmark_kernel(torch_kernel, (x,))
     
     """Call CUDA softmax kernel - directly use GPU tensor"""
-    size = x.numel()  # Total number of elements
-    
     # Ensure input tensor is on GPU and contiguous
     x_gpu = x.cuda().contiguous()
     
@@ -44,7 +50,7 @@ def run_performance_test(x, cuda_kernel):
     # Get GPU pointers
     x_ptr = x_gpu.data_ptr()
     output_ptr = output_gpu.data_ptr()
-    cuda_avg = benchmark_kernel(cuda_kernel, (x_ptr, output_ptr, size))
+    cuda_avg = benchmark_kernel(cuda_kernel, (x_ptr, output_ptr, SIZE1, SIZE2))
     print(f"\n📊 GPU performance comparison:")
     print(f"  PyTorch (GPU): {torch_gpu_avg:7.3f} ms")
     print(f"  CUDA kernel:   {cuda_avg:7.3f} ms")
@@ -68,17 +74,16 @@ def main():
     print(f"🎮 Using GPU: {torch.cuda.get_device_name(device)}")
     print(f"💾 GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.1f} GB")
     
-    # Parameter settings (inferred from filename)
-    shape = (3, 4, 5)
-    total_elements = 3 * 4 * 5  # softmax * 3 * 4 * 5 elements
-    print(f"📊 Test parameters: shape={shape}, total_elements={total_elements}")
+    # Test parameters
+    print(f"📊 Test parameters: shape={SHAPE}, total_elements={TOTAL_ELEMENTS}")
     
     # Automatically compile and load CUDA library
     try:
         argtypes = [
             ctypes.c_void_p,  # input (GPU pointer)
             ctypes.c_void_p,  # output (GPU pointer)
-            ctypes.c_int      # size
+            ctypes.c_int,     # size1
+            ctypes.c_int      # size2
         ]
         cuda_kernel = load_cuda_kernel(TESTCASE_ROOT_DIR, argtypes, force_compile=True)
         print(f"✅ CUDA kernel loaded successfully")
@@ -92,7 +97,6 @@ def main():
     output_torch = torch_kernel(x)
     # Run CUDA implementation
     print(f"\n⚡ Running CUDA kernel...")
-    size = x.numel()  # Total number of elements
     # Create output tensor
     output_cuda = torch.empty_like(x)
     
@@ -101,7 +105,7 @@ def main():
     output_ptr = output_cuda.data_ptr()
     
     # Call CUDA kernel
-    cuda_kernel(x_ptr, output_ptr, size)
+    cuda_kernel(x_ptr, output_ptr, SIZE1, SIZE2)
     compare_results(output_torch, output_cuda, atol=1e-4)
     run_performance_test(x, cuda_kernel)
     

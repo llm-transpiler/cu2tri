@@ -11,8 +11,8 @@ import torch, triton
 def benchmark_kernel(
     kernel_func: Callable, 
     inputs: list | tuple,
-    warmup: int = 50,
-    iterations: int = 100,
+    warmup: int = 100,
+    iterations: int = 500,
     quantiles: List[float] = [0.2, 0.5, 0.8]
 ) -> float:
     ret = []

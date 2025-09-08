@@ -29,11 +29,11 @@ def get_inputs():
     num_points = 4
     
     # Create simplified input data (GPU tensors)
-    value = torch.randn(batch_size, num_queries, num_heads, embed_dim // num_heads, dtype=torch.float32, device="cuda")
+    value = torch.randn(batch_size, num_queries, num_heads, embed_dim // num_heads, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     value_spatial_shapes = torch.tensor([[20, 20], [10, 10]], dtype=torch.int32, device="cuda")  # Example spatial shapes
     level_start_index = torch.tensor([0, 400], dtype=torch.int32, device="cuda")  # Example level indices
-    sampling_locations = torch.randn(batch_size, num_queries, num_heads, num_levels, num_points, 2, dtype=torch.float32, device="cuda")
-    attention_weights = torch.randn(batch_size, num_queries, num_heads, num_levels, num_points, dtype=torch.float32, device="cuda")
+    sampling_locations = torch.randn(batch_size, num_queries, num_heads, num_levels, num_points, 2, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    attention_weights = torch.randn(batch_size, num_queries, num_heads, num_levels, num_points, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     
     return (value, value_spatial_shapes, level_start_index, sampling_locations, attention_weights)
 

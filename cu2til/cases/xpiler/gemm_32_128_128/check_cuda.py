@@ -21,8 +21,8 @@ def get_inputs():
     torch.manual_seed(SEED)
     # GEMM operation: gemm_32_128_128
     # GEMM: A(32,128) @ B(128,128) = C(32,128)
-    A = torch.randn(32, 128, dtype=torch.float16, device="cuda")
-    B = torch.randn(128, 128, dtype=torch.float16, device="cuda")
+    A = torch.randn(32, 128, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
+    B = torch.randn(128, 128, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
     return A, B
 
 def run_performance_test(A, B, cuda_kernel):

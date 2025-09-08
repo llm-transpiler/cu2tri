@@ -1,6 +1,4 @@
 import torch
 
-def torch_kernel(*args):
-    """PyTorch参考实现 for gemv"""
-    A, x = args[0], args[1]
+def torch_kernel(A: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     return torch.matmul(A, x)

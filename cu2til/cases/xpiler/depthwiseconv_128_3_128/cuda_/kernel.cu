@@ -1,6 +1,6 @@
 #include <assert.h>
 
-__global__ void kernel(const float *input, const float *filter,
+__global__ void depthwiseconv_kernel(const float *input, const float *filter,
                                       float *output) {
   int tid_x = blockIdx.x * blockDim.x + threadIdx.x;
   int tid_y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -31,8 +31,14 @@ __global__ void kernel(const float *input, const float *filter,
 extern "C" void cuda_kernel(float *input, float *kernel, float *output,
                                      int input_height, int kernel_size,
                                      int input_channels) {
-  dim3 blockSize(256);
-  dim3 numBlocks(1);  // 需要根据具体参数调整
+  int output_height = input_height - kernel_size + 1;
+  int output_width = input_height - kernel_size + 1;
   
-  kernel<<<numBlocks, blockSize>>>(input, weight, output);
+  // 定义块和网格尺寸
+  dim3 blockSize(32, 32);
+  dim3 numBlocks((output_width + blockSize.x - 1) / blockSize.x,
+                 (output_height + blockSize.y - 1) / blockSize.y,
+                 input_channels); // 每个通道使用一个块
+  
+  depthwiseconv_kernel<<<numBlocks, blockSize>>>(input, kernel, output);
 }

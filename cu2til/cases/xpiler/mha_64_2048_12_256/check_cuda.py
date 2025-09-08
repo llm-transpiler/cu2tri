@@ -22,9 +22,9 @@ def get_inputs():
     batch_size, seq_len, num_heads, head_dim = 64, 2048, 12, 256
     
     # Create data directly on specified device
-    Q = torch.randn(batch_size, seq_len, num_heads, head_dim, dtype=torch.float32, device="cuda")
-    K = torch.randn(batch_size, seq_len, num_heads, head_dim, dtype=torch.float32, device="cuda")
-    V = torch.randn(batch_size, seq_len, num_heads, head_dim, dtype=torch.float32, device="cuda")
+    Q = torch.randn(batch_size, seq_len, num_heads, head_dim, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    K = torch.randn(batch_size, seq_len, num_heads, head_dim, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    V = torch.randn(batch_size, seq_len, num_heads, head_dim, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     return Q, K, V
 
 def run_performance_test(Q, K, V, cuda_kernel):

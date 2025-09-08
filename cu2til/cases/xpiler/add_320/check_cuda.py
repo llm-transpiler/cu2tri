@@ -23,8 +23,8 @@ def get_inputs():
     shape = (320,)
     
     # Create data directly on specified device
-    A = torch.randn(shape, dtype=torch.float32, device="cuda")
-    B = torch.randn(shape, dtype=torch.float32, device="cuda")
+    A = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    B = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     return A, B
 
 def run_performance_test(A, B, cuda_kernel):

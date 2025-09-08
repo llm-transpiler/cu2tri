@@ -7,8 +7,8 @@ __global__ void __launch_bounds__(1024)
 
     float maxVal = A[idx * 128];
     for (int i = 1; i < 128; ++i) {
-      if (A[threadIdx.x * 128 + i] > maxVal) {
-        maxVal = A[threadIdx.x * 128 + i];
+      if (A[idx * 128 + i] > maxVal) {
+        maxVal = A[idx * 128 + i];
       }
     }
 

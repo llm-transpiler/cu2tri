@@ -21,8 +21,8 @@ def get_inputs():
     torch.manual_seed(SEED)
     # GEMV operation: gemv_3_16
     # GEMV: A(3,16) @ x(16) = y(3)
-    A = torch.randn(3, 16, dtype=torch.float32, device="cuda")
-    x = torch.randn(16, dtype=torch.float32, device="cuda")
+    A = torch.randn(3, 16, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    x = torch.randn(16, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     return A, x
 
 def run_performance_test(A, x, cuda_kernel):

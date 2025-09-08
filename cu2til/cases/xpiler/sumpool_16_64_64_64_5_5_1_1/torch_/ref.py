@@ -1,6 +1,4 @@
 import torch
 
-def torch_kernel(*args):
-    """PyTorch参考实现 for sumpool"""
-    x = args[0]
-    return torch.nn.functional.avg_pool2d(x, kernel_size=5, stride=1) * (5 * 5)
+def torch_kernel(x: torch.Tensor, kernel_size: int, stride: int) -> torch.Tensor:
+    return torch.nn.functional.avg_pool2d(x, kernel_size=kernel_size, stride=stride) * (kernel_size * kernel_size)

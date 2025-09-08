@@ -6,6 +6,9 @@ __device__ float geluf(float x);
 
 __device__ float geluf(float x) {
   return 0.5 * x * (1 + tanh(sqrt(2 / M_PI) * (x + 0.044715 * pow(x, 3))));
+  // gelu(x) = 0.5 * x * (1 + erf(x / sqrt(2)))
+  // 1 / sqrt(2) = 0.7071067811865476
+  // return 0.5f * x * (1.0f + erff(x * 0.7071067811865476f));
 }
 
 __global__ void __launch_bounds__(1024)

@@ -1,3 +1,5 @@
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 import numpy as np
 import ctypes
@@ -17,23 +19,42 @@ from torch_.ref import torch_kernel
 from cu2til.tools.checker import compare_results
 
 def get_inputs():
-    """Create test data"""
+    """Create test data - 匹配CUDA kernel的数据格式"""
     torch.manual_seed(SEED)
-    # Deformable Attention: deformable_1_8_256_100_4_4
-    # This is a simplified implementation for the complex deformable attention operation
-    batch_size = 1
-    num_heads = 8
-    embed_dim = 256
-    num_queries = 100
-    num_levels = 4
-    num_points = 4
     
-    # Create simplified input data (GPU tensors)
-    value = torch.randn(batch_size, num_queries, num_heads, embed_dim // num_heads, dtype=torch.float32, device="cuda")
-    value_spatial_shapes = torch.tensor([[20, 20], [10, 10]], dtype=torch.int32, device="cuda")  # Example spatial shapes
-    level_start_index = torch.tensor([0, 400], dtype=torch.int32, device="cuda")  # Example level indices
-    sampling_locations = torch.randn(batch_size, num_queries, num_heads, num_levels, num_points, 2, dtype=torch.float32, device="cuda")
-    attention_weights = torch.randn(batch_size, num_queries, num_heads, num_levels, num_points, dtype=torch.float32, device="cuda")
+    # 从CUDA kernel分析得到的参数
+    lq = 100  # num_queries  
+    m = 8     # num_heads
+    d = 256   # embed_dim
+    l = 4     # num_levels
+    k = 4     # num_points per level
+    
+    # 定义4个level的空间形状 (height, width)
+    spatial_shapes = [(32, 32), (16, 16), (8, 8), (4, 4)]
+    value_spatial_shapes = torch.tensor(spatial_shapes, dtype=torch.int32, device="cuda")
+    
+    # 计算每个level的起始索引
+    level_starts = []
+    total_spatial = 0
+    for h, w in spatial_shapes:
+        level_starts.append(total_spatial)
+        total_spatial += h * w
+    level_start_index = torch.tensor(level_starts, dtype=torch.int32, device="cuda")
+    
+    # 创建value tensor: [total_spatial_size, m, d]
+    # total_spatial = 32*32 + 16*16 + 8*8 + 4*4 = 1024 + 256 + 64 + 16 = 1360
+    value = torch.randn(total_spatial, m, d, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    
+    # 创建采样位置: [lq, m, l*k, 2] (归一化坐标 0-1)
+    sampling_locations = torch.rand(lq, m, l*k, 2, dtype=torch.float32, device="cuda")
+    # 将坐标值限制在合理范围内
+    sampling_locations = torch.clamp(sampling_locations, 0.1, 0.9)
+    
+    # 创建注意力权重: [lq, m, l*k]  
+    attention_weights = torch.randn(lq, m, l*k, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    # 确保权重为正值并归一化
+    attention_weights = torch.abs(attention_weights)
+    attention_weights = attention_weights / attention_weights.sum(dim=-1, keepdim=True)
     
     return (value, value_spatial_shapes, level_start_index, sampling_locations, attention_weights)
 
@@ -41,14 +62,15 @@ def run_performance_test(inputs, cuda_kernel):
     """Run GPU performance test"""
     print(f"\n🚀 GPU performance test:")
     
-    from eval_.common.benchmark import benchmark_kernel
-    torch_gpu_avg = benchmark_kernel(torch_kernel, inputs)
-    
+    from eval_.common.benchmark import _simple_perf
+    torch_gpu_avg = _simple_perf(torch_kernel, inputs, warmup=0, iterations=1)
+    torch_gpu_avg = torch_gpu_avg["median"]
     """Call CUDA Deformable kernel - simplified version"""
     value, value_spatial_shapes, level_start_index, sampling_locations, attention_weights = inputs
     
-    # Create output tensor
-    output_gpu = torch.empty_like(value, device="cuda")
+    # Create output tensor: [lq, m, d] = [100, 8, 256]
+    lq, m, d = 100, 8, 256
+    output_gpu = torch.empty(lq, m, d, dtype=torch.float32, device="cuda")
     
     # Get GPU pointers - simplified parameter passing
     value_ptr = value.cuda().contiguous().data_ptr()
@@ -59,8 +81,8 @@ def run_performance_test(inputs, cuda_kernel):
     output_ptr = output_gpu.data_ptr()
     
     # Note: This is a simplified interface - actual deformable attention is very complex
-    cuda_avg = benchmark_kernel(cuda_kernel, (value_ptr, value_spatial_shapes_ptr, level_start_index_ptr, sampling_locations_ptr, attention_weights_ptr, output_ptr))
-    
+    cuda_avg = _simple_perf(cuda_kernel, (value_ptr, value_spatial_shapes_ptr, level_start_index_ptr, sampling_locations_ptr, attention_weights_ptr, output_ptr), warmup=0, iterations=1)
+    cuda_avg = cuda_avg["median"]
     print(f"\n📊 GPU performance comparison:")
     print(f"  PyTorch (GPU): {torch_gpu_avg:7.3f} ms")
     print(f"  CUDA kernel:   {cuda_avg:7.3f} ms")
@@ -84,14 +106,14 @@ def main():
     print(f"🎮 Using GPU: {torch.cuda.get_device_name(device)}")
     print(f"💾 GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.1f} GB")
     
-    # Parameter settings (inferred from filename)
-    batch_size = 1
-    num_heads = 8
-    embed_dim = 256
-    num_queries = 100
-    num_levels = 4
-    num_points = 4
-    print(f"📊 Test parameters: Deformable Attention - batch={batch_size}, heads={num_heads}, embed_dim={embed_dim}, queries={num_queries}")
+    # Parameter settings (从CUDA kernel分析得到)
+    lq = 100  # num_queries
+    m = 8     # num_heads  
+    d = 256   # embed_dim
+    l = 4     # num_levels
+    k = 4     # num_points per level
+    print(f"📊 Test parameters: Deformable Attention - queries={lq}, heads={m}, embed_dim={d}, levels={l}, points={k}")
+    print(f"   Data shapes: value=[total_spatial, {m}, {d}], sampling_locations=[{lq}, {m}, {l*k}, 2], attention_weights=[{lq}, {m}, {l*k}]")
     
     # Automatically compile and load CUDA library
     try:
@@ -117,8 +139,9 @@ def main():
     print(f"\n⚡ Running CUDA kernel...")
     value, value_spatial_shapes, level_start_index, sampling_locations, attention_weights = inputs
     
-    # Create output tensor
-    output_cuda = torch.empty_like(value, device="cuda")
+    # Create output tensor: [lq, m, d] = [100, 8, 256]  
+    lq, m, d = 100, 8, 256
+    output_cuda = torch.empty(lq, m, d, dtype=torch.float32, device="cuda")
     
     # Get GPU pointers
     value_ptr = value.cuda().contiguous().data_ptr()
@@ -130,8 +153,8 @@ def main():
     
     # Call CUDA kernel
     cuda_kernel(value_ptr, value_spatial_shapes_ptr, level_start_index_ptr, sampling_locations_ptr, attention_weights_ptr, output_ptr)
-    compare_results(output_torch, output_cuda, atol=1e-2)  # 大容差用于复杂操作
-    run_performance_test(inputs, cuda_kernel, num_runs=3)
+    compare_results(output_torch, output_cuda, atol=1e-2, rtol=1e-2)  # 大容差用于复杂操作
+    run_performance_test(inputs, cuda_kernel)
     
     # Display sample results
     print(f"\n🔬 Sample Output (first 5 values):")

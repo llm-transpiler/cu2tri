@@ -24,8 +24,8 @@ def get_inputs():
     kernel_size = 3
     
     # Create data directly on specified device
-    input_tensor = torch.randn(input_size, dtype=torch.float32, device="cuda")
-    kernel_tensor = torch.randn(kernel_size, dtype=torch.float32, device="cuda")
+    input_tensor = torch.randn(input_size, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    kernel_tensor = torch.randn(kernel_size, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     return input_tensor, kernel_tensor
 
 def run_performance_test(input_tensor, kernel_tensor, cuda_kernel):

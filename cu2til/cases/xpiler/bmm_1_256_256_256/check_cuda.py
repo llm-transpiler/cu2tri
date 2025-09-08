@@ -21,8 +21,8 @@ def get_inputs():
     torch.manual_seed(SEED)
     # BMM operation: bmm_1_256_256_256
     # BMM: A(1,256,256) @ B(1,256,256) = C(1,256,256)
-    A = torch.randn(1, 256, 256, dtype=torch.float16, device="cuda")
-    B = torch.randn(1, 256, 256, dtype=torch.float16, device="cuda")
+    A = torch.randn(1, 256, 256, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
+    B = torch.randn(1, 256, 256, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
     return A, B
 
 def run_performance_test(A, B, cuda_kernel):

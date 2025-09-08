@@ -5,6 +5,7 @@ import os
 import time
 import subprocess
 import sys
+from dataclasses import dataclass
 from torch.nn import functional as F
 from cu2til.tools.builder import compile_cuda_kernel, CUDA_FOLDER_NAME, SEED, load_cuda_kernel
 
@@ -16,20 +17,37 @@ sys.path.insert(0, TESTCASE_ROOT_DIR)
 from torch_.ref import torch_kernel
 from cu2til.tools.checker import compare_results
 
-def get_inputs():
+@dataclass
+class Conv2DParams:
+    """Conv2D 参数配置"""
+    batch_size: int = 16
+    input_height: int = 8
+    input_width: int = 8
+    input_channels: int = 64
+    output_channels: int = 128
+    kernel_height: int = 2
+    kernel_width: int = 2
+    stride: int = 2
+    padding: int = 0
+    output_height: int = 4
+    output_width: int = 4
+
+def get_inputs(params: Conv2DParams):
     """Create test data"""
     torch.manual_seed(SEED)
     # Conv2DNCHW: conv2dnchw_16_64_8_8_128_64_2_2_2_0 (NCHW format)
-    # Input: (N, C, H, W) = (16, 64, 8, 8)
-    # Kernel: (O, C, kH, kW) = (128, 64, 2, 2)
-    # Output: (N, O, oH, oW) = (16, 128, 4, 4)
+    # Input: (N, C, H, W) = (batch_size, input_channels, input_height, input_width)
+    # Kernel: (O, C, kH, kW) = (output_channels, input_channels, kernel_height, kernel_width)
+    # Output: (N, O, oH, oW) = (batch_size, output_channels, output_height, output_width)
     
     # Create data directly on specified device (NCHW format)
-    input_tensor = torch.randn(16, 64, 8, 8, dtype=torch.float32, device="cuda")
-    kernel_tensor = torch.randn(128, 64, 2, 2, dtype=torch.float32, device="cuda")
+    input_tensor = torch.randn(params.batch_size, params.input_channels, params.input_height, params.input_width, 
+                              dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    kernel_tensor = torch.randn(params.output_channels, params.input_channels, params.kernel_height, params.kernel_width, 
+                               dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     return input_tensor, kernel_tensor
 
-def run_performance_test(input_tensor, kernel_tensor, cuda_kernel):
+def run_performance_test(input_tensor, kernel_tensor, cuda_kernel, params: Conv2DParams):
     """Run GPU performance test"""
     print(f"\n🚀 GPU performance test:")
     
@@ -37,24 +55,20 @@ def run_performance_test(input_tensor, kernel_tensor, cuda_kernel):
     torch_gpu_avg = benchmark_kernel(torch_kernel, (input_tensor, kernel_tensor))
     
     """Call CUDA Conv2DNCHW kernel - directly use GPU tensor"""
-    batch_size, input_channels, input_height, input_width = input_tensor.shape
-    output_channels, _, kernel_height, kernel_width = kernel_tensor.shape
-    stride = 2
+    # 使用params中的参数
     
     # Ensure input tensors are on GPU and contiguous
     input_gpu = input_tensor.cuda().contiguous()
     kernel_gpu = kernel_tensor.cuda().contiguous()
     
     # Create output tensor
-    output_height = 4
-    output_width = 4
-    output_gpu = torch.empty(batch_size, output_channels, output_height, output_width, dtype=torch.float32, device="cuda")
+    output_gpu = torch.empty(params.batch_size, params.output_channels, params.output_height, params.output_width, dtype=torch.float32, device="cuda")
     
     # Get GPU pointers
     input_ptr = input_gpu.data_ptr()
     kernel_ptr = kernel_gpu.data_ptr()
     output_ptr = output_gpu.data_ptr()
-    cuda_avg = benchmark_kernel(cuda_kernel, (input_ptr, kernel_ptr, output_ptr, batch_size, input_height, input_channels, output_channels, kernel_height, stride))
+    cuda_avg = benchmark_kernel(cuda_kernel, (input_ptr, kernel_ptr, output_ptr, params.batch_size, params.input_height, params.input_channels, params.output_channels, params.kernel_height, params.stride))
     
     print(f"\n📊 GPU performance comparison:")
     print(f"  PyTorch (GPU): {torch_gpu_avg:7.3f} ms")
@@ -79,15 +93,9 @@ def main():
     print(f"🎮 Using GPU: {torch.cuda.get_device_name(device)}")
     print(f"💾 GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.1f} GB")
     
-    # Parameter settings (inferred from filename)
-    batch_size = 16
-    input_channels = 64
-    input_height, input_width = 8, 8
-    output_channels = 128
-    kernel_height, kernel_width = 2, 2
-    stride, padding = 2, 0
-    output_height, output_width = 4, 4
-    print(f"📊 Test parameters: Conv2DNCHW N={batch_size}, C={input_channels}, H={input_height}, W={input_width} -> N={batch_size}, O={output_channels}, oH={output_height}, oW={output_width}")
+    # Parameter settings (inferred from filename) 
+    params = Conv2DParams()
+    print(f"📊 Test parameters: Conv2DNCHW N={params.batch_size}, C={params.input_channels}, H={params.input_height}, W={params.input_width} -> N={params.batch_size}, O={params.output_channels}, oH={params.output_height}, oW={params.output_width}")
     
     # Automatically compile and load CUDA library
     try:
@@ -109,19 +117,14 @@ def main():
         return
 
     print(f"\n📋 Creating GPU test data...")
-    inputs = get_inputs()
-    input_tensor, kernel_tensor = inputs
+    input_tensor, kernel_tensor = get_inputs(params)  # NCHW format
     output_torch = torch_kernel(input_tensor, kernel_tensor)
     # Run CUDA implementation
     print(f"\n⚡ Running CUDA kernel...")
-    batch_size, input_channels, input_height, input_width = input_tensor.shape
-    output_channels, _, kernel_height, kernel_width = kernel_tensor.shape
-    stride = 2
+    # 使用params中的参数
     
     # Create output tensor
-    output_height = 4
-    output_width = 4
-    output_cuda = torch.empty(batch_size, output_channels, output_height, output_width, dtype=torch.float32, device="cuda")
+    output_cuda = torch.empty(params.batch_size, params.output_channels, params.output_height, params.output_width, dtype=torch.float32, device="cuda")
     
     # Get GPU pointers
     input_ptr = input_tensor.cuda().contiguous().data_ptr()
@@ -129,9 +132,9 @@ def main():
     output_ptr = output_cuda.data_ptr()
     
     # Call CUDA kernel
-    cuda_kernel(input_ptr, kernel_ptr, output_ptr, batch_size, input_height, input_channels, output_channels, kernel_height, stride)
+    cuda_kernel(input_ptr, kernel_ptr, output_ptr, params.batch_size, params.input_height, params.input_channels, params.output_channels, params.kernel_height, params.stride)
     compare_results(output_torch, output_cuda, atol=3e-2, rtol=1e-2)  # Relaxed tolerance for conv2dnchw
-    run_performance_test(input_tensor, kernel_tensor, cuda_kernel)
+    run_performance_test(input_tensor, kernel_tensor, cuda_kernel, params)
     
     # Display sample results
     print(f"\n🔬 Sample Output (first 5 values):")

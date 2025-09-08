@@ -14,8 +14,8 @@ __global__ void __launch_bounds__(294)
 }
 
 extern "C" void cuda_kernel(float *A, float *C, int size) {
-  dim3 blockSize(1024);
-  dim3 numBlocks((size + 1024 - 1) / 1024);
+  dim3 blockSize(294);
+  dim3 numBlocks((size + 294 - 1) / 294);
 
   kernel<<<numBlocks, blockSize>>>(A, C);
 }
