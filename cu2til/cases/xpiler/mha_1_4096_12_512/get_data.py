@@ -1,67 +1,52 @@
 import torch
 import ctypes
+import os
+import sys
 from dataclasses import dataclass
-from cu2til.tools.builder import SEED
+from cu2til.tools.builder import SEED, load_cuda_kernel
 
 @dataclass
 class Params:
-    """MHA (Multi-Head Attention) operation parameters"""
+    """Multi-Head Attention 参数配置"""
     batch_size: int = 1
-    seq_len: int = 4096
-    num_heads: int = 12
-    d_head: int = 512
+    seq_len: int = 4096  # N_CTX
+    num_heads: int = 12   # H
+    head_dim: int = 512  # D_HEAD
+    scale_factor: float = 22.6  # sqrt(D_HEAD) = sqrt(512) = 22.6
 
 def get_cuda_argtypes():
     return [
-        ctypes.c_void_p,  # Q (GPU pointer)
-        ctypes.c_void_p,  # K (GPU pointer)
-        ctypes.c_void_p,  # V (GPU pointer)
-        ctypes.c_void_p,  # output (GPU pointer)
-        ctypes.c_int,     # batch_size
-        ctypes.c_int,     # seq_len
-        ctypes.c_int,     # num_heads
-        ctypes.c_int      # d_head
-    ]
-
-def get_cuda_inputs(params: Params):
-    torch.manual_seed(SEED)
-    Q = torch.randn((params.batch_size, params.seq_len, params.num_heads, params.d_head), 
-                    dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    K = torch.randn((params.batch_size, params.seq_len, params.num_heads, params.d_head), 
-                    dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    V = torch.randn((params.batch_size, params.seq_len, params.num_heads, params.d_head), 
-                    dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    output = torch.empty((params.batch_size, params.seq_len, params.num_heads, params.d_head), 
-                        dtype=torch.float32, device="cuda")
-    
-    cuda_all_inputs = [
-        Q.data_ptr(), K.data_ptr(), V.data_ptr(), output.data_ptr(),
-        params.batch_size, params.seq_len, params.num_heads, params.d_head
-    ]
-    return cuda_all_inputs
+            ctypes.c_void_p,  # q (GPU pointer)
+            ctypes.c_void_p,  # k (GPU pointer)  
+            ctypes.c_void_p,  # v (GPU pointer)
+            ctypes.c_void_p,  # output (GPU pointer)
+            ctypes.c_int,     # batch_size
+            ctypes.c_int,     # seq_len
+            ctypes.c_int,     # num_heads
+            ctypes.c_int      # head_dim
+        ]
 
 def get_cuda_torch_inputs(params: Params):
+    """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)
-    Q = torch.randn((params.batch_size, params.seq_len, params.num_heads, params.d_head), 
-                    dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    K = torch.randn((params.batch_size, params.seq_len, params.num_heads, params.d_head), 
-                    dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    V = torch.randn((params.batch_size, params.seq_len, params.num_heads, params.d_head), 
-                    dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    output = torch.empty((params.batch_size, params.seq_len, params.num_heads, params.d_head), 
-                        dtype=torch.float32, device="cuda")
+    # Create Q, K, V tensors with shape (B, N_CTX, H, D_HEAD)
+    shape = (params.batch_size, params.seq_len, params.num_heads, params.head_dim)
     
-    cuda_output_tensors = [output]
+    q = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    k = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    v = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     
-    cuda_all_inputs = [
-        Q, K, V, output,
-        params.batch_size, params.seq_len, params.num_heads, params.d_head
-    ]
-    torch_all_inputs = [Q, K, V]
+    # Create output tensor
+    output_cuda = torch.empty_like(q)
+    cuda_output_tensors = [output_cuda]
+    
+    cuda_all_inputs = [q, k, v, output_cuda, params.batch_size, params.seq_len, params.num_heads, params.head_dim]
+    
+    # For PyTorch, inputs are already in correct format
+    torch_all_inputs = [q, k, v]
     return cuda_all_inputs, torch_all_inputs, cuda_output_tensors
 
-def cuda_input_tensor_to_ptr(cuda_all_inputs):
-    return [t.data_ptr() if isinstance(t, torch.Tensor) else t for t in cuda_all_inputs]
-
 def cuda_output_tensor_transform(cuda_output):
-    return cuda_output  # No transformation needed for MHA
+    # For MHA operation, no format transformation needed
+    # Both CUDA and PyTorch use the same tensor format
+    return cuda_output

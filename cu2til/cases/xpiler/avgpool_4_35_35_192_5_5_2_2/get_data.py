@@ -15,8 +15,8 @@ class Params:
     stride: int = 2
     
     # Calculated output dimensions
-    output_height: int = 16
-    output_width: int = 16
+    output_height: int = 16  # (35 - 5) // 2 + 1 = 16
+    output_width: int = 16   # (35 - 5) // 2 + 1 = 16
 
 def get_cuda_argtypes():
     return [
@@ -29,51 +29,32 @@ def get_cuda_argtypes():
         ctypes.c_int      # stride
     ]
 
-def get_cuda_inputs(params: Params):
-    torch.manual_seed(SEED)
-    input_tensor_nhwc = torch.randn(
-        (params.batch_size, params.height, params.width, params.channels), 
-        dtype=torch.float32, device="cuda"
-    ).normal_(mean=0.0, std=0.5)
-    
-    output_tensor_nhwc = torch.empty(
-        (params.batch_size, params.output_height, params.output_width, params.channels),
-        dtype=torch.float32, device="cuda"
-    )
-    
-    cuda_all_inputs = [
-        input_tensor_nhwc.data_ptr(), 
-        output_tensor_nhwc.data_ptr(),
-        params.batch_size, params.channels, params.height,
-        params.kernel_size, params.stride
-    ]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     torch.manual_seed(SEED)
-    input_tensor_nhwc = torch.randn(
-        (params.batch_size, params.height, params.width, params.channels), 
+    # Generate data in NHWC format for CUDA kernel
+    input_tensor = torch.randn(
+        (params.batch_size, params.channels, params.height, params.width), 
         dtype=torch.float32, device="cuda"
-    ).normal_(mean=0.0, std=0.5)
+    ).normal_(mean=0.0, std=0.5).to(memory_format=torch.channels_last)
     
-    output_tensor_nhwc = torch.empty(
-        (params.batch_size, params.output_height, params.output_width, params.channels),
+    output_tensor = torch.empty(
+        (params.batch_size, params.channels, params.output_height, params.output_width),
         dtype=torch.float32, device="cuda"
-    )
+    ).to(memory_format=torch.channels_last)
     
-    cuda_output_tensors = [output_tensor_nhwc]
-    input_tensor_nchw = convert_nhwc_to_nchw(input_tensor_nhwc)
+    cuda_output_tensors = [output_tensor]
     
     cuda_all_inputs = [
-        input_tensor_nhwc, output_tensor_nhwc,
-        params.batch_size, params.channels, params.height,
-        params.kernel_size, params.stride
+        input_tensor, 
+        output_tensor,
+        params.batch_size,
+        params.channels,
+        params.height,
+        params.kernel_size,
+        params.stride
     ]
-    torch_all_inputs = [input_tensor_nchw, params.kernel_size, params.stride]
+    torch_all_inputs = [input_tensor, params.kernel_size, params.stride]
     return cuda_all_inputs, torch_all_inputs, cuda_output_tensors
 
-def cuda_input_tensor_to_ptr(cuda_all_inputs):
-    return [t.data_ptr() if isinstance(t, torch.Tensor) else t for t in cuda_all_inputs]
-
-def cuda_output_tensor_transform(cuda_output_nhwc):
-    return convert_nhwc_to_nchw(cuda_output_nhwc)
+def cuda_output_tensor_transform(cuda_output):
+    return cuda_output

@@ -26,28 +26,6 @@ def get_cuda_argtypes():
             ctypes.c_int      # head_dim
         ]
 
-def get_cuda_inputs(params: Params):
-    """当只需要cuda的inputs的时候使用"""
-    torch.manual_seed(SEED)
-    # Create Q, K, V tensors with shape (B, N_CTX, H, D_HEAD)
-    shape = (params.batch_size, params.seq_len, params.num_heads, params.head_dim)
-    
-    q = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    k = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    v = torch.randn(shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    
-    # Create output tensor
-    output_cuda = torch.empty_like(q)
-    
-    # Get GPU pointers
-    q_ptr = q.data_ptr()
-    k_ptr = k.data_ptr()
-    v_ptr = v.data_ptr()
-    output_ptr = output_cuda.data_ptr()
-    
-    cuda_all_inputs = [q_ptr, k_ptr, v_ptr, output_ptr, params.batch_size, params.seq_len, params.num_heads, params.head_dim]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)
@@ -67,15 +45,6 @@ def get_cuda_torch_inputs(params: Params):
     # For PyTorch, inputs are already in correct format
     torch_all_inputs = [q, k, v]
     return cuda_all_inputs, torch_all_inputs, cuda_output_tensors
-
-def cuda_input_tensor_to_ptr(cuda_all_inputs):
-    cuda_all_inputs_ptr = []
-    for input_tensor in cuda_all_inputs:
-        if isinstance(input_tensor, torch.Tensor):
-            cuda_all_inputs_ptr.append(input_tensor.data_ptr())
-        else:
-            cuda_all_inputs_ptr.append(input_tensor)
-    return cuda_all_inputs_ptr
 
 def cuda_output_tensor_transform(cuda_output):
     # For MHA operation, no format transformation needed

@@ -1,50 +1,49 @@
 import torch
 import ctypes
+import os
+import sys
 from dataclasses import dataclass
-from cu2til.tools.builder import SEED
+from cu2til.tools.builder import SEED, load_cuda_kernel
 
 @dataclass
 class Params:
-    """SOFTMAX operation parameters"""
+    """Softmax 参数配置"""
     shape: tuple = (45, 25)
-    total_elements: int = 1125
+    total_elements: int = 1125  # 45 * 25
+    dim: int = -1  # last dimension for softmax
 
 def get_cuda_argtypes():
     return [
-        ctypes.c_void_p,  # input (GPU pointer)
-        ctypes.c_void_p,  # output (GPU pointer)
-        ctypes.c_int      # total_elements
-    ]
-
-def get_cuda_inputs(params: Params):
-    torch.manual_seed(SEED)
-    input_tensor = torch.randn(params.shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    output_tensor = torch.empty_like(input_tensor)
-    
-    cuda_all_inputs = [
-        input_tensor.data_ptr(),
-        output_tensor.data_ptr(),
-        params.total_elements
-    ]
-    return cuda_all_inputs
+            ctypes.c_void_p,  # A (input GPU pointer)
+            ctypes.c_void_p,  # C (output GPU pointer)
+            ctypes.c_int,     # size1 (batch_size * seq_len = 12)
+            ctypes.c_int      # size2 (feature_dim = 5)
+        ]
 
 def get_cuda_torch_inputs(params: Params):
+    """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)
-    input_tensor = torch.randn(params.shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    output_tensor = torch.empty_like(input_tensor)
+    # Create data directly on specified device
+    x = torch.randn(params.shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     
-    cuda_output_tensors = [output_tensor]
+    # Create output tensor
+    output_cuda = torch.empty_like(x)
+    cuda_output_tensors = [output_cuda]
     
-    cuda_all_inputs = [
-        input_tensor,
-        output_tensor,
-        params.total_elements
-    ]
-    torch_all_inputs = [input_tensor]
+    # For 2D tensor (45, 25), treat as (batch_size=45, feature_dim=25)
+    size1 = params.shape[0]  # 45
+    size2 = params.shape[1]  # 25
+    x_2d = x  # already 2D
+    output_cuda_2d = output_cuda  # already 2D
+    cuda_all_inputs = [x_2d, output_cuda_2d, size1, size2]
+    
+    # For PyTorch, inputs are already in correct format (keep original 3D shape)
+    torch_all_inputs = [x]
     return cuda_all_inputs, torch_all_inputs, cuda_output_tensors
 
-def cuda_input_tensor_to_ptr(cuda_all_inputs):
-    return [t.data_ptr() if isinstance(t, torch.Tensor) else t for t in cuda_all_inputs]
-
 def cuda_output_tensor_transform(cuda_output):
-    return cuda_output  # No transformation needed for SOFTMAX
+    # Triton kernel outputs 2D tensor, but PyTorch outputs 3D tensor
+    # Reshape triton output back to original 3D shape to match PyTorch format for comparison
+    # Get the original shape from the Params class
+    params = Params()
+    return cuda_output.view(params.shape)

@@ -1,62 +1,48 @@
 import torch
 import ctypes
+import os
+import sys
 from dataclasses import dataclass
-from cu2til.tools.builder import SEED
+from cu2til.tools.builder import SEED, load_cuda_kernel
 
 @dataclass
 class Params:
-    """GEMM (General Matrix Multiplication) operation parameters"""
-    M: int = 32  # A.shape = (M, K)
-    K: int = 128  # B.shape = (K, N) 
-    N: int = 1024  # C.shape = (M, N)
+    """GEMM (General Matrix Multiplication) 参数配置"""
+    m: int = 32   # A matrix rows
+    k: int = 128   # A matrix cols / B matrix rows  
+    n: int = 1024  # B matrix cols
+    # A shape: (m, k)
+    # B shape: (k, n)  
+    # C shape: (m, n)
 
 def get_cuda_argtypes():
     return [
-        ctypes.c_void_p,  # A (half* GPU pointer)
-        ctypes.c_void_p,  # B (half* GPU pointer)
-        ctypes.c_void_p,  # C (float* GPU pointer)
-        ctypes.c_int,     # M
-        ctypes.c_int,     # K
-        ctypes.c_int      # N
-    ]
-
-def get_cuda_inputs(params: Params):
-    torch.manual_seed(SEED)
-    A = torch.randn((params.M, params.K), dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
-    B = torch.randn((params.K, params.N), dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
-    C = torch.empty((params.M, params.N), dtype=torch.float32, device="cuda")
-    
-    cuda_all_inputs = [
-        A.data_ptr(), 
-        B.data_ptr(), 
-        C.data_ptr(),
-        params.M,
-        params.K,
-        params.N
-    ]
-    return cuda_all_inputs
+            ctypes.c_void_p,  # A (GPU pointer)
+            ctypes.c_void_p,  # B (GPU pointer)
+            ctypes.c_void_p,  # C (GPU pointer)
+            ctypes.c_int,     # m
+            ctypes.c_int,     # k
+            ctypes.c_int      # n
+        ]
 
 def get_cuda_torch_inputs(params: Params):
+    """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)
-    A_half = torch.randn((params.M, params.K), dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
-    B_half = torch.randn((params.K, params.N), dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
-    C = torch.empty((params.M, params.N), dtype=torch.float32, device="cuda")
+    # GEMM operation: A(m,k) @ B(k,n) = C(m,n)
+    A = torch.randn(params.m, params.k, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
+    B = torch.randn(params.k, params.n, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
     
-    # Convert to float32 for PyTorch comparison
-    A_float32 = A_half.float()
-    B_float32 = B_half.float()
-    
+    # Create output tensor (float32 for GEMM)
+    C = torch.empty(params.m, params.n, dtype=torch.float32, device="cuda")
     cuda_output_tensors = [C]
     
-    cuda_all_inputs = [
-        A_half, B_half, C,
-        params.M, params.K, params.N
-    ]
-    torch_all_inputs = [A_float32, B_float32]
+    cuda_all_inputs = [A, B, C, params.m, params.k, params.n]
+    
+    # For PyTorch, inputs are already in correct format
+    torch_all_inputs = [A, B]
     return cuda_all_inputs, torch_all_inputs, cuda_output_tensors
 
-def cuda_input_tensor_to_ptr(cuda_all_inputs):
-    return [t.data_ptr() if isinstance(t, torch.Tensor) else t for t in cuda_all_inputs]
-
 def cuda_output_tensor_transform(cuda_output):
-    return cuda_output  # No transformation needed for GEMM
+    # For GEMM operation, no format transformation needed
+    # Both CUDA and PyTorch use the same tensor format
+    return cuda_output

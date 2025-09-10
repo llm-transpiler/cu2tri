@@ -1,55 +1,46 @@
 import torch
 import ctypes
+import os
+import sys
 from dataclasses import dataclass
-from cu2til.tools.builder import SEED
+from cu2til.tools.builder import SEED, load_cuda_kernel
 
 @dataclass
 class Params:
-    """GEMV (General Matrix-Vector Multiplication) operation parameters"""
-    M: int = 125  # A.shape = (M, N)
-    N: int = 320  # x.shape = (N,), y.shape = (M,)
+    """GEMV (General Matrix Vector Multiplication) 参数配置"""
+    m: int = 125  # matrix rows
+    n: int = 320  # matrix cols / vector length
+    # A shape: (m, n)
+    # x shape: (n,)
+    # y shape: (m,)
 
 def get_cuda_argtypes():
     return [
-        ctypes.c_void_p,  # A (GPU pointer)
-        ctypes.c_void_p,  # x (GPU pointer)
-        ctypes.c_void_p,  # y (GPU pointer)
-        ctypes.c_int,     # M
-        ctypes.c_int      # N
-    ]
-
-def get_cuda_inputs(params: Params):
-    torch.manual_seed(SEED)
-    A = torch.randn((params.M, params.N), dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    x = torch.randn((params.N,), dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    y = torch.empty((params.M,), dtype=torch.float32, device="cuda")
-    
-    cuda_all_inputs = [
-        A.data_ptr(), 
-        x.data_ptr(), 
-        y.data_ptr(),
-        params.M,
-        params.N
-    ]
-    return cuda_all_inputs
+            ctypes.c_void_p,  # A (GPU pointer)
+            ctypes.c_void_p,  # x (GPU pointer)
+            ctypes.c_void_p,  # y (GPU pointer)
+            ctypes.c_int,     # m
+            ctypes.c_int      # n
+        ]
 
 def get_cuda_torch_inputs(params: Params):
+    """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)
-    A = torch.randn((params.M, params.N), dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    x = torch.randn((params.N,), dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    y = torch.empty((params.M,), dtype=torch.float32, device="cuda")
+    # GEMV operation: A(m,n) @ x(n) = y(m)
+    A = torch.randn(params.m, params.n, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
+    x = torch.randn(params.n, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
     
+    # Create output vector
+    y = torch.empty(params.m, dtype=torch.float32, device="cuda")
     cuda_output_tensors = [y]
     
-    cuda_all_inputs = [
-        A, x, y,
-        params.M, params.N
-    ]
+    cuda_all_inputs = [A, x, y, params.m, params.n]
+    
+    # For PyTorch, inputs are already in correct format
     torch_all_inputs = [A, x]
     return cuda_all_inputs, torch_all_inputs, cuda_output_tensors
 
-def cuda_input_tensor_to_ptr(cuda_all_inputs):
-    return [t.data_ptr() if isinstance(t, torch.Tensor) else t for t in cuda_all_inputs]
-
 def cuda_output_tensor_transform(cuda_output):
-    return cuda_output  # No transformation needed for GEMV
+    # For GEMV operation, no format transformation needed
+    # Both CUDA and PyTorch use the same tensor format
+    return cuda_output

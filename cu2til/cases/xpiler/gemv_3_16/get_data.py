@@ -23,24 +23,6 @@ def get_cuda_argtypes():
             ctypes.c_int      # n
         ]
 
-def get_cuda_inputs(params: Params):
-    """当只需要cuda的inputs的时候使用"""
-    torch.manual_seed(SEED)
-    # GEMV operation: A(m,n) @ x(n) = y(m)
-    A = torch.randn(params.m, params.n, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    x = torch.randn(params.n, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    
-    # Create output vector
-    y = torch.empty(params.m, dtype=torch.float32, device="cuda")
-    
-    # Get GPU pointers
-    A_ptr = A.data_ptr()
-    x_ptr = x.data_ptr()
-    y_ptr = y.data_ptr()
-    
-    cuda_all_inputs = [A_ptr, x_ptr, y_ptr, params.m, params.n]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)
@@ -57,15 +39,6 @@ def get_cuda_torch_inputs(params: Params):
     # For PyTorch, inputs are already in correct format
     torch_all_inputs = [A, x]
     return cuda_all_inputs, torch_all_inputs, cuda_output_tensors
-
-def cuda_input_tensor_to_ptr(cuda_all_inputs):
-    cuda_all_inputs_ptr = []
-    for input_tensor in cuda_all_inputs:
-        if isinstance(input_tensor, torch.Tensor):
-            cuda_all_inputs_ptr.append(input_tensor.data_ptr())
-        else:
-            cuda_all_inputs_ptr.append(input_tensor)
-    return cuda_all_inputs_ptr
 
 def cuda_output_tensor_transform(cuda_output):
     # For GEMV operation, no format transformation needed
