@@ -1,5 +1,6 @@
 import torch
 from eval_.common.benchmark import benchmark_kernel
+from cu2til.tools.builder import load_cuda_kernel
 
 SEED = 46
 YELLOW = "\033[93m"
@@ -174,3 +175,68 @@ def run_performance_all(triton_all_inputs, cuda_all_inputs, pytorch_all_inputs, 
         print(f"  Triton vs PyTorch speedup:    {speedup:.3f}x {'🚀' if speedup > 1 else '📉'}")
 
     return triton_kernel_ms, cuda_kernel_ms, pytorch_kernel_ms
+
+def cuda_input_tensor_to_ptr(cuda_all_inputs):
+    return [t.data_ptr() if isinstance(t, torch.Tensor) else t for t in cuda_all_inputs]
+
+def check_triton_vs_torch(get_cuda_torch_inputs, params, torch_kernel, triton_kernel, output_tensor_transform=lambda x: x, enable_perf=False):
+    
+    # Check GPU availability
+    if not torch.cuda.is_available():
+        print("❌ CUDA not available, please ensure there is a GPU environment")
+        return False
+    
+    device = torch.cuda.current_device()
+    print(f"🎮 Using GPU: {torch.cuda.get_device_name(device)}")
+
+    print(f"📋 Creating GPU test data...")
+    triton_all_inputs, torch_all_inputs, triton_output_tensors = get_cuda_torch_inputs(params)
+    output_torch = torch_kernel(*torch_all_inputs)
+    
+    print(f"⚡ Running Triton kernel...")
+    
+    triton_kernel(*triton_all_inputs)
+
+    output_triton = output_tensor_transform(triton_output_tensors[0])
+    checkok = compare_results(output_torch, output_triton, atol=1e-2, rtol=1e-2)
+    if enable_perf:
+        run_performance_test(triton_all_inputs, torch_all_inputs, triton_kernel, torch_kernel, test_type=["Triton", "PyTorch"])
+    
+    # Display sample results
+    print(f"🔬 Sample Output (first 4 values):")
+    print(f"   PyTorch : {output_torch.flatten()[:4]}")
+    print(f"   Triton  : {output_triton.flatten()[:4]}")
+    
+    return checkok
+
+def check_cuda_vs_torch(testcase_root_dir, get_cuda_torch_inputs, params, torch_kernel, get_cuda_argtypes, output_tensor_transform=lambda x: x, enable_perf=False, compile_only=False):
+    try:
+        argtypes = get_cuda_argtypes()
+        cuda_kernel = load_cuda_kernel(testcase_root_dir, argtypes, force_compile=False)
+        print(f"✅ CUDA kernel loaded successfully")
+    except Exception as e:
+        print(f"❌ CUDA library processing failed: {e}")
+        return
+
+    if compile_only:
+        print(f"🔧 Compile-only mode: CUDA kernel compilation completed successfully")
+        return
+
+    print(f"📋 Creating GPU test data...")
+    cuda_all_inputs, torch_all_inputs, cuda_output_tensors = get_cuda_torch_inputs(params)
+    cuda_all_inputs_ptr = cuda_input_tensor_to_ptr(cuda_all_inputs)
+
+    output_torch = torch_kernel(*torch_all_inputs)
+
+    print(f"⚡ Running CUDA kernel...")
+    cuda_kernel(*cuda_all_inputs_ptr)
+
+    output_cuda = output_tensor_transform(cuda_output_tensors[0])
+    checkok = compare_results(output_torch, output_cuda)
+
+    if enable_perf and checkok:
+        run_performance_test(cuda_all_inputs_ptr, torch_all_inputs, cuda_kernel, torch_kernel)
+
+    print(f"\n🔬 Sample Output (first 4 values):")
+    print(f"   PyTorch : {output_torch.flatten()[:4]}")
+    print(f"   CUDA    : {output_cuda.flatten()[:4]}")
