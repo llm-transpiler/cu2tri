@@ -712,7 +712,152 @@ The DSL automatically detects GPU architecture and enables appropriate features:
 - **Secondary**: SM89+ (Ada L40S, RTX40xx Super)
 - **Modern**: SM90+ (Hopper H100)
 
-### 13. Utility Functions
+### 13. High-Precision Math Functions
+Replace raw CUDA math intrinsics with semantic primitives:
+
+**Exponential Functions:**
+```cpp
+// FROM:
+__expf(x)
+
+// TO:
+thread_exp<fp32>(x)
+```
+
+**Reciprocal Functions:**
+```cpp
+// FROM:
+__frcp_rn(x)
+
+// TO:
+thread_rcp<fp32>(x)
+```
+
+**Maximum Functions:**
+```cpp
+// FROM:
+fmaxf(a, b)
+__hmax(a, b)
+max(a, b)
+
+// TO:
+thread_max<fp32>(a, b)     // Uses fmaxf internally
+thread_max<fp16>(a, b)     // Uses __hmax internally
+thread_max<int>(a, b)      // Generic comparison
+```
+
+**Fused Multiply-Add:**
+```cpp
+// FROM:
+__fmaf_rn(a, b, c)
+
+// TO:
+thread_fma<fp32>(a, b, c)
+```
+
+### 14. Type Conversion Primitives
+Replace direct CUDA conversion functions:
+
+```cpp
+// FROM:
+__half2float(value)
+__float2half_rn(value)
+
+// TO:
+thread_cast<fp16, fp32>(value)    // FP16 to FP32
+thread_cast<fp32, fp16>(value)    // FP32 to FP16 with rounding
+```
+
+### 15. Register Data Access Patterns
+Replace reinterpret_cast with semantic primitives:
+
+**Basic Register Casting:**
+```cpp
+// FROM:
+half *t_hptr = reinterpret_cast<half *>(&reg_array[idx]);
+float *t_fptr = reinterpret_cast<float *>(&reg_array[idx]);
+
+// TO:
+RegisterPtr<fp16> t_hptr = register_ptr_cast<fp16>(&reg_array[idx]);
+RegisterPtr<fp32> t_fptr = register_ptr_cast<fp32>(&reg_array[idx]);
+```
+
+**Element Access:**
+```cpp
+// FROM:
+half *t_hptr = reinterpret_cast<half *>(&(R_S[0][j][0]));
+float val = __half2float(t_hptr[2]);
+t_hptr[3] = __float2half_rn(result);
+
+// TO:
+RegisterPtr<fp16> t_hptr = register_ptr_cast<fp16>(&(R_S[0][j][0]));
+fp32 val = thread_cast<fp16, fp32>(t_hptr[2]);
+t_hptr[3] = thread_cast<fp32, fp16>(result);
+```
+
+### 16. Vectorized Compute Patterns
+Replace manual loops with semantic computation patterns:
+
+**Softmax Scale-Subtract-Exp Pattern:**
+```cpp
+// FROM: Manual softmax computation
+for (int i = 0; i < N; ++i) {
+    fp32 scaled = __fmaf_rn(__half2float(input[i]), scale, -max_val);
+    result[i] = __expf(scaled);
+}
+
+// TO: Semantic softmax computation
+fp16 input[4] = {input_values...};
+fp32 result[4];
+thread_softmax_scaled_mixed<4>(input, result, scale, max_val);
+```
+
+**Final Normalization Pattern:**
+```cpp
+// FROM: Manual normalization
+for (int i = 0; i < N; ++i) {
+    result[i] = __float2half_rn(scale_factor * input[i]);
+}
+
+// TO: Semantic normalization
+fp32 input[4] = {input_values...};
+fp16 result[4];
+thread_normalize_to_fp16<4>(input, result, scale_factor);
+```
+
+**Accumulator Rescaling Pattern:**
+```cpp
+// FROM: Manual FMA for accumulator update
+old_acc = __fmaf_rn(scale_factor, old_acc, new_value);
+
+// TO: Semantic accumulator rescaling
+old_acc = thread_rescale_accumulate<fp32>(old_acc, new_value, scale_factor);
+```
+
+**Vectorized Accumulator Rescaling:**
+```cpp
+// FROM: Manual loop for multiple accumulators
+for (int i = 0; i < N; ++i) {
+    old_acc[i] = __fmaf_rn(scale_factor, old_acc[i], new_value[i]);
+}
+
+// TO: Vectorized semantic operation
+thread_rescale_accumulate_vec<fp32, N>(old_acc, new_value, scale_factor);
+```
+
+**Mixed Precision Accumulator Update:**
+```cpp
+// FROM: Manual conversion and FMA
+for (int i = 0; i < N; ++i) {
+    fp32 new_val_f32 = __half2float(new_value[i]);
+    old_acc[i] = __fmaf_rn(scale_factor, old_acc[i], new_val_f32);
+}
+
+// TO: Mixed precision semantic operation
+thread_rescale_accumulate_mixed<N>(old_acc, new_value, scale_factor);
+```
+
+### 17. Utility Functions
 ```cpp
 // FROM:
 __device__ __host__ inline int div_ceil(int a, int b) { return (a + b - 1) / b; }
@@ -722,7 +867,7 @@ __device__ __host__ inline int div_ceil(int a, int b) { return (a + b - 1) / b; 
 // Usage: ceil_div(a, b)  // macro provided in template
 ```
 
-### 14. Preserve Original Logic Structure
+### 18. Preserve Original Logic Structure
 - Keep the same kernel launch configuration
 - Maintain identical thread indexing logic
 - Preserve all boundary checking and conditional logic
@@ -865,8 +1010,25 @@ After conversion, verify:
    - **Thread-level**: `thread_copy_sync(src_ptr, dst_ptr)` - all directions, all architectures
    - **Warp-level async**: `warp_copy_async(global_ptr, smem_addr)` - G2S only, SM80+
    - **Warp-level sync**: `warp_copy_sync(smem_addr, regs...)` - S2R (SM80+), R2S (SM90+)
-
-16. **Architecture-Specific Capabilities**:
+16. **Math Function Replacement**: Replace raw CUDA intrinsics with semantic primitives
+   - **Exponentials**: `__expf(x)` → `thread_exp<fp32>(x)`
+   - **Reciprocals**: `__frcp_rn(x)` → `thread_rcp<fp32>(x)`
+   - **Maximum**: `fmaxf(a,b)`, `__hmax(a,b)`, `max(a,b)` → `thread_max<T>(a,b)`
+   - **FMA**: `__fmaf_rn(a,b,c)` → `thread_fma<fp32>(a,b,c)`
+17. **Type Conversion Patterns**: Replace direct conversions with semantic primitives
+   - **FP16↔FP32**: `__half2float()`, `__float2half_rn()` → `thread_cast<SrcT, DstT>()`
+18. **Register Access Patterns**: Replace reinterpret_cast with semantic primitives
+   - **Basic casting**: `reinterpret_cast<T*>(&reg)` → `register_ptr_cast<T>(&reg)`
+   - **Element access**: `RegisterPtr<fp16> t_hptr = register_ptr_cast<fp16>(&reg)` then use `t_hptr[i]`
+   - **Element setting**: Same pattern with direct assignment `t_hptr[i] = val`
+19. **Softmax Computation Patterns**: Replace manual loops with vectorized primitives
+   - **Scale-subtract-exp**: Manual `__expf(__fmaf_rn(scale * input[i], scale, -max))` → `thread_softmax_scaled_mixed<N>()`
+   - **Final normalization**: Manual `__float2half_rn(scale * input[i])` → `thread_normalize_to_fp16<N>()`
+20. **Accumulator Update Patterns**: Replace manual FMA loops with semantic operations
+   - **Single accumulator**: `__fmaf_rn(scale, old_acc, new_val)` → `thread_rescale_accumulate<T>()`
+   - **Vectorized**: Manual loops → `thread_rescale_accumulate_vec<T, N>()`
+   - **Mixed precision**: Manual conversion + FMA → `thread_rescale_accumulate_mixed<N>()`
+21. **Architecture-Specific Capabilities**:
    - **SM70-79 (Volta/Turing)**: Only `thread_copy_sync` available
    - **SM80-89 (Ampere/Ada)**: Add `warp_copy_async` (CP.ASYNC), `warp_copy_sync` (LDMATRIX)
    - **SM90+ (Hopper)**: Add `warp_copy_sync` (STMATRIX) support
@@ -1125,6 +1287,12 @@ For every converted kernel, verify:
 - [ ] GEMM uses full 32-thread warps
 - [ ] SmemAddr only used for async copy operations
 - [ ] Consistent use of semantic pointer types throughout kernel
+- [ ] Math intrinsics replaced with `thread_*` primitives
+- [ ] Type conversions use `thread_cast<SrcT, DstT>()`
+- [ ] Register access uses `register_ptr_cast<T>()` pattern
+- [ ] Softmax patterns use vectorized `thread_softmax_*()` functions
+- [ ] Accumulator updates use `thread_rescale_accumulate*()` functions
+- [ ] No raw `reinterpret_cast` or direct CUDA intrinsics (except within primitives)
 
 ---
 

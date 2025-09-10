@@ -23,6 +23,8 @@ using ShapeInt = int;        // for dynamic shape values like M, N, K
 using TunableInt = int;      // for tunable parameters in kernel templates
 using IndexInt = int;        // for loop indices and runtime calculated values
 using TileInt = int;         // for computed tile dimensions like BM, BN, BK
+using NumInt = int;          // for parallel dimensions like warp_num, thread_num
+using IdInt = int;          // for id dimensions like warp_id, lane_id, block_id, etc.
 using SmemAddr = uint32_t;   // for shared memory addresses in PTX instructions (ldmatrix, cp.async) - from __cvta_generic_to_shared or computed from them
 
 // Memory space-aware pointer types for semantic clarity
@@ -1155,6 +1157,228 @@ __device__ inline T mul(const T& a, const T& b) {
 template<typename T>
 __device__ inline T fma(const T& a, const T& b, const T& c) {
     return a * b + c;
+}
+
+
+
+// ========================= Thread-Level Arithmetic Primitives =========================
+
+// Thread-level exponential functions
+template<typename T>
+__device__ inline T thread_exp(const T& x);
+
+template<>
+__device__ inline fp32 thread_exp<fp32>(const fp32& x) {
+    return __expf(x);
+}
+
+// Thread-level reciprocal functions
+template<typename T>
+__device__ inline T thread_rcp(const T& x);
+
+template<>
+__device__ inline fp32 thread_rcp<fp32>(const fp32& x) {
+    return __frcp_rn(x);
+}
+
+// Thread-level maximum functions
+template<typename T>
+__device__ inline T thread_max(const T& a, const T& b);
+
+template<>
+__device__ inline fp32 thread_max<fp32>(const fp32& a, const fp32& b) {
+    return fmaxf(a, b);
+}
+
+template<>
+__device__ inline fp16 thread_max<fp16>(const fp16& a, const fp16& b) {
+    return __hmax(a, b);
+}
+
+// Generic thread maximum (for other types)
+template<typename T>
+__device__ inline T thread_max(const T& a, const T& b) {
+    return a > b ? a : b;
+}
+
+// Thread-level fused multiply-add functions
+template<typename T>
+__device__ inline T thread_fma(const T& a, const T& b, const T& c);
+
+template<>
+__device__ inline fp32 thread_fma<fp32>(const fp32& a, const fp32& b, const fp32& c) {
+    return __fmaf_rn(a, b, c);
+}
+
+// ========================= Thread-Level Type Conversion Primitives =========================
+
+// Thread-level high-precision type conversions
+template<typename SrcT, typename DstT>
+__device__ inline DstT thread_cast(const SrcT& value);
+
+template<>
+__device__ inline fp32 thread_cast<fp16, fp32>(const fp16& value) {
+    return __half2float(value);
+}
+
+template<>
+__device__ inline fp16 thread_cast<fp32, fp16>(const fp32& value) {
+    return __float2half_rn(value);
+}
+
+// ========================= Thread-Level Accumulator Update Patterns =========================
+
+// Thread-level accumulator rescaling pattern: acc = scale_factor * old_acc + new_value
+template<typename T>
+__device__ inline T thread_rescale_accumulate(T old_acc, T new_value, T scale_factor) {
+    return thread_fma<T>(scale_factor, old_acc, new_value);
+}
+
+// Vectorized thread-level accumulator rescaling
+template<typename T, size_t N>
+__device__ inline void thread_rescale_accumulate_vec(T old_acc[N], const T new_value[N], T scale_factor) {
+    #pragma unroll
+    for (size_t i = 0; i < N; ++i) {
+        old_acc[i] = thread_rescale_accumulate(old_acc[i], new_value[i], scale_factor);
+    }
+}
+
+// Mixed precision thread-level accumulator rescaling (FP16 to FP32 accumulation)
+template<size_t N>
+__device__ inline void thread_rescale_accumulate_mixed(fp32 old_acc[N], const fp16 new_value[N], fp32 scale_factor) {
+    #pragma unroll
+    for (size_t i = 0; i < N; ++i) {
+        fp32 new_value_f32 = thread_cast<fp16, fp32>(new_value[i]);
+        old_acc[i] = thread_rescale_accumulate(old_acc[i], new_value_f32, scale_factor);
+    }
+}
+
+// ========================= Register Data Access Primitives =========================
+
+// Safe register reinterpretation with semantic clarity
+template<typename DstT, typename SrcT>
+__device__ inline DstT* register_cast(SrcT* reg_ptr) {
+    return reinterpret_cast<DstT*>(reg_ptr);
+}
+
+
+
+// Convenience aliases for common register casting patterns
+template<typename RegT>
+__device__ inline fp16* register_as_fp16(RegT* reg_ptr) {
+    return register_cast<fp16>(reg_ptr);
+}
+
+template<typename RegT>
+__device__ inline fp32* register_as_fp32(RegT* reg_ptr) {
+    return register_cast<fp32>(reg_ptr);
+}
+
+template<typename RegT>
+__device__ inline uint32_t* register_as_uint32(RegT* reg_ptr) {
+    return register_cast<uint32_t>(reg_ptr);
+}
+
+// ========================= Vectorized Compute Patterns =========================
+
+// Thread-level vectorized softmax computation pattern
+template<typename T, size_t N>
+struct thread_softmax_helper {
+    // Apply scale and subtract max: result[i] = exp((input[i] * scale) - max_val)
+    __device__ static void scale_sub_max_exp(const T input[N], T result[N], T scale, T max_val) {
+        #pragma unroll
+        for (size_t i = 0; i < N; ++i) {
+            result[i] = thread_exp<T>(thread_fma<T>(input[i], scale, -max_val));
+        }
+    }
+    
+    // Apply final normalization: result[i] = input[i] * scale_factor
+    __device__ static void final_normalize(T input[N], T scale_factor) {
+        #pragma unroll
+        for (size_t i = 0; i < N; ++i) {
+            input[i] = input[i] * scale_factor;
+        }
+    }
+};
+
+// Specialized softmax computation for mixed precision (FP16 input, FP32 computation)
+template<size_t N>
+struct thread_softmax_helper<fp16, N> {
+    __device__ static void scale_sub_max_exp(const fp16 input[N], fp32 result[N], fp32 scale, fp32 max_val) {
+        #pragma unroll
+        for (size_t i = 0; i < N; ++i) {
+            fp32 input_f32 = thread_cast<fp16, fp32>(input[i]);
+            result[i] = thread_exp<fp32>(thread_fma<fp32>(input_f32, scale, -max_val));
+        }
+    }
+    
+    __device__ static void final_normalize_to_fp16(const fp32 input[N], fp16 result[N], fp32 scale_factor) {
+        #pragma unroll
+        for (size_t i = 0; i < N; ++i) {
+            fp32 normalized = input[i] * scale_factor;
+            result[i] = thread_cast<fp32, fp16>(normalized);
+        }
+    }
+};
+
+// Thread-level softmax computation API
+template<typename T, size_t N>
+__device__ inline void thread_softmax_scaled(const T input[N], T result[N], T scale, T max_val) {
+    thread_softmax_helper<T, N>::scale_sub_max_exp(input, result, scale, max_val);
+}
+
+template<typename T, size_t N>
+__device__ inline void thread_normalize(T input[N], T scale_factor) {
+    thread_softmax_helper<T, N>::final_normalize(input, scale_factor);
+}
+
+// Mixed precision thread-level softmax computation
+template<size_t N>
+__device__ inline void thread_softmax_scaled_mixed(const fp16 input[N], fp32 result[N], fp32 scale, fp32 max_val) {
+    thread_softmax_helper<fp16, N>::scale_sub_max_exp(input, result, scale, max_val);
+}
+
+template<size_t N>
+__device__ inline void thread_normalize_to_fp16(const fp32 input[N], fp16 result[N], fp32 scale_factor) {
+    thread_softmax_helper<fp16, N>::final_normalize_to_fp16(input, result, scale_factor);
+}
+
+
+
+// ========================= Register Element Access Helpers =========================
+
+// Safe element access for register arrays with type conversion
+template<typename ElementT, typename RegT, size_t RegIdx>
+__device__ inline ElementT register_element_get(const RegT reg_array[], size_t element_idx) {
+    const ElementT* element_ptr = register_cast<const ElementT>(&reg_array[RegIdx]);
+    return element_ptr[element_idx];
+}
+
+template<typename ElementT, typename RegT, size_t RegIdx>
+__device__ inline void register_element_set(RegT reg_array[], size_t element_idx, ElementT value) {
+    ElementT* element_ptr = register_cast<ElementT>(&reg_array[RegIdx]);
+    element_ptr[element_idx] = value;
+}
+
+// Convenience functions for common element access patterns
+template<typename RegT>
+__device__ inline fp16 register_get_fp16(const RegT reg_array[], size_t reg_idx, size_t element_idx) {
+    return register_element_get<fp16, RegT, 0>(reg_array + reg_idx, element_idx);
+}
+
+template<typename RegT>
+__device__ inline void register_set_fp16(RegT reg_array[], size_t reg_idx, size_t element_idx, fp16 value) {
+    register_element_set<fp16, RegT, 0>(reg_array + reg_idx, element_idx, value);
+}
+
+template<typename RegT>
+__device__ inline fp32 register_get_fp32(const RegT reg_array[], size_t reg_idx, size_t element_idx) {
+    return register_element_get<fp32, RegT, 0>(reg_array + reg_idx, element_idx);
+}
+
+template<typename RegT>
+__device__ inline void register_set_fp32(RegT reg_array[], size_t reg_idx, size_t element_idx, fp32 value) {
+    register_element_set<fp32, RegT, 0>(reg_array + reg_idx, element_idx, value);
 }
 
 // ========================= PyTorch Integration Primitives =========================

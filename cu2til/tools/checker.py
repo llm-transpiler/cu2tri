@@ -15,19 +15,20 @@ BLUE = ""
 GREEN = ""
 BOLD = ""
 END = ""
-def compare_results(output_torch, output_cuda, atol=1e-2, rtol=1e-2):
+
+def compare_results(output_ref, output_test, atol=1e-2, rtol=1e-2, test_type=["PyTorch", "CUDA"]):
     """Compare results from two implementations"""
     # Ensure both tensors are on the same device for comparison
-    if output_torch.device != output_cuda.device:
-        output_torch = output_torch.to(output_cuda.device)
+    if output_ref.device != output_test.device:
+        output_ref = output_ref.to(output_test.device)
     
-    output_cuda = output_cuda.to(torch.float32)
-    output_torch = output_torch.to(torch.float32)
-    diff = torch.abs(output_torch - output_cuda)
+    output_test = output_test.to(torch.float32)
+    output_ref = output_ref.to(torch.float32)
+    diff = torch.abs(output_ref - output_test)
     max_diff = torch.max(diff)
     mean_diff = torch.mean(diff)
     
-    rel_err = diff / torch.maximum(torch.abs(output_torch), torch.tensor(1e-9, device=output_torch.device, dtype=torch.float32))
+    rel_err = diff / torch.maximum(torch.abs(output_ref), torch.tensor(1e-9, device=output_ref.device, dtype=torch.float32))
     max_rel_err = torch.max(rel_err)
     mean_rel_err = torch.mean(rel_err)
     
@@ -37,7 +38,7 @@ def compare_results(output_torch, output_cuda, atol=1e-2, rtol=1e-2):
     print("="*80)
     
     # Print tensor shape info
-    shape_info = f"Tensor Shape: {tuple(output_torch.shape)}, Total Elements: {output_torch.numel():,}"
+    shape_info = f"Tensor Shape: {tuple(output_ref.shape)}, Total Elements: {output_ref.numel():,}"
     print(f"📊 {shape_info}")
     print("-" * 80)
     
@@ -73,15 +74,15 @@ def compare_results(output_torch, output_cuda, atol=1e-2, rtol=1e-2):
     
     
     # Print PyTorch values
-    torch_vals = [f"{output_torch.flatten()[idx]:.8f}" for idx in abs_err_indices]
-    print(f"{'PyTorch':<15} {' '.join([f'{v:>18}' for v in torch_vals])}")
+    torch_vals = [f"{output_ref.flatten()[idx]:.8f}" for idx in abs_err_indices]
+    print(f"{test_type[0]:<15} {' '.join([f'{v:>18}' for v in torch_vals])}")
     
     # Print CUDA values
-    cuda_vals = [f"{output_cuda.flatten()[idx]:.8f}" for idx in abs_err_indices]
-    print(f"{'CUDA':<15} {' '.join([f'{v:>18}' for v in cuda_vals])}")
+    cuda_vals = [f"{output_test.flatten()[idx]:.8f}" for idx in abs_err_indices]
+    print(f"{test_type[1]:<15} {' '.join([f'{v:>18}' for v in cuda_vals])}")
     
     # Print differences
-    diffs = [f"{output_torch.flatten()[idx] - output_cuda.flatten()[idx]:.8f}" for idx in abs_err_indices]
+    diffs = [f"{output_ref.flatten()[idx] - output_test.flatten()[idx]:.8f}" for idx in abs_err_indices]
     print(f"{'Diff':<15} {' '.join([f'{d:>18}' for d in diffs])}")
     
     # Print indices
@@ -100,7 +101,7 @@ def compare_results(output_torch, output_cuda, atol=1e-2, rtol=1e-2):
     print("-" * 80)
     
     # Print absolute differences
-    abs_diffs = [f"{torch.abs(output_torch.flatten()[idx] - output_cuda.flatten()[idx]):.2e}" for idx in rel_err_indices]
+    abs_diffs = [f"{torch.abs(output_ref.flatten()[idx] - output_test.flatten()[idx]):.2e}" for idx in rel_err_indices]
     print(f"{'Abs_Err':<15} {' '.join([f'{d:>18}' for d in abs_diffs])}")
     
     # Print relative error values
@@ -109,15 +110,15 @@ def compare_results(output_torch, output_cuda, atol=1e-2, rtol=1e-2):
     print(f"{RED}{rel_err_line}{END}")
     
     # Print PyTorch values
-    torch_vals = [f"{output_torch.flatten()[idx]:.8f}" for idx in rel_err_indices]
-    print(f"{'PyTorch':<15} {' '.join([f'{v:>18}' for v in torch_vals])}")
+    torch_vals = [f"{output_ref.flatten()[idx]:.8f}" for idx in rel_err_indices]
+    print(f"{test_type[0]:<15} {' '.join([f'{v:>18}' for v in torch_vals])}")
     
     # Print CUDA values
-    cuda_vals = [f"{output_cuda.flatten()[idx]:.8f}" for idx in rel_err_indices]
-    print(f"{'CUDA':<15} {' '.join([f'{v:>18}' for v in cuda_vals])}")
+    cuda_vals = [f"{output_test.flatten()[idx]:.8f}" for idx in rel_err_indices]
+    print(f"{test_type[1]:<15} {' '.join([f'{v:>18}' for v in cuda_vals])}")
     
     # Print differences
-    diffs = [f"{output_torch.flatten()[idx] - output_cuda.flatten()[idx]:.8f}" for idx in rel_err_indices]
+    diffs = [f"{output_ref.flatten()[idx] - output_test.flatten()[idx]:.8f}" for idx in rel_err_indices]
     print(f"{'Diff':<15} {' '.join([f'{d:>18}' for d in diffs])}")
     
     # Print indices
@@ -126,7 +127,7 @@ def compare_results(output_torch, output_cuda, atol=1e-2, rtol=1e-2):
     
     # Final result
     print("\n" + "="*80)
-    is_close = torch.allclose(output_torch, output_cuda, atol=atol, rtol=rtol)
+    is_close = torch.allclose(output_ref, output_test, atol=atol, rtol=rtol)
     if is_close:
         print(f"✅ RESULT: Tensors match within tolerance (atol={atol:.0e}, rtol={rtol:.0e})")
         status = "PASSED"
