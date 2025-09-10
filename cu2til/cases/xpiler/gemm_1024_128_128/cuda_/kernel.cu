@@ -4,7 +4,7 @@
 
 using namespace nvcuda;
 
-__global__ void kernel(half *A, half *B, float *C) {
+__global__ void _cuda_kernel_impl(half *A, half *B, float *C) {
   wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
   wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> b_frag;
   wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag;
@@ -33,5 +33,5 @@ extern "C" void cuda_kernel(half *A, half *B, float *C,  int m, int k, int n) {
   dim3 blockSize(32);
   dim3 numBlocks((n + 16 - 1) / 16, (m + 16 - 1) / 16);
   
-  kernel<<<numBlocks, blockSize>>>(A, B, C);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(A, B, C);
 }

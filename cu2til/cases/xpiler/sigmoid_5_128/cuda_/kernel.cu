@@ -1,7 +1,7 @@
 #include <assert.h>
 
 __global__ void __launch_bounds__(640)
-    kernel(float *__restrict__ A, float *__restrict__ compute) {
+    _cuda_kernel_impl(float *__restrict__ A, float *__restrict__ compute) {
   compute[((int)threadIdx.x)] =
       (1.000000e+00f /
        (1.000000e+00f + __expf((0.000000e+00f - A[((int)threadIdx.x)]))));
@@ -11,5 +11,5 @@ extern "C" void cuda_kernel(float *A, float *C, int size) {
   dim3 blockSize(640);
   dim3 numBlocks((size + 640 - 1) / 640);
 
-  kernel<<<numBlocks, blockSize>>>(A, C);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(A, C);
 }

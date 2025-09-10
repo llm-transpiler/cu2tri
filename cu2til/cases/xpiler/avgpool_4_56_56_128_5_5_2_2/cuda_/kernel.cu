@@ -1,7 +1,7 @@
 #include <assert.h>
 
 __global__ void __launch_bounds__(1024)
-    kernel(float *__restrict__ A, float *__restrict__ pool_avg) {
+    _cuda_kernel_impl(float *__restrict__ A, float *__restrict__ pool_avg) {
   float pool_sum[1];
   pool_sum[0] = 0.000000e+00f;
   for (int rv0 = 0; rv0 < 5; ++rv0) {
@@ -34,5 +34,5 @@ extern "C" void cuda_kernel(float *input, float *output, int batch_size,
   dim3 blockSize(1024);
   dim3 numBlocks((output_size + blockSize.x - 1) / blockSize.x);
 
-  kernel<<<numBlocks, blockSize>>>(input, output);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(input, output);
 }

@@ -1,4 +1,4 @@
-__global__ void kernel(float *Q, float *K, float *V,
+__global__ void _cuda_kernel_impl(float *Q, float *K, float *V,
                                              float *output) {
 
   __shared__ float score[36]; // 使用共享内存存储 score, 大小为 heads * heads
@@ -49,5 +49,5 @@ extern "C" void cuda_kernel(float *queries, float *keys, float *values,
   dim3 grid(batch_size, seq_len);
   dim3 block(num_heads);
 
-  kernel<<<grid, block>>>(queries, keys, values, output);
+  _cuda_kernel_impl<<<grid, block>>>(queries, keys, values, output);
 }

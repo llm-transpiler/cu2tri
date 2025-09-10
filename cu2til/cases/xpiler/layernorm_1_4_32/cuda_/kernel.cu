@@ -1,6 +1,6 @@
 #include <assert.h>
 
-__global__ void kernel(float *A, float *gamma, float *beta, float *B) {
+__global__ void _cuda_kernel_impl(float *A, float *gamma, float *beta, float *B) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < 4) {
     float mean = 0.0;
@@ -50,5 +50,5 @@ extern "C" void cuda_kernel(float *A, float *gamma, float *beta, float *B,
   int block_size = 4;
   int num_blocks = (batch_size * seq_length + block_size - 1) / block_size;
   
-  kernel<<<num_blocks, block_size>>>(A, gamma, beta, B);
+  _cuda_kernel_impl<<<num_blocks, block_size>>>(A, gamma, beta, B);
 }

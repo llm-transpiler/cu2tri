@@ -1,6 +1,6 @@
 #include <assert.h>
 
-__global__ void conv1d_kernel(float *input, float *kernel, float *output) {
+__global__ void _cuda_kernel_impl(float *input, float *kernel, float *output) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < 5) {
     output[idx] = 0;
@@ -15,5 +15,5 @@ extern "C" void cuda_kernel(float *input, float *kernel, float *output,
   dim3 blockSize(5);
   dim3 numBlocks((output_size + blockSize.x - 1) / blockSize.x);
   
-  conv1d_kernel<<<numBlocks, blockSize>>>(input, kernel, output);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(input, kernel, output);
 }

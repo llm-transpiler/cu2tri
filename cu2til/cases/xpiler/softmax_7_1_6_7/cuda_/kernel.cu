@@ -1,7 +1,7 @@
 #include <assert.h>
 
 __global__ void __launch_bounds__(42)
-    kernel(float *__restrict__ A, float *__restrict__ T_softmax_norm) {
+    _cuda_kernel_impl(float *__restrict__ A, float *__restrict__ T_softmax_norm) {
   if (threadIdx.x < 42) {
     int rowStart = threadIdx.x * 7;
 
@@ -28,5 +28,5 @@ extern "C" void cuda_kernel(float *A, float *C, int size1, int size2) {
   dim3 blockSize(42);
   dim3 numBlocks((size1 + 42 - 1) / 42);
 
-  kernel<<<numBlocks, blockSize>>>(A, C);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(A, C);
 }

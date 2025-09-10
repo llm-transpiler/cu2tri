@@ -1,7 +1,7 @@
 #include <assert.h>
 
 __global__ void __launch_bounds__(1024)
-    kernel(float *__restrict__ A, float *__restrict__ B,
+    _cuda_kernel_impl(float *__restrict__ A, float *__restrict__ B,
         float *__restrict__ T_add) {
   for (int ax0_ax1_fused_ax2_fused_ax3_fused_outer = 0;
        ax0_ax1_fused_ax2_fused_ax3_fused_outer < 8;
@@ -25,5 +25,5 @@ extern "C" void cuda_kernel(float *A, float *B, float *C, int size) {
   dim3 blockSize(1024);
   dim3 numBlocks(256);
   
-  kernel<<<numBlocks, blockSize>>>(A, B, C);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(A, B, C);
 }

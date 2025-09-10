@@ -9,7 +9,7 @@ __device__ float geluf(float x) {
 }
 
 __global__ void __launch_bounds__(60)
-    kernel(float *__restrict__ A, float *__restrict__ compute) {
+    _cuda_kernel_impl(float *__restrict__ A, float *__restrict__ compute) {
   compute[((int)threadIdx.x)] = geluf(A[((int)threadIdx.x)]);
 }
 
@@ -17,5 +17,5 @@ extern "C" void cuda_kernel(float *A, float *C, int size) {
   dim3 blockSize(60);
   dim3 numBlocks((size + 60 - 1) / 60);
 
-  kernel<<<numBlocks, blockSize>>>(A, C);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(A, C);
 }

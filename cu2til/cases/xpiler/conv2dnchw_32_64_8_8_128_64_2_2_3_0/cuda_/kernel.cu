@@ -1,6 +1,6 @@
 #include <assert.h>
 
-__global__ void conv2dnchw(float *input, float *kernel, float *output) {
+__global__ void _cuda_kernel_impl(float *input, float *kernel, float *output) {
   int bs = blockIdx.z;  // 批次索引
   int oc = blockIdx.x;  // 输出通道索引
   int oh = threadIdx.y; // 输出高度索引
@@ -43,5 +43,5 @@ extern "C" void cuda_kernel(float *input, float *kernel, float *output,
   dim3 blockSize(output_width, output_height);
   dim3 numBlocks(output_channels, 1, batch_size);
   
-  conv2dnchw<<<numBlocks, blockSize>>>(input, kernel, output);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(input, kernel, output);
 }

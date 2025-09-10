@@ -1,118 +1,82 @@
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
-import numpy as np
-import ctypes
 import os
-import time
-import subprocess
 import sys
-from torch.nn import functional as F
-from cu2til.tools.builder import compile_cuda_kernel, CUDA_FOLDER_NAME, SEED, load_cuda_kernel
+import argparse
+from cu2til.tools.builder import load_cuda_kernel
+from get_data import get_cuda_torch_inputs, Params, cuda_output_tensor_transform, cuda_input_tensor_to_ptr
+from torch_.ref import torch_kernel
+from cu2til.tools.checker import compare_results, run_performance_test
 
 TESTCASE_ROOT_DIR = os.path.dirname(__file__)
 
-import sys
 sys.path.insert(0, TESTCASE_ROOT_DIR)
 
-from torch_.ref import torch_kernel
-from cu2til.tools.checker import compare_results
-
-# 测试参数配置
-DIM1, DIM2, DIM3 = 3, 4, 5
-SHAPE = (DIM1, DIM2, DIM3)
-SIZE1 = DIM1 * DIM2  # 12个softmax
-SIZE2 = DIM3         # 每个softmax长度为5
-TOTAL_ELEMENTS = DIM1 * DIM2 * DIM3
-
-def get_inputs():
-    """Create test data"""
-    torch.manual_seed(SEED)
-    
-    # Create data with configured shape
-    x = torch.randn(*SHAPE, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    return x,
-
-def run_performance_test(x, cuda_kernel):
-    """Run GPU performance test"""
-    print(f"\n🚀 GPU performance test:")
-    
-    from eval_.common.benchmark import benchmark_kernel
-    torch_gpu_avg = benchmark_kernel(torch_kernel, (x,))
-    
-    """Call CUDA softmax kernel - directly use GPU tensor"""
-    # Ensure input tensor is on GPU and contiguous
-    x_gpu = x.cuda().contiguous()
-    
-    # Create output tensor
-    output_gpu = torch.empty_like(x_gpu)
-    
-    # Get GPU pointers
-    x_ptr = x_gpu.data_ptr()
-    output_ptr = output_gpu.data_ptr()
-    cuda_avg = benchmark_kernel(cuda_kernel, (x_ptr, output_ptr, SIZE1, SIZE2))
-    print(f"\n📊 GPU performance comparison:")
-    print(f"  PyTorch (GPU): {torch_gpu_avg:7.3f} ms")
-    print(f"  CUDA kernel:   {cuda_avg:7.3f} ms")
-    
-    if cuda_avg > 0:
-        speedup = torch_gpu_avg / cuda_avg
-        print(f"  CUDA speedup:    {speedup:.2f}x {'🚀' if speedup > 1 else '📉'}")
-        
-    return torch_gpu_avg, cuda_avg
-
-def main():
-    print("🚀 SOFTMAX CUDA automatic test")
+def check_cuda_vs_torch(testname="Softmax", enable_perf=False, compile_only=False):
+    print(f"🚀 {testname} CUDA automatic test")
     print("=" * 55)
     
     # Check GPU availability
     if not torch.cuda.is_available():
         print("❌ CUDA not available, please ensure there is a GPU environment")
-        return
+        return False
     
     device = torch.cuda.current_device()
     print(f"🎮 Using GPU: {torch.cuda.get_device_name(device)}")
-    print(f"💾 GPU memory: {torch.cuda.get_device_properties(device).total_memory / 1024**3:.1f} GB")
     
-    # Test parameters
-    print(f"📊 Test parameters: shape={SHAPE}, total_elements={TOTAL_ELEMENTS}")
+    # Parameter settings (inferred from filename) 
+    params = Params()
+    print(f"📊 Test parameters: {testname} shape={params.shape}, total_elements={params.total_elements}, dim={params.dim}")
     
     # Automatically compile and load CUDA library
     try:
-        argtypes = [
-            ctypes.c_void_p,  # input (GPU pointer)
-            ctypes.c_void_p,  # output (GPU pointer)
-            ctypes.c_int,     # size1
-            ctypes.c_int      # size2
-        ]
+        from get_data import get_cuda_argtypes
+        argtypes = get_cuda_argtypes()
         cuda_kernel = load_cuda_kernel(TESTCASE_ROOT_DIR, argtypes, force_compile=True)
         print(f"✅ CUDA kernel loaded successfully")
     except Exception as e:
         print(f"❌ CUDA library processing failed: {e}")
-        return
+        return False
 
-    print(f"\n📋 Creating GPU test data...")
-    inputs = get_inputs()
-    x = inputs[0]
-    output_torch = torch_kernel(x)
-    # Run CUDA implementation
-    print(f"\n⚡ Running CUDA kernel...")
-    # Create output tensor
-    output_cuda = torch.empty_like(x)
+    if compile_only:
+        print(f"🔧 Compile-only mode: CUDA kernel compilation completed successfully")
+        return True
+
+    print(f"📋 Creating GPU test data...")
     
-    # Get GPU pointers
-    x_ptr = x.cuda().contiguous().data_ptr()
-    output_ptr = output_cuda.data_ptr()
+    cuda_all_inputs, torch_all_inputs, cuda_output_tensors = get_cuda_torch_inputs(params)
+    cuda_all_inputs_ptr = cuda_input_tensor_to_ptr(cuda_all_inputs)
+    output_torch = torch_kernel(*torch_all_inputs)
+    
+    # Run CUDA implementation
+    print(f"⚡ Running CUDA kernel...")
     
     # Call CUDA kernel
-    cuda_kernel(x_ptr, output_ptr, SIZE1, SIZE2)
-    compare_results(output_torch, output_cuda, atol=1e-4)
-    run_performance_test(x, cuda_kernel)
+    cuda_kernel(*cuda_all_inputs_ptr)
+    
+    # transform the output tensor to the specific layout
+    output_cuda = cuda_output_tensor_transform(cuda_output_tensors[0])
+    checkok = compare_results(output_torch, output_cuda, atol=1e-5, rtol=1e-4)  # relaxed for exp/sum precision
+    if enable_perf:
+        run_performance_test(cuda_all_inputs_ptr, torch_all_inputs, cuda_kernel, torch_kernel, test_type=["CUDA", "PyTorch"])
     
     # Display sample results
-    print(f"\n🔬 Sample Output (first 5 values):")
-    print(f"   PyTorch: {output_torch.flatten()[:5]}")
-    print(f"   CUDA:    {output_cuda.flatten()[:5]}")
+    print(f"🔬 Sample Output (first 4 values):")
+    print(f"   PyTorch : {output_torch.flatten()[:4]}")
+    print(f"   CUDA    : {output_cuda.flatten()[:4]}")
     
+    return checkok
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='CUDA Softmax kernel test')
+    parser.add_argument('--compile-only', action='store_true', 
+                       help='Only compile the CUDA kernel without running tests (default: False)')
+    parser.add_argument('--no-perf', action='store_true',
+                       help='Disable performance testing (default: False, performance testing enabled)')
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    enable_perf = not args.no_perf  # Default is True, disable with --no-perf
+    compile_only = args.compile_only  # Default is False
+    
+    check_cuda_vs_torch(testname="Softmax", enable_perf=enable_perf, compile_only=compile_only)

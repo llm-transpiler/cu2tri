@@ -1,7 +1,7 @@
 #include <assert.h>
 
 __global__ void __launch_bounds__(1024)
-    kernel(float *__restrict__ A, float *__restrict__ T_softmax_exp) {
+    _cuda_kernel_impl(float *__restrict__ A, float *__restrict__ T_softmax_exp) {
   int idx = blockIdx.x * 1024 + threadIdx.x;
   if (idx < 1380) {
 
@@ -28,5 +28,5 @@ extern "C" void cuda_kernel(float *A, float *C, int size1, int size2) {
   dim3 blockSize(1024);
   dim3 numBlocks((size1 + 1024 - 1) / 1024);
 
-  kernel<<<numBlocks, blockSize>>>(A, C);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(A, C);
 }

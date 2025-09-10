@@ -1,6 +1,6 @@
 #include <assert.h>
 
-__global__ void conv2d_kernel(float *input, float *kernel, float *output) {
+__global__ void _cuda_kernel_impl(float *input, float *kernel, float *output) {
   int bs = blockIdx.z;  // 批次索引
   int oc = threadIdx.x; // 输出通道索引
   int oh = blockIdx.y;  // 输出高度索引
@@ -40,5 +40,5 @@ extern "C" void cuda_kernel(float *input, float *filter, float *output,
   dim3 blockSize(output_channels); // 每个块中有 output_channels 个线程
   dim3 numBlocks(output_width, output_height, batch_size); // 输出的宽、高以及批次
   
-  conv2d_kernel<<<numBlocks, blockSize>>>(input, filter, output);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(input, filter, output);
 }

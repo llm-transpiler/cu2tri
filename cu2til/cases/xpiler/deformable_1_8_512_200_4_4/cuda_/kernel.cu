@@ -1,5 +1,5 @@
 __global__ void __launch_bounds__(128)
-    kernel(float *__restrict__ attention_weights_,
+    _cuda_kernel_impl(float *__restrict__ attention_weights_,
                float *__restrict__ output_,
                float *__restrict__ sampling_locations_,
                float *__restrict__ value_,
@@ -142,5 +142,5 @@ extern "C" void cuda_kernel(float *value, int *value_spatial_shapes,
   dim3 blockSize(d / 4);  // blockSize(128)
   dim3 numBlocks(lq, n, m);  // numBlocks(200, 1, 8)
   
-  kernel<<<numBlocks, blockSize>>>(attention_weights, output, sampling_locations, value, level_start_index, value_spatial_shapes);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(attention_weights, output, sampling_locations, value, level_start_index, value_spatial_shapes);
 }

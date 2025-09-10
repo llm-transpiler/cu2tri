@@ -1,6 +1,6 @@
 #include <assert.h>
 
-__global__ void depthwiseconv_kernel(const float *input, const float *filter,
+__global__ void _cuda_kernel_impl(const float *input, const float *filter,
                                       float *output) {
   int tid_x = blockIdx.x * blockDim.x + threadIdx.x;
   int tid_y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -40,5 +40,5 @@ extern "C" void cuda_kernel(float *input, float *kernel, float *output,
                  (output_height + blockSize.y - 1) / blockSize.y,
                  input_channels); // 每个通道使用一个块
   
-  depthwiseconv_kernel<<<numBlocks, blockSize>>>(input, kernel, output);
+  _cuda_kernel_impl<<<numBlocks, blockSize>>>(input, kernel, output);
 }
