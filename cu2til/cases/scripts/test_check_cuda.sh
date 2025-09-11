@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 # ============================================================================
@@ -256,20 +255,20 @@ passed_cases=0
 failed_cases=0
 
 echo "========================================"
-echo "开始执行CUDA测试 (共${#case_type_list[@]}种case类型)"
-echo "要测试的类型: ${case_type_list[*]}"
+echo "Starting CUDA tests (Total ${#case_type_list[@]} case types)"
+echo "Case types to test: ${case_type_list[*]}"
 echo "========================================"
 
 # 遍历指定的case类型列表
 for case_type in "${case_type_list[@]}"; do
     # 检查该case类型是否在定义中存在
     if [[ ! -v case_types[$case_type] ]]; then
-        echo "⚠️  警告: 未找到case类型 '$case_type' 的定义，跳过..."
+        echo "⚠️  WARNING: Case type '$case_type' not found, skipping..."
         continue
     fi
     total_case_types=$((total_case_types + 1))
     echo ""
-    echo "📁 正在测试 Case类型 #${total_case_types}: ${case_type} ($(echo "${case_type}" | tr '[:lower:]' '[:upper:]'))"
+    echo "📁 Testing Case type #${total_case_types}: ${case_type} ($(echo "${case_type}" | tr '[:lower:]' '[:upper:]'))"
     echo "=========================================="
     
     case_count=0
@@ -283,8 +282,10 @@ for case_type in "${case_type_list[@]}"; do
     for folder in "${case_folders[@]}"; do
         case_count=$((case_count + 1))
         total_cases=$((total_cases + 1))
-        
-        echo "  🔄 [${case_count}/8] 测试案例: $(basename "$folder")"
+        echo ""
+        echo "----------------------------------------"
+        echo ""
+        echo "  🔄 [${case_count}/8] Testing case: $(basename "$folder")"
         
         # 检查文件夹是否存在
         if [ -d "$folder" ]; then
@@ -295,17 +296,17 @@ for case_type in "${case_type_list[@]}"; do
             if [ -f "check_cuda.py" ]; then
                 # 运行测试并捕获退出状态
                 # if python check_cuda.py > /dev/null 2>&1; then
-                if python check_cuda.py 2>&1; then
-                    echo "    ✅ 通过: $(basename "$folder")"
+                if python check_cuda.py ${PERF_FLAG} 2>&1; then
+                    # echo "    ✅ PASSED: $(basename "$folder")"
                     passed_cases=$((passed_cases + 1))
                     type_passed=$((type_passed + 1))
                 else
-                    echo "    ❌ 失败: $(basename "$folder")"
+                    echo "    ❌ FAILED: $(basename "$folder")"
                     failed_cases=$((failed_cases + 1))
                     type_failed=$((type_failed + 1))
                 fi
             else
-                echo "    ⚠️  警告: 在 $folder 中没有找到 check_cuda.py"
+                echo "    ⚠️  WARNING: No check_cuda.py found in $folder"
                 failed_cases=$((failed_cases + 1))
                 type_failed=$((type_failed + 1))
             fi
@@ -313,26 +314,26 @@ for case_type in "${case_type_list[@]}"; do
             # 返回原来的目录
             cd - > /dev/null
         else
-            echo "    ❌ 错误: 文件夹 $folder 不存在"
+            echo "    ❌ ERROR: Folder $folder does not exist"
             failed_cases=$((failed_cases + 1))
             type_failed=$((type_failed + 1))
         fi
     done
     
-    echo "  📊 ${case_type} 类型总结: 通过 ${type_passed}/${case_count}, 失败 ${type_failed}/${case_count}"
+    echo "  📊 ${case_type} Summary: Passed ${type_passed}/${case_count}, Failed ${type_failed}/${case_count}"
 done
 
 echo ""
 echo "========================================"
-echo "🎉 所有测试完成！最终统计:"
+echo "🎉 All tests completed! Final statistics:"
 echo "========================================"
-echo "📊 测试类型总数: ${total_case_types}/${#case_type_list[@]}"
-echo "📊 测试案例总数: ${total_cases}"
-echo "✅ 通过案例数量: ${passed_cases}"
-echo "❌ 失败案例数量: ${failed_cases}"
+echo "📊 Total case types tested: ${total_case_types}/${#case_type_list[@]}"
+echo "📊 Total test cases: ${total_cases}"
+echo "✅ Passed cases: ${passed_cases}"
+echo "❌ Failed cases: ${failed_cases}"
 if [ "$total_cases" -gt 0 ]; then
-    echo "📈 成功率: $(( passed_cases * 100 / total_cases ))%"
+    echo "📈 Success rate: $(( passed_cases * 100 / total_cases ))%"
 else
-    echo "📈 成功率: N/A (没有测试案例)"
+    echo "📈 Success rate: N/A (no test cases)"
 fi
 echo "========================================"
