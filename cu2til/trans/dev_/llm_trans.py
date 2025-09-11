@@ -1,4 +1,4 @@
-from xpiler_case_config import XPILER_ALL_CASES
+from case_config import XPILER_ALL_CASES
 from openai import OpenAI
 import os
 import shutil
@@ -15,8 +15,9 @@ from llm import openai_llm_call, CallingIdentifier, get_api_params_method, make_
 dotenv.load_dotenv()
 # run_model = "qwen"
 # run_model = "gemini"
-run_model = "deepseek"
-run_model = "claude"
+# run_model = "deepseek"
+# run_model = "claude"
+run_model = "gpt"
 get_api_param = get_api_param_openai_default
 model_name = "DEFAULT_MODEL_NAME"
 if run_model == "qwen":
@@ -26,8 +27,16 @@ if run_model == "qwen":
         api_key="EMPTY"
     )
     get_api_param = get_api_params_method(CallingIdentifier.OPENAI_OFFICIAL)
+elif run_model == "gpt":
+    model_name = "openai/gpt-5"
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+    )
+    get_api_param = get_api_params_method(CallingIdentifier.OPENAI_OPENROUTER)
 elif run_model == "gemini":
     model_name = "gemini-2.5-pro"
+    model_name = "gemini-2.5-flash"
     client = OpenAI(
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         api_key=os.getenv("GEMINI_API_KEY")
@@ -37,7 +46,8 @@ elif run_model == "deepseek":
     model_name = "deepseek-reasoner"
     client = OpenAI(
         api_key=os.getenv("DEEPSEEK_API_KEY"),
-        base_url="https://api.deepseek.com")
+        base_url="https://api.deepseek.com"
+    )
     get_api_param = get_api_params_method(CallingIdentifier.DEEPSEEK_OPENAI)
 elif run_model == "claude":
     model_name = "anthropic/claude-sonnet-4"
@@ -45,7 +55,8 @@ elif run_model == "claude":
         base_url="https://openrouter.ai/api/v1",
         api_key=os.getenv("OPENROUTER_API_KEY"),
     )
-    get_api_param = get_api_params_method(CallingIdentifier.ANTHROPIC_OPENROUTER)
+    get_api_param = get_api_params_method(
+        CallingIdentifier.ANTHROPIC_OPENROUTER)
 else:
     raise ValueError(f"Unsupported model: {run_model}")
 
@@ -59,6 +70,7 @@ TESTSET_ROOT_DIR = Path("/workspace/cu2til/cases/xpiler")
 WORK_DIR = Path(__file__).parent.absolute()
 TEMPERATURE = 0.35
 TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
+# TIMESTAMP = "20250910_210335"
 WORK_DIR = Path(__file__).parent.absolute() / "".join(c if c.isalnum()
                                                       else "_" for c in model_name.split("/")[-1].lower()) / TIMESTAMP
 MAX_ROUNDS = 5
@@ -73,9 +85,41 @@ def get_first_case_from_each_type():
     return first_cases
 
 
+def get_failed_cases():
+    """Extract failed case types for focused testing."""
+    failed_case_types = [
+        # "deformable",
+        # "depthwiseconv",
+        # "gelu",
+        # "gemm",
+        # "gemv",
+        # "layernorm",
+        # "maxpool",
+        # "mha",
+        # "minpool",
+        # "relu",
+        # "rmsnorm",
+        # "sigmoid",
+        # "sign",
+        # "softmax",
+        # "sumpool"
+    ]
+
+    failed_cases = {}
+    for case_type in failed_case_types:
+        if case_type in XPILER_ALL_CASES:
+            failed_cases[case_type] = XPILER_ALL_CASES[case_type]
+        else:
+            print(
+                f"⚠️ Warning: case_type '{case_type}' not found in XPILER_ALL_CASES")
+
+    return failed_cases
+
+
 # Configuration - can be changed to test different cases
-# AVAILABLE_FIRST_CASES = get_first_case_from_each_type()
-AVAILABLE_FIRST_CASES = XPILER_ALL_CASES
+# AVAILABLE_CASES = get_first_case_from_each_type()
+AVAILABLE_CASES = XPILER_ALL_CASES
+# AVAILABLE_CASES = get_failed_cases()
 
 
 def run_single_case_translation(case_type, case_name):
@@ -145,7 +189,8 @@ def run_single_case_translation(case_type, case_name):
     # 开始自动化测试和修复流程
     print(f"\n🔄 Starting automated testing and fixing process...")
 
-    return run_testing_loop(conversation_history, test_work_dir)
+    success, rounds = run_testing_loop(conversation_history, test_work_dir)
+    return success, rounds
 
 
 def get_last_code_block(resp_content):
@@ -234,8 +279,9 @@ def run_test_round(round_num, test_work_dir):
 
     # Run the test and capture output
     log_file = logs_dir / f"triton_test_round_{round_num}.log"
-    cmd = [sys.executable, "check_triton.py", "--no-perf"]
-
+    cmd = [sys.executable, "check_triton.py"]
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "1":
+        cmd.append("--no-perf")
     try:
         # Change to target directory for test execution
         original_cwd = os.getcwd()
@@ -330,7 +376,7 @@ def run_testing_loop(conversation_history, test_work_dir):
                 f"✅ Test round {round_num} PASSED! Triton kernel is working correctly.")
             print(f"📊 Final results saved in {log_file}")
 
-            return True
+            return True, round_num
         else:
             print(f"❌ Test round {round_num} FAILED.")
             print(f"📋 Error details saved in {log_file}")
@@ -362,49 +408,118 @@ def run_testing_loop(conversation_history, test_work_dir):
                     f"❌ Maximum rounds ({MAX_ROUNDS}) reached. Manual intervention required.")
                 break
 
-    return False
+    return False, MAX_ROUNDS
 
 
 def test_cases():
     """Test the first case from each case type."""
     print(f"🚀 Starting batch testing of first cases from each type...")
-    print(f"📋 Available case types: {list(AVAILABLE_FIRST_CASES.keys())}")
+    print(f"📋 Available case types: {list(AVAILABLE_CASES.keys())}")
 
-    results = {}
-    for case_type, case_name in AVAILABLE_FIRST_CASES.items():
+    # 使用详细的结果存储结构
+    detailed_results = {}  # case_type -> list of case results
+    all_case_results = []  # 所有单个case的结果列表
+
+    for case_type, case_name in AVAILABLE_CASES.items():
         if not (isinstance(case_name, tuple) or isinstance(case_name, list)):
             case_name = [case_name]
+
+        detailed_results[case_type] = []
+
         for case_name_single in case_name:
             try:
-                print(f"\n{'🔹'*20} Starting {case_type} {'🔹'*20}")
-                success = run_single_case_translation(
+                print(
+                    f"\n{'🔹'*20} Starting {case_type}/{case_name_single} {'🔹'*20}")
+                success, rounds = run_single_case_translation(
                     case_type, case_name_single)
-                results[case_type] = {
-                    "case_name": case_name, "success": success}
-                status = "✅ SUCCESS" if success else "❌ FAILED"
-                print(f"{'🔹'*15} {case_type}: {status} {'🔹'*15}")
+
+                case_result = {
+                    "case_type": case_type,
+                    "case_name": case_name_single,
+                    "success": success,
+                    "rounds": rounds
+                }
+                detailed_results[case_type].append(case_result)
+                all_case_results.append(case_result)
+
+                if success:
+                    status = f"✅ SUCCESS (Round {rounds})"
+                else:
+                    status = f"❌ FAILED (Round {rounds})"
+                print(f"{'🔹'*15} {case_type}/{case_name_single}: {status} {'🔹'*15}")
+
             except Exception as e:
-                print(f"❌ Error in {case_type}: {e}")
-                results[case_type] = {
-                    "case_name": case_name_single, "success": False, "error": str(e)}
+                print(f"❌ Error in {case_type}/{case_name_single}: {e}")
+                case_result = {
+                    "case_type": case_type,
+                    "case_name": case_name_single,
+                    "success": False,
+                    "rounds": None,
+                    "error": str(e)
+                }
+                detailed_results[case_type].append(case_result)
+                all_case_results.append(case_result)
 
-    # Print summary
-    print(f"\n{'='*60}")
-    print(f"📊 BATCH TESTING SUMMARY")
-    print(f"{'='*60}")
+    # Print detailed summary
+    print(f"\n{'='*80}")
+    print(f"📊 DETAILED BATCH TESTING SUMMARY")
+    print(f"{'='*80}")
 
-    success_count = 0
-    for case_type, result in results.items():
-        status = "✅" if result["success"] else "❌"
-        print(f"{status} {case_type:<15} - {result['case_name']}")
-        if result["success"]:
-            success_count += 1
+    total_success = 0
+    total_cases = 0
 
-    print(f"{'='*60}")
-    print(f"🏆 Total: {success_count}/{len(results)} cases succeeded")
-    print(f"{'='*60}")
+    for case_type, case_results in detailed_results.items():
+        case_type_success = sum(
+            1 for result in case_results if result["success"])
+        case_type_total = len(case_results)
+        total_success += case_type_success
+        total_cases += case_type_total
 
-    return results
+        # Case type level summary
+        case_type_status = "✅" if case_type_success == case_type_total else "❌" if case_type_success == 0 else "⚠️ "
+        print(
+            f"{case_type_status} {case_type:<15} ({case_type_success}/{case_type_total})")
+
+        # Individual case details
+        for result in case_results:
+            if result["success"]:
+                status = f"  ✅ (Round {result['rounds']})"
+            else:
+                rounds_info = f"Round {result['rounds']}" if result.get(
+                    'rounds') is not None else "Error"
+                status = f"  ❌ ({rounds_info})"
+
+            error_info = f" - {result.get('error', '')}" if not result["success"] and 'error' in result else ""
+            print(f"{status} {result['case_name']}{error_info}")
+        print()
+
+    # 轮次分布统计
+    rounds_distribution = {}
+    successful_cases = [
+        result for result in all_case_results if result["success"]]
+
+    for result in successful_cases:
+        round_num = result["rounds"]
+        rounds_distribution[round_num] = rounds_distribution.get(
+            round_num, 0) + 1
+
+    print(f"📊 Success rounds distribution:")
+    for round_num in sorted(rounds_distribution.keys()):
+        count = rounds_distribution[round_num]
+        print(f"   Round {round_num}: {count} cases")
+
+    avg_rounds = sum(result["rounds"] for result in successful_cases) / \
+        len(successful_cases) if successful_cases else 0
+    print(f"📈 Average rounds for successful cases: {avg_rounds:.2f}")
+
+    print(f"{'='*80}")
+    print(
+        f"🏆 OVERALL TOTAL: {total_success}/{total_cases} individual cases succeeded")
+    print(
+        f"📊 Case type success rate: {sum(1 for case_type, results in detailed_results.items() if all(r['success'] for r in results))}/{len(detailed_results)} case types fully passed")
+    print(f"{'='*80}")
+
+    return {"detailed_results": detailed_results, "all_case_results": all_case_results}
 
 
 if __name__ == "__main__":
