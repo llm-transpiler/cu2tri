@@ -376,17 +376,18 @@ def generate_charts(model_info, statistics, all_case_results, output_dir):
     generated_files.append(chart_file)
     print(f"📊 Case type success rates chart saved to: {chart_file}")
     
-    # 3. Overall Statistics Multi-Chart Layout
+    # 3. Overall Statistics Multi-Chart Layout  
     overall = statistics["overall"]
-    fig = plt.figure(figsize=(18, 12))
+    fig = plt.figure(figsize=(20, 12))
     
+    # First row: Main pie charts
     # Success/Failure pie chart
     sizes = [overall["successful_cases"], overall["failed_cases"]]
     labels = ['Success', 'Failed']
     colors = ['#44ff44', '#ff4444']
     explode = (0.05, 0)  # explode the success slice
     
-    plt.subplot(2, 3, 1)
+    plt.subplot(2, 4, 1)
     plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', 
             startangle=90, explode=explode)
     plt.title('Overall Success/Failure Distribution', fontsize=12)
@@ -398,7 +399,7 @@ def generate_charts(model_info, statistics, all_case_results, output_dir):
     case_types_failed = len([stats for stats in case_type_stats.values() 
                             if stats["success_rate"] == 0])
     
-    plt.subplot(2, 3, 2)
+    plt.subplot(2, 4, 2)
     sizes2 = [case_types_success, case_types_partial, case_types_failed]
     labels2 = ['Fully Successful', 'Partially Successful', 'Failed']
     colors2 = ['#44ff44', '#ffaa44', '#ff4444']
@@ -407,8 +408,34 @@ def generate_charts(model_info, statistics, all_case_results, output_dir):
             startangle=90)
     plt.title('Case Type Status Distribution', fontsize=12)
     
-    # Rounds distribution as a bar chart instead of pie to save space
-    plt.subplot(2, 3, 3)
+    # Second row: Detailed round analysis
+    # Rounds distribution as donut chart (original style)
+    plt.subplot(2, 4, 5)
+    if rounds_dist:
+        colors_rounds = plt.cm.RdYlGn_r(np.linspace(0.2, 0.8, len(rounds_dist)))
+        
+        wedges, texts, autotexts = plt.pie(list(rounds_dist.values()), 
+                                           autopct='%1.1f%%', 
+                                           startangle=90, 
+                                           pctdistance=0.75,
+                                           radius=0.8,
+                                           colors=colors_rounds,
+                                           wedgeprops=dict(width=0.5))  # Donut style
+        
+        # Style the percentage labels
+        for autotext in autotexts:
+            autotext.set_fontsize(8)
+            autotext.set_color('black')
+            autotext.set_weight('bold')
+        
+        # Add a legend
+        legend_labels = [f'Round {r}' for r in rounds_dist.keys()]
+        plt.legend(legend_labels, loc='center left', bbox_to_anchor=(1, 0, 0.5, 1), fontsize=9)
+        
+        plt.title('Success Round Distribution\n(Donut Chart)', fontsize=11)
+    
+    # Rounds distribution as a bar chart
+    plt.subplot(2, 4, 6)
     if rounds_dist:
         rounds = list(rounds_dist.keys())
         counts = list(rounds_dist.values())
@@ -417,7 +444,7 @@ def generate_charts(model_info, statistics, all_case_results, output_dir):
         bars = plt.bar(rounds, counts, color=colors_rounds, alpha=0.8)
         plt.xlabel('Round', fontsize=10)
         plt.ylabel('Cases', fontsize=10)
-        plt.title('Success Round Distribution', fontsize=12)
+        plt.title('Success Round Distribution\n(Bar Chart)', fontsize=11)
         plt.grid(axis='y', alpha=0.3)
         
         # Add value labels on bars
@@ -425,8 +452,8 @@ def generate_charts(model_info, statistics, all_case_results, output_dir):
             plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
                     str(count), ha='center', va='bottom', fontsize=9)
     
-    # Summary stats as text - larger area
-    plt.subplot(2, 3, (4, 6))  # Span across bottom three cells
+    # Summary stats as text - right bottom
+    plt.subplot(2, 4, (7, 8))  # Span across bottom right two cells
     plt.axis('off')
     summary_text = f"""Model: {model_info["model_name"]}
     
@@ -442,8 +469,8 @@ Case Type Statistics:
 • Partially Successful: {case_types_partial}
 • Failed: {case_types_failed}"""
     
-    plt.text(0.1, 0.8, summary_text, transform=plt.gca().transAxes, 
-             fontsize=12, verticalalignment='top', fontfamily='monospace')
+    plt.text(0.1, 0.9, summary_text, transform=plt.gca().transAxes, 
+             fontsize=11, verticalalignment='top', fontfamily='monospace')
     
     plt.suptitle(f'Test Results Overview - {model_info["model_name"]}', fontsize=16)
     chart_file = output_dir / "overall_statistics.png"
@@ -511,7 +538,7 @@ Case Type Statistics:
         # Add percentage labels for bars wider than 5%
         for i, (width, cumulative) in enumerate(zip(widths, cumulative_widths)):
             if width > 5:  # Only show label if segment is > 5%
-                plt.text(cumulative + width/2, i, f'R{round_num} {width:.1f}%', 
+                plt.text(cumulative + width/2, i, f'R{round_num}:  {width:.1f}%', 
                         ha='center', va='center', fontsize=8, fontweight='bold')
         
         cumulative_widths += widths
@@ -642,6 +669,139 @@ def generate_markdown_report(model_info, statistics, detailed_results, all_case_
     
     print(f"📝 Markdown report saved to: {markdown_file}")
     return markdown_file
+
+
+def generate_markdown_summary(model_info, statistics, detailed_results, all_case_results, output_path):
+    """Generate a concise markdown summary with native markdown tables."""
+    
+    overall = statistics["overall"]
+    case_type_stats = statistics["case_type_stats"]
+    rounds_dist = statistics["rounds_distribution"]
+    
+    # Calculate additional metrics
+    round_1_success = len([r for r in all_case_results if r["success"] and r.get("rounds") == 1])
+    round_5_success = len([r for r in all_case_results if r["success"] and r.get("rounds", 6) <= 5])
+    
+    markdown_content = f"""# Test Results Summary
+
+## 📊 Model: {model_info["model_name"]}
+
+**Analysis Timestamp:** {output_path.parent.name}  
+**Total Cases:** {overall["total_cases"]} | **Success:** {overall["successful_cases"]} ({overall['success_rate']:.1%}) | **Failed:** {overall["failed_cases"]}
+
+---
+
+## 🎯 Key Performance Indicators
+
+| Metric | Value | Percentage |
+|--------|-------|------------|
+| **Round 1 Success** | {round_1_success}/{overall['total_cases']} | {round_1_success/overall['total_cases']*100:.1f}% |
+| **Round ≤5 Success** | {round_5_success}/{overall['total_cases']} | {round_5_success/overall['total_cases']*100:.1f}% |
+| **Overall Success** | {overall["successful_cases"]}/{overall["total_cases"]} | {overall['success_rate']:.1%} |
+| **Case Types Fully Passed** | {overall["case_types_fully_passed"]}/{overall["case_types_total"]} | {overall["case_types_fully_passed"]/overall["case_types_total"]*100:.1f}% |
+| **Avg Rounds for Success** | {overall["avg_rounds_for_success"]:.2f} | - |
+
+---
+
+## 📈 Success Distribution by Round
+
+| Round | Cases | Cumulative | Success Rate |
+|-------|-------|------------|--------------|"""
+
+    cumulative = 0
+    for round_num in sorted(rounds_dist.keys()):
+        count = rounds_dist[round_num]
+        cumulative += count
+        rate = cumulative / overall["total_cases"] * 100
+        markdown_content += f"\n| Round {round_num} | {count} | {cumulative} | {rate:.1f}% |"
+
+    markdown_content += f"""
+
+---
+
+## 📋 Case Type Performance
+
+| Status | Case Type | Success Rate | Results | Performance |
+|--------|-----------|--------------|---------|-------------|"""
+
+    # Sort case types by success rate for better readability
+    sorted_case_types = sorted(case_type_stats.items(), key=lambda x: x[1]["success_rate"], reverse=True)
+    
+    for case_type, stats in sorted_case_types:
+        if stats["success_rate"] == 1.0:
+            status = "✅"
+            performance = "Excellent"
+        elif stats["success_rate"] >= 0.8:
+            status = "🟢"
+            performance = "Good"
+        elif stats["success_rate"] >= 0.5:
+            status = "🟡"
+            performance = "Moderate"
+        elif stats["success_rate"] > 0:
+            status = "⚠️"
+            performance = "Poor"
+        else:
+            status = "❌"
+            performance = "Failed"
+            
+        markdown_content += f"\n| {status} | `{case_type}` | {stats['success_rate']:.1%} | {stats['success']}/{stats['total']} | {performance} |"
+
+    markdown_content += f"""
+
+---
+
+## 🔍 Detailed Analysis
+
+### Top Performers (100% Success Rate)
+"""
+    top_performers = [ct for ct, stats in sorted_case_types if stats['success_rate'] == 1.0]
+    if top_performers:
+        for ct in top_performers:
+            stats = case_type_stats[ct]
+            markdown_content += f"- **{ct}**: {stats['success']}/{stats['total']} cases\n"
+    else:
+        markdown_content += "- *No case types achieved 100% success rate*\n"
+
+    markdown_content += f"""
+### Areas for Improvement
+"""
+    poor_performers = [ct for ct, stats in sorted_case_types if stats['success_rate'] < 0.5]
+    if poor_performers:
+        for ct in poor_performers:
+            stats = case_type_stats[ct]
+            markdown_content += f"- **{ct}**: {stats['success']}/{stats['total']} cases ({stats['success_rate']:.1%})\n"
+    else:
+        markdown_content += "- *All case types achieved ≥50% success rate*\n"
+
+    markdown_content += f"""
+### Round Analysis Insights
+- **{round_1_success}** cases ({round_1_success/overall['total_cases']*100:.1f}%) succeeded on first attempt
+- **{round_5_success - round_1_success}** additional cases succeeded within 5 rounds
+- **{overall['failed_cases']}** cases ({overall['failed_cases']/overall['total_cases']*100:.1f}%) failed after maximum rounds
+
+---
+
+## 📊 Summary Statistics
+
+| Category | Count | Percentage |
+|----------|-------|------------|
+| **Excellent Case Types** (100%) | {len([s for s in case_type_stats.values() if s['success_rate'] == 1.0])} | {len([s for s in case_type_stats.values() if s['success_rate'] == 1.0])/len(case_type_stats)*100:.1f}% |
+| **Good Case Types** (80-99%) | {len([s for s in case_type_stats.values() if 0.8 <= s['success_rate'] < 1.0])} | {len([s for s in case_type_stats.values() if 0.8 <= s['success_rate'] < 1.0])/len(case_type_stats)*100:.1f}% |
+| **Moderate Case Types** (50-79%) | {len([s for s in case_type_stats.values() if 0.5 <= s['success_rate'] < 0.8])} | {len([s for s in case_type_stats.values() if 0.5 <= s['success_rate'] < 0.8])/len(case_type_stats)*100:.1f}% |
+| **Poor Case Types** (<50%) | {len([s for s in case_type_stats.values() if s['success_rate'] < 0.5])} | {len([s for s in case_type_stats.values() if s['success_rate'] < 0.5])/len(case_type_stats)*100:.1f}% |
+
+---
+
+*Generated on {datetime.now().strftime('%Y-%m-%d at %H:%M:%S')}*
+"""
+
+    # Save markdown summary
+    summary_file = output_path.parent / f"{output_path.stem}_summary.md"
+    with open(summary_file, 'w', encoding='utf-8') as f:
+        f.write(markdown_content)
+    
+    print(f"📝 Markdown summary saved to: {summary_file}")
+    return summary_file
 
 
 def main():
@@ -783,8 +943,9 @@ def main():
     
     # Generate markdown report with captured output
     markdown_file = None
+    summary_file = None
     if enable_markdown:
-        print(f"\n📝 Generating markdown report...")
+        print(f"\n📝 Generating markdown reports...")
         # Combine summary and captured output for markdown
         summary_output = io.StringIO()
         original_stdout_temp = sys.stdout
@@ -797,6 +958,9 @@ def main():
         
         full_console_output = summary_output.getvalue() + captured_content
         markdown_file = generate_markdown_report(model_info, statistics, detailed_results, all_case_results, output_path, full_console_output)
+        
+        # Generate native markdown summary
+        summary_file = generate_markdown_summary(model_info, statistics, detailed_results, all_case_results, output_path)
     
     # Save JSON/YAML results
     try:
@@ -809,7 +973,10 @@ def main():
         print(f"  📄 Raw results: {saved_file}")
         
         if markdown_file:
-            print(f"  📝 Report: {markdown_file}")
+            print(f"  📝 Detailed report: {markdown_file}")
+        
+        if summary_file:
+            print(f"  📋 Summary report: {summary_file}")
         
         if generated_chart_files:
             print(f"  📊 Charts ({len(generated_chart_files)} files):")
@@ -824,8 +991,10 @@ def main():
         
         print(f"\n💡 Quick access:")
         print(f"  📂 Open directory: {base_dir}")
+        if summary_file:
+            print(f"  📊 View summary: {summary_file}")
         if markdown_file:
-            print(f"  📖 View report: {markdown_file}")
+            print(f"  📖 View detailed report: {markdown_file}")
         
         print(f"{'='*80}")
         return 0
@@ -836,14 +1005,3 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
-'''
-# 生成完整分析（推荐）
-python cu2util/analyze_log.py cu2til/trans/dev_/gemini_flash.log --all-viz
-python cu2util/analyze_log.py cu2til/trans/dev_/gemini_flash.log --all-viz --no-summary
-
-# 只生成特定功能
-python cu2util/analyze_log.py cu2til/trans/dev_/gemini_flash.log --charts --markdown --detailed-tables
-
-# 自定义输出位置
-python cu2util/analyze_log.py cu2til/trans/dev_/gemini_flash.log --all-viz --statistics-dir my_results --timestamp 20250911_custom
-'''
