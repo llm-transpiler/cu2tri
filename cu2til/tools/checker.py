@@ -199,7 +199,7 @@ def check_triton_vs_torch(get_cuda_torch_inputs, params, torch_kernel, triton_ke
     triton_kernel(*triton_all_inputs)
 
     output_triton = output_tensor_transform(triton_output_tensors[0])
-    checkok = compare_results(output_torch, output_triton, atol=1e-2, rtol=1e-2)
+    checkok = compare_results(output_torch, output_triton, atol=1e-2, rtol=1e-2, test_type=["PyTorch", "Triton"])
     if enable_perf:
         run_performance_test(triton_all_inputs, torch_all_inputs, triton_kernel, torch_kernel, test_type=["Triton", "PyTorch"])
     
@@ -233,7 +233,7 @@ def check_cuda_vs_torch(testcase_root_dir, get_cuda_torch_inputs, params, torch_
     cuda_kernel(*cuda_all_inputs_ptr)
 
     output_cuda = output_tensor_transform(cuda_output_tensors[0])
-    checkok = compare_results(output_torch, output_cuda)
+    checkok = compare_results(output_torch, output_cuda, test_type=["PyTorch", "CUDA"])
 
     if enable_perf and checkok:
         run_performance_test(cuda_all_inputs_ptr, torch_all_inputs, cuda_kernel, torch_kernel)
