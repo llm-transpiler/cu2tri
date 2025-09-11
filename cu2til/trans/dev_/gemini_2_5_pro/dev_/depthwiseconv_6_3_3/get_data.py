@@ -24,31 +24,6 @@ def get_cuda_argtypes():
             ctypes.c_int      # input_channels
         ]
 
-def get_cuda_inputs(params: Params):
-    """当只需要cuda的inputs的时候使用"""
-    torch.manual_seed(SEED)
-    # DepthwiseConv: HWC format
-    # Input: (input_size, input_size, channels) - HWC format
-    # Kernel: (kernel_size, kernel_size, channels) - one filter per channel
-    
-    # Create data directly on specified device (HWC format)
-    input_tensor = torch.randn(params.input_size, params.input_size, params.channels, 
-                              dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    kernel_tensor = torch.randn(params.kernel_size, params.kernel_size, params.channels, 
-                               dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    
-    # Create output tensor (HWC format)
-    output_cuda_hwc = torch.empty(params.output_size, params.output_size, params.channels, dtype=torch.float32, device="cuda")
-    
-    # Get GPU pointers
-    input_ptr = input_tensor.data_ptr()
-    kernel_ptr = kernel_tensor.data_ptr()
-    output_ptr = output_cuda_hwc.data_ptr()
-    
-    # Call CUDA kernel
-    cuda_all_inputs = [input_ptr, kernel_ptr, output_ptr, params.input_size, params.kernel_size, params.channels]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)

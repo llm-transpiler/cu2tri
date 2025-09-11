@@ -35,33 +35,6 @@ def get_cuda_argtypes():
             ctypes.c_int      # stride
         ]
 
-def get_cuda_inputs(params: Params):
-    """当只需要cuda的inputs的时候使用"""
-    torch.manual_seed(SEED)
-    # Conv2D: conv2d_16_8_8_64_64_2_2_64_2_0
-    # 以CUDA kernel的格式需求为准
-    # Input: NHWC = (batch_size, input_height, input_width, input_channels) 
-    # Kernel: OHWI = (output_channels, kernel_height, kernel_width, input_channels)
-    
-    # Create data directly on specified device (NHWC and OHWI format)
-    input_tensor = torch.randn(params.batch_size, params.input_height, params.input_width, params.input_channels, 
-                              dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    kernel_tensor = torch.randn(params.output_channels, params.kernel_height, params.kernel_width, params.input_channels, 
-                               dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    
-    # Create output tensor (NHWC format for CUDA)
-    output_cuda_nhwc = torch.empty(params.batch_size, params.output_height, params.output_width, params.output_channels, dtype=torch.float32, device="cuda")
-    cuda_output_tensors = [output_cuda_nhwc]
-    
-    # Get GPU pointers (input已经是NHWC格式，无需转换)
-    input_ptr = input_tensor.data_ptr()
-    kernel_ptr = kernel_tensor.data_ptr()
-    output_ptr = output_cuda_nhwc.data_ptr()
-    
-    # Call CUDA kernel
-    cuda_all_inputs = [input_ptr, kernel_ptr, output_ptr, params.batch_size, params.input_height, params.input_channels, params.output_channels, params.kernel_height, params.stride]
-    return cuda_all_inputs, cuda_output_tensors
-
 def get_cuda_torch_inputs(params: Params):
     """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)

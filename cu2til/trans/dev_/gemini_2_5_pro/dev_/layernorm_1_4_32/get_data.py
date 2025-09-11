@@ -24,26 +24,6 @@ def get_cuda_argtypes():
             ctypes.c_int      # d_model
         ]
 
-def get_cuda_inputs(params: Params):
-    """当只需要cuda的inputs的时候使用"""
-    torch.manual_seed(SEED)
-    # Create data directly on specified device
-    x = torch.randn(params.shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    gamma = torch.ones(params.d_model, dtype=torch.float32, device="cuda")  # learnable scale
-    beta = torch.zeros(params.d_model, dtype=torch.float32, device="cuda")   # learnable bias
-    
-    # Create output tensor
-    output_cuda = torch.empty_like(x)
-    
-    # Get GPU pointers
-    x_ptr = x.data_ptr()
-    gamma_ptr = gamma.data_ptr()
-    beta_ptr = beta.data_ptr()
-    output_ptr = output_cuda.data_ptr()
-    
-    cuda_all_inputs = [x_ptr, gamma_ptr, beta_ptr, output_ptr, params.batch_size, params.seq_length, params.d_model]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)

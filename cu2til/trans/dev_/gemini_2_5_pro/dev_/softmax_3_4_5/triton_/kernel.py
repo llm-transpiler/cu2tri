@@ -30,32 +30,39 @@ def _triton_kernel_impl(
     row_start_ptr_C = C_ptr + row_idx * SIZE2
 
     # Create a range of offsets for the columns [0, 1, 2, 3, 4].
-    col_offsets = tl.arange(0, SIZE2)
+    # Triton requires arange range to be power of 2 and constexpr, so use 8 (next power of 2 >= 5)
+    # and mask out the extra elements
+    col_offsets = tl.arange(0, 8)  # Use constexpr literal 8
+    mask = col_offsets < SIZE2  # Only load elements [0,1,2,3,4]
 
     # Load the 5 float values for the current row from tensor A.
-    # Since SIZE2 is small, this is a single vectorized load.
-    a_row = tl.load(row_start_ptr_A + col_offsets)
+    # Use mask to only load valid elements, set others to 0
+    a_row = tl.load(row_start_ptr_A + col_offsets, mask=mask, other=0.0)
 
     # --- Begin Softmax Computation ---
 
     # 1. Find the maximum value in the row for numerical stability.
-    # tl.reduce performs a reduction over the input tensor `a_row`.
-    max_val = tl.reduce(a_row, axis=0, combine_fn=tl.max)
+    # Only consider valid elements by setting masked elements to -inf
+    masked_a_row = tl.where(mask, a_row, float('-inf'))
+    max_val = tl.max(masked_a_row, axis=0)
 
     # 2. Subtract the max value from each element and exponentiate.
-    # This operation is broadcasted automatically.
-    numerator = tl.exp(a_row - max_val)
+    # Only compute exp for valid elements
+    shifted = tl.where(mask, a_row - max_val, 0.0)
+    numerator = tl.where(mask, tl.exp(shifted), 0.0)
 
     # 3. Sum the exponentiated values to get the denominator.
+    # Only sum valid elements
     denom = tl.sum(numerator, axis=0)
 
     # 4. Divide each element by the denominator to normalize.
-    softmax_result = numerator / denom
+    softmax_result = tl.where(mask, numerator / denom, 0.0)
 
     # --- End Softmax Computation ---
 
     # Store the final computed row back to the output tensor C.
-    tl.store(row_start_ptr_C + col_offsets, softmax_result)
+    # Only store valid elements
+    tl.store(row_start_ptr_C + col_offsets, softmax_result, mask=mask)
 
 
 def triton_kernel(A: torch.Tensor, C: torch.Tensor, size1: int, size2: int):

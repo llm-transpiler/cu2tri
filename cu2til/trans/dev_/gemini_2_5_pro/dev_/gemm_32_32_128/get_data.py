@@ -25,24 +25,6 @@ def get_cuda_argtypes():
             ctypes.c_int      # n
         ]
 
-def get_cuda_inputs(params: Params):
-    """当只需要cuda的inputs的时候使用"""
-    torch.manual_seed(SEED)
-    # GEMM operation: A(m,k) @ B(k,n) = C(m,n)
-    A = torch.randn(params.m, params.k, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
-    B = torch.randn(params.k, params.n, dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
-    
-    # Create output tensor (float32 for GEMM)
-    C = torch.empty(params.m, params.n, dtype=torch.float32, device="cuda")
-    
-    # Get GPU pointers
-    A_ptr = A.data_ptr()
-    B_ptr = B.data_ptr()
-    C_ptr = C.data_ptr()
-    
-    cuda_all_inputs = [A_ptr, B_ptr, C_ptr, params.m, params.k, params.n]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)

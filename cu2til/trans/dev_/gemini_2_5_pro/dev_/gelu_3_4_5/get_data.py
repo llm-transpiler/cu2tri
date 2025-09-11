@@ -16,18 +16,6 @@ def get_cuda_argtypes():
         ctypes.c_int      # total_elements
     ]
 
-def get_cuda_inputs(params: Params):
-    torch.manual_seed(SEED)
-    input_tensor = torch.randn(params.shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    output_tensor = torch.empty_like(input_tensor)
-    
-    cuda_all_inputs = [
-        input_tensor.data_ptr(),
-        output_tensor.data_ptr(),
-        params.total_elements
-    ]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     torch.manual_seed(SEED)
     input_tensor = torch.randn(params.shape, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)

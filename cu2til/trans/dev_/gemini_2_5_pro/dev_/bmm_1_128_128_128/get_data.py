@@ -22,26 +22,6 @@ def get_cuda_argtypes():
         ctypes.c_int      # n (dim3)
     ]
 
-def get_cuda_inputs(params: Params):
-    torch.manual_seed(SEED)
-    A = torch.randn((params.batch_size, params.dim1, params.dim2), 
-                    dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
-    B = torch.randn((params.batch_size, params.dim2, params.dim3), 
-                    dtype=torch.float16, device="cuda").normal_(mean=0.0, std=0.5)
-    C = torch.empty((params.batch_size, params.dim1, params.dim3), 
-                    dtype=torch.float32, device="cuda")
-    
-    cuda_all_inputs = [
-        A.data_ptr(), 
-        B.data_ptr(), 
-        C.data_ptr(),
-        params.batch_size,  # b
-        params.dim1,        # m
-        params.dim2,        # k
-        params.dim3         # n
-    ]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     torch.manual_seed(SEED)
     A_half = torch.randn((params.batch_size, params.dim1, params.dim2), 

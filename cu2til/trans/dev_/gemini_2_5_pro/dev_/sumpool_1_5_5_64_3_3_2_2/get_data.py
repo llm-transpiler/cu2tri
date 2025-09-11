@@ -31,28 +31,6 @@ def get_cuda_argtypes():
             ctypes.c_int      # stride
         ]
 
-def get_cuda_inputs(params: Params):
-    """当只需要cuda的inputs的时候使用"""
-    torch.manual_seed(SEED)
-    # Generate data in NHWC format directly for CUDA kernel: (batch_size, height, width, channels)
-    shape_nhwc = (params.batch_size, params.input_height, params.input_width, params.channels)  # NHWC format
-    
-    # Create data directly on specified device in NHWC format
-    x_nhwc = torch.randn(shape_nhwc, dtype=torch.float32, device="cuda").normal_(mean=0.0, std=0.5)
-    
-    # Calculate output dimensions
-    output_shape_nhwc = (params.batch_size, params.output_height, params.output_width, params.channels)  # NHWC format
-    
-    # Create output tensor in NHWC format
-    output_cuda_nhwc = torch.empty(output_shape_nhwc, dtype=torch.float32, device="cuda")
-    
-    # Get GPU pointers
-    x_ptr = x_nhwc.data_ptr()
-    output_ptr = output_cuda_nhwc.data_ptr()
-    
-    cuda_all_inputs = [x_ptr, output_ptr, params.batch_size, params.channels, params.input_height, params.kernel_height, params.stride]
-    return cuda_all_inputs
-
 def get_cuda_torch_inputs(params: Params):
     """当需要cuda和torch比较时候使用"""
     torch.manual_seed(SEED)

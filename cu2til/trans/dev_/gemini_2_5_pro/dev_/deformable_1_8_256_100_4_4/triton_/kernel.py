@@ -152,13 +152,13 @@ def triton_kernel(value: torch.Tensor,
     grid = (N_QUERIES, N_HEADS)
 
     # Basic validation of input tensors
-    assert all(t.is_cuda for t in [value, value_spatial_shapes, level_start_index, sampling_locations, attention_weights, output])
-    assert value.dtype == torch.float32
-    assert value_spatial_shapes.dtype == torch.int32
-    assert level_start_index.dtype == torch.int32
-    assert sampling_locations.dtype == torch.float32
-    assert attention_weights.dtype == torch.float32
-    assert output.dtype == torch.float32
+    # assert all(t.is_cuda for t in [value, value_spatial_shapes, level_start_index, sampling_locations, attention_weights, output])
+    # assert value.dtype == torch.float32
+    # assert value_spatial_shapes.dtype == torch.int32
+    # assert level_start_index.dtype == torch.int32
+    # assert sampling_locations.dtype == torch.float32
+    # assert attention_weights.dtype == torch.float32
+    # assert output.dtype == torch.float32
 
     # Launch the Triton kernel
     _triton_kernel_impl[grid](

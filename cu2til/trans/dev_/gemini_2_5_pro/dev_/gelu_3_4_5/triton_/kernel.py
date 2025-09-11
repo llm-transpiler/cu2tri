@@ -36,10 +36,13 @@ def _triton_kernel_impl(
     a = tl.load(A_ptr + offsets, mask=mask, other=0.0)
 
     # 5. Perform the GELU computation.
-    # Triton has a built-in GELU function that uses the same tanh approximation
-    # as the original CUDA code, which is more efficient and readable.
-    # CUDA formula: 0.5 * x * (1 + tanh(sqrt(2 / M_PI) * (x + 0.044715 * pow(x, 3))))
-    output = tl.math.gelu(a)
+    # Manual implementation of GELU since tl.math.gelu is not available in Triton 3.4
+    # GELU formula: 0.5 * x * (1 + tanh(sqrt(2 / M_PI) * (x + 0.044715 * pow(x, 3))))
+    sqrt_2_over_pi = tl.sqrt(2.0 / math.pi)
+    x_cubed = a * a * a
+    inner = sqrt_2_over_pi * (a + 0.044715 * x_cubed)
+    tanh_val = tl.math.tanh(inner)
+    output = 0.5 * a * (1.0 + tanh_val)
 
     # 6. Store the result back into the output tensor C.
     # The mask ensures we only write to valid memory locations.

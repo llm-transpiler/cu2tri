@@ -24,6 +24,7 @@ class CallingIdentifier(Enum):
     GEMINI_OPENAI = 'gemini_openai'
     ANTHROPIC_OFFICIAL = 'anthropic_official'
     ANTHROPIC_OPENROUTER = 'anthropic_openrouter'
+    OPENAI_OPENROUTER = 'openai_openrouter'
 
 
 def get_api_param_gemini_openai(messages: list, model_name: str = "gemini-2.5-pro", stream: bool = True, temperature: float = 0.35, max_tokens: int = 65536, thinking: bool = True, thinking_budget: int = -1, include_thoughts: bool = False):
@@ -65,14 +66,24 @@ def get_api_param_deepseek_openai(messages: list, model_name: str = "deepseek-re
         'max_tokens': max_tokens,
     }
 
-def get_api_param_anthropic_openrouter(messages: list, model_name: str = "anthropic/claude-4-sonnet", stream: bool = True, temperature: float = 0.35, max_tokens: int = 65536):
+def get_api_param_anthropic_openrouter(messages: list, model_name: str = "anthropic/claude-4-sonnet", stream: bool = True, temperature: float = 0.35, max_tokens: int = 65536, reasoning_effort: str = "high"):
     return {
         'model': model_name,
         'messages': messages,
         'stream': stream,
         'temperature': temperature,
         'max_tokens': max_tokens,
-        'reasoning_effort': "high",
+        'reasoning_effort': reasoning_effort,
+    }
+
+def get_api_param_openai_openrouter(messages: list, model_name: str = "openai/gpt-5", stream: bool = True, temperature: float = 0.35, max_tokens: int = 65536, reasoning_effort: str = "high"):
+    return {
+        'model': model_name,
+        'messages': messages,
+        'stream': stream,
+        'temperature': temperature,
+        'max_tokens': max_tokens,
+        'reasoning_effort': reasoning_effort,
     }
 
 API_PARAMS_DICT = {
@@ -81,6 +92,7 @@ API_PARAMS_DICT = {
     # CallingIdentifier.ANTHROPIC_OFFICIAL: get_api_param_anthropic_official,
     CallingIdentifier.ANTHROPIC_OPENROUTER: get_api_param_anthropic_openrouter,
     CallingIdentifier.OPENAI_OFFICIAL: get_api_param_openai_default,
+    CallingIdentifier.OPENAI_OPENROUTER: get_api_param_openai_openrouter,
 }
 
 
