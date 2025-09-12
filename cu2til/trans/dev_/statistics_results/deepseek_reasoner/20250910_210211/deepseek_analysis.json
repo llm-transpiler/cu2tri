@@ -1,0 +1,2241 @@
+{
+  "metadata": {
+    "model_info": {
+      "model_type": "deepseek",
+      "model_name": "deepseek-reasoner",
+      "log_format": "compact",
+      "log_file": "/workspace/cu2til/trans/dev_/deepseek_reasoner/20250910_210211/deepseek.log"
+    },
+    "analysis_timestamp": "2025-09-12T15:43:55.657407",
+    "total_cases": 168
+  },
+  "statistics": {
+    "overall": {
+      "total_cases": 168,
+      "successful_cases": 156,
+      "failed_cases": 12,
+      "success_rate": 0.9285714285714286,
+      "case_types_total": 21,
+      "case_types_fully_passed": 17,
+      "avg_rounds_for_success": 1.89
+    },
+    "case_type_stats": {
+      "add": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "avgpool": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "bmm": {
+        "total": 8,
+        "success": 5,
+        "failed": 3,
+        "success_rate": 0.625,
+        "status": "⚠️"
+      },
+      "conv1d": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "conv2d": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "conv2dnchw": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "deformable": {
+        "total": 8,
+        "success": 4,
+        "failed": 4,
+        "success_rate": 0.5,
+        "status": "⚠️"
+      },
+      "depthwiseconv": {
+        "total": 8,
+        "success": 6,
+        "failed": 2,
+        "success_rate": 0.75,
+        "status": "⚠️"
+      },
+      "gelu": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "gemm": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "gemv": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "layernorm": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "maxpool": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "mha": {
+        "total": 8,
+        "success": 5,
+        "failed": 3,
+        "success_rate": 0.625,
+        "status": "⚠️"
+      },
+      "minpool": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "relu": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "rmsnorm": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "sigmoid": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "sign": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "softmax": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      },
+      "sumpool": {
+        "total": 8,
+        "success": 8,
+        "failed": 0,
+        "success_rate": 1.0,
+        "status": "✅"
+      }
+    },
+    "rounds_distribution": {
+      "2": 60,
+      "1": 64,
+      "3": 21,
+      "4": 7,
+      "5": 4
+    }
+  },
+  "detailed_results": {
+    "add": [
+      {
+        "case_type": "add",
+        "case_name": "add_1_15_64",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "add",
+        "case_name": "add_3_3_256",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "add",
+        "case_name": "add_4_4_4_64",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "add",
+        "case_name": "add_18_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "add",
+        "case_name": "add_21_192",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "add",
+        "case_name": "add_64",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "add",
+        "case_name": "add_100_2_10_1024",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "add",
+        "case_name": "add_320",
+        "success": true,
+        "rounds": 2
+      }
+    ],
+    "avgpool": [
+      {
+        "case_type": "avgpool",
+        "case_name": "avgpool_1_5_5_64_5_5_1_1",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "avgpool",
+        "case_name": "avgpool_4_8_8_64_5_5_3_3",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "avgpool",
+        "case_name": "avgpool_4_35_35_192_5_5_2_2",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "avgpool",
+        "case_name": "avgpool_4_56_56_128_5_5_2_2",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "avgpool",
+        "case_name": "avgpool_5_32_32_64_5_5_3_3",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "avgpool",
+        "case_name": "avgpool_5_112_112_64_5_5_3_3",
+        "success": true,
+        "rounds": 4
+      },
+      {
+        "case_type": "avgpool",
+        "case_name": "avgpool_16_64_64_64_5_5_2_2",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "avgpool",
+        "case_name": "avgpool_16_112_112_64_5_5_3_3",
+        "success": true,
+        "rounds": 2
+      }
+    ],
+    "bmm": [
+      {
+        "case_type": "bmm",
+        "case_name": "bmm_1_128_128_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "bmm",
+        "case_name": "bmm_1_128_256_512",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "bmm",
+        "case_name": "bmm_1_256_256_256",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "bmm",
+        "case_name": "bmm_1_512_512_512",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "bmm",
+        "case_name": "bmm_4_128_128_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "bmm",
+        "case_name": "bmm_4_128_256_512",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "bmm",
+        "case_name": "bmm_4_256_256_256",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "bmm",
+        "case_name": "bmm_4_512_512_512",
+        "success": true,
+        "rounds": 2
+      }
+    ],
+    "conv1d": [
+      {
+        "case_type": "conv1d",
+        "case_name": "conv1d_5_7",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv1d",
+        "case_name": "conv1d_25_27",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv1d",
+        "case_name": "conv1d_44_46",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv1d",
+        "case_name": "conv1d_126_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv1d",
+        "case_name": "conv1d_190_192",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv1d",
+        "case_name": "conv1d_222_224",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv1d",
+        "case_name": "conv1d_256_258",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv1d",
+        "case_name": "conv1d_312_314",
+        "success": true,
+        "rounds": 2
+      }
+    ],
+    "conv2d": [
+      {
+        "case_type": "conv2d",
+        "case_name": "conv2d_16_8_8_64_64_2_2_64_2_0",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv2d",
+        "case_name": "conv2d_16_8_8_64_64_2_2_64_3_0",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv2d",
+        "case_name": "conv2d_16_8_8_128_64_2_2_128_2_0",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv2d",
+        "case_name": "conv2d_16_8_8_128_64_2_2_128_3_0",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv2d",
+        "case_name": "conv2d_32_8_8_64_64_2_2_64_2_0",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv2d",
+        "case_name": "conv2d_32_8_8_64_64_2_2_64_3_0",
+        "success": true,
+        "rounds": 5
+      },
+      {
+        "case_type": "conv2d",
+        "case_name": "conv2d_32_8_8_128_64_2_2_128_2_0",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv2d",
+        "case_name": "conv2d_32_8_8_128_64_2_2_128_3_0",
+        "success": true,
+        "rounds": 2
+      }
+    ],
+    "conv2dnchw": [
+      {
+        "case_type": "conv2dnchw",
+        "case_name": "conv2dnchw_16_64_8_8_128_64_2_2_2_0",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv2dnchw",
+        "case_name": "conv2dnchw_16_64_8_8_128_64_2_2_3_0",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv2dnchw",
+        "case_name": "conv2dnchw_16_128_8_8_64_128_2_2_2_0",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv2dnchw",
+        "case_name": "conv2dnchw_16_128_8_8_64_128_2_2_3_0",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv2dnchw",
+        "case_name": "conv2dnchw_32_64_8_8_128_64_2_2_2_0",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "conv2dnchw",
+        "case_name": "conv2dnchw_32_64_8_8_128_64_2_2_3_0",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "conv2dnchw",
+        "case_name": "conv2dnchw_32_128_8_8_64_128_2_2_2_0",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "conv2dnchw",
+        "case_name": "conv2dnchw_32_128_8_8_64_128_2_2_3_0",
+        "success": true,
+        "rounds": 1
+      }
+    ],
+    "deformable": [
+      {
+        "case_type": "deformable",
+        "case_name": "deformable_1_8_256_100_4_4",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "deformable",
+        "case_name": "deformable_1_8_256_200_4_4",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "deformable",
+        "case_name": "deformable_1_8_512_100_4_4",
+        "success": true,
+        "rounds": 4
+      },
+      {
+        "case_type": "deformable",
+        "case_name": "deformable_1_8_512_200_4_4",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "deformable",
+        "case_name": "deformable_4_8_256_100_4_4",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "deformable",
+        "case_name": "deformable_4_8_256_200_4_4",
+        "success": true,
+        "rounds": 5
+      },
+      {
+        "case_type": "deformable",
+        "case_name": "deformable_4_8_512_100_4_4",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "deformable",
+        "case_name": "deformable_4_8_512_200_4_4",
+        "success": false,
+        "rounds": 5
+      }
+    ],
+    "depthwiseconv": [
+      {
+        "case_type": "depthwiseconv",
+        "case_name": "depthwiseconv_6_3_3",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "depthwiseconv",
+        "case_name": "depthwiseconv_6_3_128",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "depthwiseconv",
+        "case_name": "depthwiseconv_128_3_3",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "depthwiseconv",
+        "case_name": "depthwiseconv_128_3_128",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "depthwiseconv",
+        "case_name": "depthwiseconv_192_3_3",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "depthwiseconv",
+        "case_name": "depthwiseconv_192_3_128",
+        "success": true,
+        "rounds": 5
+      },
+      {
+        "case_type": "depthwiseconv",
+        "case_name": "depthwiseconv_256_3_3",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "depthwiseconv",
+        "case_name": "depthwiseconv_256_3_128",
+        "success": true,
+        "rounds": 1
+      }
+    ],
+    "gelu": [
+      {
+        "case_type": "gelu",
+        "case_name": "gelu_3_4_5",
+        "success": true,
+        "rounds": 4
+      },
+      {
+        "case_type": "gelu",
+        "case_name": "gelu_5_7_3_32",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "gelu",
+        "case_name": "gelu_5_12_23_128",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "gelu",
+        "case_name": "gelu_5_128",
+        "success": true,
+        "rounds": 5
+      },
+      {
+        "case_type": "gelu",
+        "case_name": "gelu_7_1_6_7",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "gelu",
+        "case_name": "gelu_8_10_64",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "gelu",
+        "case_name": "gelu_12_3_128",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "gelu",
+        "case_name": "gelu_45_25",
+        "success": true,
+        "rounds": 3
+      }
+    ],
+    "gemm": [
+      {
+        "case_type": "gemm",
+        "case_name": "gemm_32_32_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "gemm",
+        "case_name": "gemm_32_32_1024",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "gemm",
+        "case_name": "gemm_32_128_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "gemm",
+        "case_name": "gemm_32_128_1024",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "gemm",
+        "case_name": "gemm_1024_16_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "gemm",
+        "case_name": "gemm_1024_16_1024",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "gemm",
+        "case_name": "gemm_1024_128_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "gemm",
+        "case_name": "gemm_1024_128_4096",
+        "success": true,
+        "rounds": 1
+      }
+    ],
+    "gemv": [
+      {
+        "case_type": "gemv",
+        "case_name": "gemv_3_16",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "gemv",
+        "case_name": "gemv_3_512",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "gemv",
+        "case_name": "gemv_32_64",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "gemv",
+        "case_name": "gemv_32_512",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "gemv",
+        "case_name": "gemv_112_128",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "gemv",
+        "case_name": "gemv_112_224",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "gemv",
+        "case_name": "gemv_125_128",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "gemv",
+        "case_name": "gemv_125_320",
+        "success": true,
+        "rounds": 1
+      }
+    ],
+    "layernorm": [
+      {
+        "case_type": "layernorm",
+        "case_name": "layernorm_1_4_32",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "layernorm",
+        "case_name": "layernorm_1_4_128",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "layernorm",
+        "case_name": "layernorm_1_8_32",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "layernorm",
+        "case_name": "layernorm_1_8_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "layernorm",
+        "case_name": "layernorm_2_4_32",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "layernorm",
+        "case_name": "layernorm_2_4_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "layernorm",
+        "case_name": "layernorm_2_8_32",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "layernorm",
+        "case_name": "layernorm_2_8_128",
+        "success": true,
+        "rounds": 1
+      }
+    ],
+    "maxpool": [
+      {
+        "case_type": "maxpool",
+        "case_name": "maxpool_1_5_5_64_5_5_1_1",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "maxpool",
+        "case_name": "maxpool_4_8_8_64_5_5_3_3",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "maxpool",
+        "case_name": "maxpool_4_35_35_192_5_5_3_3",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "maxpool",
+        "case_name": "maxpool_4_56_56_128_5_5_2_2",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "maxpool",
+        "case_name": "maxpool_5_32_32_64_5_5_3_3",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "maxpool",
+        "case_name": "maxpool_5_112_112_64_5_5_2_2",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "maxpool",
+        "case_name": "maxpool_16_64_64_64_5_5_2_2",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "maxpool",
+        "case_name": "maxpool_16_112_112_64_5_5_3_3",
+        "success": true,
+        "rounds": 3
+      }
+    ],
+    "mha": [
+      {
+        "case_type": "mha",
+        "case_name": "mha_1_2048_6_256",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "mha",
+        "case_name": "mha_1_2048_12_256",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "mha",
+        "case_name": "mha_1_4096_6_256",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "mha",
+        "case_name": "mha_1_4096_12_256",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "mha",
+        "case_name": "mha_1_4096_12_512",
+        "success": true,
+        "rounds": 4
+      },
+      {
+        "case_type": "mha",
+        "case_name": "mha_64_2048_12_256",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "mha",
+        "case_name": "mha_64_2048_12_512",
+        "success": false,
+        "rounds": 5
+      },
+      {
+        "case_type": "mha",
+        "case_name": "mha_64_4096_12_256",
+        "success": false,
+        "rounds": 5
+      }
+    ],
+    "minpool": [
+      {
+        "case_type": "minpool",
+        "case_name": "minpool_1_5_5_64_5_5_1_1",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "minpool",
+        "case_name": "minpool_4_8_8_64_5_5_3_3",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "minpool",
+        "case_name": "minpool_4_35_35_192_5_5_3_3",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "minpool",
+        "case_name": "minpool_4_56_56_128_5_5_3_3",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "minpool",
+        "case_name": "minpool_5_32_32_64_5_5_3_3",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "minpool",
+        "case_name": "minpool_5_112_112_64_5_5_3_3",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "minpool",
+        "case_name": "minpool_16_64_64_64_5_5_3_3",
+        "success": true,
+        "rounds": 4
+      },
+      {
+        "case_type": "minpool",
+        "case_name": "minpool_16_112_112_64_5_5_3_3",
+        "success": true,
+        "rounds": 4
+      }
+    ],
+    "relu": [
+      {
+        "case_type": "relu",
+        "case_name": "relu_3_4_5",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "relu",
+        "case_name": "relu_5_7_3_32",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "relu",
+        "case_name": "relu_5_12_23_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "relu",
+        "case_name": "relu_5_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "relu",
+        "case_name": "relu_7_1_6_7",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "relu",
+        "case_name": "relu_8_10_64",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "relu",
+        "case_name": "relu_12_3_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "relu",
+        "case_name": "relu_45_25",
+        "success": true,
+        "rounds": 1
+      }
+    ],
+    "rmsnorm": [
+      {
+        "case_type": "rmsnorm",
+        "case_name": "rmsnorm_2048_2048",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "rmsnorm",
+        "case_name": "rmsnorm_2048_4096",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "rmsnorm",
+        "case_name": "rmsnorm_2048_8192",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "rmsnorm",
+        "case_name": "rmsnorm_4096_2048",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "rmsnorm",
+        "case_name": "rmsnorm_4096_4096",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "rmsnorm",
+        "case_name": "rmsnorm_4096_8192",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "rmsnorm",
+        "case_name": "rmsnorm_8192_4096",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "rmsnorm",
+        "case_name": "rmsnorm_8192_8192",
+        "success": true,
+        "rounds": 2
+      }
+    ],
+    "sigmoid": [
+      {
+        "case_type": "sigmoid",
+        "case_name": "sigmoid_3_4_5",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sigmoid",
+        "case_name": "sigmoid_5_7_3_32",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "sigmoid",
+        "case_name": "sigmoid_5_12_23_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "sigmoid",
+        "case_name": "sigmoid_5_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sigmoid",
+        "case_name": "sigmoid_7_1_6_7",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sigmoid",
+        "case_name": "sigmoid_8_10_64",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "sigmoid",
+        "case_name": "sigmoid_12_3_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "sigmoid",
+        "case_name": "sigmoid_45_25",
+        "success": true,
+        "rounds": 1
+      }
+    ],
+    "sign": [
+      {
+        "case_type": "sign",
+        "case_name": "sign_3_4_5",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sign",
+        "case_name": "sign_5_7_3_32",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "sign",
+        "case_name": "sign_5_12_23_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "sign",
+        "case_name": "sign_5_128",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "sign",
+        "case_name": "sign_7_1_6_7",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sign",
+        "case_name": "sign_8_10_64",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "sign",
+        "case_name": "sign_12_3_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sign",
+        "case_name": "sign_45_25",
+        "success": true,
+        "rounds": 1
+      }
+    ],
+    "softmax": [
+      {
+        "case_type": "softmax",
+        "case_name": "softmax_3_4_5",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "softmax",
+        "case_name": "softmax_5_7_3_32",
+        "success": true,
+        "rounds": 4
+      },
+      {
+        "case_type": "softmax",
+        "case_name": "softmax_5_12_23_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "softmax",
+        "case_name": "softmax_5_128",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "softmax",
+        "case_name": "softmax_7_1_6_7",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "softmax",
+        "case_name": "softmax_8_10_64",
+        "success": true,
+        "rounds": 3
+      },
+      {
+        "case_type": "softmax",
+        "case_name": "softmax_12_3_128",
+        "success": true,
+        "rounds": 1
+      },
+      {
+        "case_type": "softmax",
+        "case_name": "softmax_45_25",
+        "success": true,
+        "rounds": 2
+      }
+    ],
+    "sumpool": [
+      {
+        "case_type": "sumpool",
+        "case_name": "sumpool_1_5_5_64_3_3_2_2",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sumpool",
+        "case_name": "sumpool_4_8_8_64_3_3_2_2",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sumpool",
+        "case_name": "sumpool_4_35_35_192_5_5_2_2",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sumpool",
+        "case_name": "sumpool_4_56_56_128_5_5_3_3",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sumpool",
+        "case_name": "sumpool_5_32_32_64_5_5_3_3",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sumpool",
+        "case_name": "sumpool_5_112_112_64_3_3_2_2",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sumpool",
+        "case_name": "sumpool_16_64_64_64_5_5_1_1",
+        "success": true,
+        "rounds": 2
+      },
+      {
+        "case_type": "sumpool",
+        "case_name": "sumpool_16_112_112_64_5_5_3_3",
+        "success": true,
+        "rounds": 1
+      }
+    ]
+  },
+  "all_case_results": [
+    {
+      "case_type": "add",
+      "case_name": "add_1_15_64",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "add",
+      "case_name": "add_3_3_256",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "add",
+      "case_name": "add_4_4_4_64",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "add",
+      "case_name": "add_18_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "add",
+      "case_name": "add_21_192",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "add",
+      "case_name": "add_64",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "add",
+      "case_name": "add_100_2_10_1024",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "add",
+      "case_name": "add_320",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "avgpool",
+      "case_name": "avgpool_1_5_5_64_5_5_1_1",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "avgpool",
+      "case_name": "avgpool_4_8_8_64_5_5_3_3",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "avgpool",
+      "case_name": "avgpool_4_35_35_192_5_5_2_2",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "avgpool",
+      "case_name": "avgpool_4_56_56_128_5_5_2_2",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "avgpool",
+      "case_name": "avgpool_5_32_32_64_5_5_3_3",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "avgpool",
+      "case_name": "avgpool_5_112_112_64_5_5_3_3",
+      "success": true,
+      "rounds": 4
+    },
+    {
+      "case_type": "avgpool",
+      "case_name": "avgpool_16_64_64_64_5_5_2_2",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "avgpool",
+      "case_name": "avgpool_16_112_112_64_5_5_3_3",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "bmm",
+      "case_name": "bmm_1_128_128_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "bmm",
+      "case_name": "bmm_1_128_256_512",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "bmm",
+      "case_name": "bmm_1_256_256_256",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "bmm",
+      "case_name": "bmm_1_512_512_512",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "bmm",
+      "case_name": "bmm_4_128_128_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "bmm",
+      "case_name": "bmm_4_128_256_512",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "bmm",
+      "case_name": "bmm_4_256_256_256",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "bmm",
+      "case_name": "bmm_4_512_512_512",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv1d",
+      "case_name": "conv1d_5_7",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv1d",
+      "case_name": "conv1d_25_27",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv1d",
+      "case_name": "conv1d_44_46",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv1d",
+      "case_name": "conv1d_126_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv1d",
+      "case_name": "conv1d_190_192",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv1d",
+      "case_name": "conv1d_222_224",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv1d",
+      "case_name": "conv1d_256_258",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv1d",
+      "case_name": "conv1d_312_314",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv2d",
+      "case_name": "conv2d_16_8_8_64_64_2_2_64_2_0",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv2d",
+      "case_name": "conv2d_16_8_8_64_64_2_2_64_3_0",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv2d",
+      "case_name": "conv2d_16_8_8_128_64_2_2_128_2_0",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv2d",
+      "case_name": "conv2d_16_8_8_128_64_2_2_128_3_0",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv2d",
+      "case_name": "conv2d_32_8_8_64_64_2_2_64_2_0",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv2d",
+      "case_name": "conv2d_32_8_8_64_64_2_2_64_3_0",
+      "success": true,
+      "rounds": 5
+    },
+    {
+      "case_type": "conv2d",
+      "case_name": "conv2d_32_8_8_128_64_2_2_128_2_0",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv2d",
+      "case_name": "conv2d_32_8_8_128_64_2_2_128_3_0",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv2dnchw",
+      "case_name": "conv2dnchw_16_64_8_8_128_64_2_2_2_0",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv2dnchw",
+      "case_name": "conv2dnchw_16_64_8_8_128_64_2_2_3_0",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv2dnchw",
+      "case_name": "conv2dnchw_16_128_8_8_64_128_2_2_2_0",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv2dnchw",
+      "case_name": "conv2dnchw_16_128_8_8_64_128_2_2_3_0",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv2dnchw",
+      "case_name": "conv2dnchw_32_64_8_8_128_64_2_2_2_0",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "conv2dnchw",
+      "case_name": "conv2dnchw_32_64_8_8_128_64_2_2_3_0",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "conv2dnchw",
+      "case_name": "conv2dnchw_32_128_8_8_64_128_2_2_2_0",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "conv2dnchw",
+      "case_name": "conv2dnchw_32_128_8_8_64_128_2_2_3_0",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "deformable",
+      "case_name": "deformable_1_8_256_100_4_4",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "deformable",
+      "case_name": "deformable_1_8_256_200_4_4",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "deformable",
+      "case_name": "deformable_1_8_512_100_4_4",
+      "success": true,
+      "rounds": 4
+    },
+    {
+      "case_type": "deformable",
+      "case_name": "deformable_1_8_512_200_4_4",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "deformable",
+      "case_name": "deformable_4_8_256_100_4_4",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "deformable",
+      "case_name": "deformable_4_8_256_200_4_4",
+      "success": true,
+      "rounds": 5
+    },
+    {
+      "case_type": "deformable",
+      "case_name": "deformable_4_8_512_100_4_4",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "deformable",
+      "case_name": "deformable_4_8_512_200_4_4",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "depthwiseconv",
+      "case_name": "depthwiseconv_6_3_3",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "depthwiseconv",
+      "case_name": "depthwiseconv_6_3_128",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "depthwiseconv",
+      "case_name": "depthwiseconv_128_3_3",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "depthwiseconv",
+      "case_name": "depthwiseconv_128_3_128",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "depthwiseconv",
+      "case_name": "depthwiseconv_192_3_3",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "depthwiseconv",
+      "case_name": "depthwiseconv_192_3_128",
+      "success": true,
+      "rounds": 5
+    },
+    {
+      "case_type": "depthwiseconv",
+      "case_name": "depthwiseconv_256_3_3",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "depthwiseconv",
+      "case_name": "depthwiseconv_256_3_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gelu",
+      "case_name": "gelu_3_4_5",
+      "success": true,
+      "rounds": 4
+    },
+    {
+      "case_type": "gelu",
+      "case_name": "gelu_5_7_3_32",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "gelu",
+      "case_name": "gelu_5_12_23_128",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "gelu",
+      "case_name": "gelu_5_128",
+      "success": true,
+      "rounds": 5
+    },
+    {
+      "case_type": "gelu",
+      "case_name": "gelu_7_1_6_7",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "gelu",
+      "case_name": "gelu_8_10_64",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "gelu",
+      "case_name": "gelu_12_3_128",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "gelu",
+      "case_name": "gelu_45_25",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "gemm",
+      "case_name": "gemm_32_32_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "gemm",
+      "case_name": "gemm_32_32_1024",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "gemm",
+      "case_name": "gemm_32_128_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "gemm",
+      "case_name": "gemm_32_128_1024",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gemm",
+      "case_name": "gemm_1024_16_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gemm",
+      "case_name": "gemm_1024_16_1024",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gemm",
+      "case_name": "gemm_1024_128_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gemm",
+      "case_name": "gemm_1024_128_4096",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gemv",
+      "case_name": "gemv_3_16",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gemv",
+      "case_name": "gemv_3_512",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "gemv",
+      "case_name": "gemv_32_64",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gemv",
+      "case_name": "gemv_32_512",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "gemv",
+      "case_name": "gemv_112_128",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "gemv",
+      "case_name": "gemv_112_224",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "gemv",
+      "case_name": "gemv_125_128",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "gemv",
+      "case_name": "gemv_125_320",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "layernorm",
+      "case_name": "layernorm_1_4_32",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "layernorm",
+      "case_name": "layernorm_1_4_128",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "layernorm",
+      "case_name": "layernorm_1_8_32",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "layernorm",
+      "case_name": "layernorm_1_8_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "layernorm",
+      "case_name": "layernorm_2_4_32",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "layernorm",
+      "case_name": "layernorm_2_4_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "layernorm",
+      "case_name": "layernorm_2_8_32",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "layernorm",
+      "case_name": "layernorm_2_8_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "maxpool",
+      "case_name": "maxpool_1_5_5_64_5_5_1_1",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "maxpool",
+      "case_name": "maxpool_4_8_8_64_5_5_3_3",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "maxpool",
+      "case_name": "maxpool_4_35_35_192_5_5_3_3",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "maxpool",
+      "case_name": "maxpool_4_56_56_128_5_5_2_2",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "maxpool",
+      "case_name": "maxpool_5_32_32_64_5_5_3_3",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "maxpool",
+      "case_name": "maxpool_5_112_112_64_5_5_2_2",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "maxpool",
+      "case_name": "maxpool_16_64_64_64_5_5_2_2",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "maxpool",
+      "case_name": "maxpool_16_112_112_64_5_5_3_3",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "mha",
+      "case_name": "mha_1_2048_6_256",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "mha",
+      "case_name": "mha_1_2048_12_256",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "mha",
+      "case_name": "mha_1_4096_6_256",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "mha",
+      "case_name": "mha_1_4096_12_256",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "mha",
+      "case_name": "mha_1_4096_12_512",
+      "success": true,
+      "rounds": 4
+    },
+    {
+      "case_type": "mha",
+      "case_name": "mha_64_2048_12_256",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "mha",
+      "case_name": "mha_64_2048_12_512",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "mha",
+      "case_name": "mha_64_4096_12_256",
+      "success": false,
+      "rounds": 5
+    },
+    {
+      "case_type": "minpool",
+      "case_name": "minpool_1_5_5_64_5_5_1_1",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "minpool",
+      "case_name": "minpool_4_8_8_64_5_5_3_3",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "minpool",
+      "case_name": "minpool_4_35_35_192_5_5_3_3",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "minpool",
+      "case_name": "minpool_4_56_56_128_5_5_3_3",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "minpool",
+      "case_name": "minpool_5_32_32_64_5_5_3_3",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "minpool",
+      "case_name": "minpool_5_112_112_64_5_5_3_3",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "minpool",
+      "case_name": "minpool_16_64_64_64_5_5_3_3",
+      "success": true,
+      "rounds": 4
+    },
+    {
+      "case_type": "minpool",
+      "case_name": "minpool_16_112_112_64_5_5_3_3",
+      "success": true,
+      "rounds": 4
+    },
+    {
+      "case_type": "relu",
+      "case_name": "relu_3_4_5",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "relu",
+      "case_name": "relu_5_7_3_32",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "relu",
+      "case_name": "relu_5_12_23_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "relu",
+      "case_name": "relu_5_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "relu",
+      "case_name": "relu_7_1_6_7",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "relu",
+      "case_name": "relu_8_10_64",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "relu",
+      "case_name": "relu_12_3_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "relu",
+      "case_name": "relu_45_25",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "rmsnorm",
+      "case_name": "rmsnorm_2048_2048",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "rmsnorm",
+      "case_name": "rmsnorm_2048_4096",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "rmsnorm",
+      "case_name": "rmsnorm_2048_8192",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "rmsnorm",
+      "case_name": "rmsnorm_4096_2048",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "rmsnorm",
+      "case_name": "rmsnorm_4096_4096",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "rmsnorm",
+      "case_name": "rmsnorm_4096_8192",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "rmsnorm",
+      "case_name": "rmsnorm_8192_4096",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "rmsnorm",
+      "case_name": "rmsnorm_8192_8192",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sigmoid",
+      "case_name": "sigmoid_3_4_5",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sigmoid",
+      "case_name": "sigmoid_5_7_3_32",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "sigmoid",
+      "case_name": "sigmoid_5_12_23_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "sigmoid",
+      "case_name": "sigmoid_5_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sigmoid",
+      "case_name": "sigmoid_7_1_6_7",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sigmoid",
+      "case_name": "sigmoid_8_10_64",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "sigmoid",
+      "case_name": "sigmoid_12_3_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "sigmoid",
+      "case_name": "sigmoid_45_25",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "sign",
+      "case_name": "sign_3_4_5",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sign",
+      "case_name": "sign_5_7_3_32",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "sign",
+      "case_name": "sign_5_12_23_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "sign",
+      "case_name": "sign_5_128",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "sign",
+      "case_name": "sign_7_1_6_7",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sign",
+      "case_name": "sign_8_10_64",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "sign",
+      "case_name": "sign_12_3_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sign",
+      "case_name": "sign_45_25",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "softmax",
+      "case_name": "softmax_3_4_5",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "softmax",
+      "case_name": "softmax_5_7_3_32",
+      "success": true,
+      "rounds": 4
+    },
+    {
+      "case_type": "softmax",
+      "case_name": "softmax_5_12_23_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "softmax",
+      "case_name": "softmax_5_128",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "softmax",
+      "case_name": "softmax_7_1_6_7",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "softmax",
+      "case_name": "softmax_8_10_64",
+      "success": true,
+      "rounds": 3
+    },
+    {
+      "case_type": "softmax",
+      "case_name": "softmax_12_3_128",
+      "success": true,
+      "rounds": 1
+    },
+    {
+      "case_type": "softmax",
+      "case_name": "softmax_45_25",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sumpool",
+      "case_name": "sumpool_1_5_5_64_3_3_2_2",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sumpool",
+      "case_name": "sumpool_4_8_8_64_3_3_2_2",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sumpool",
+      "case_name": "sumpool_4_35_35_192_5_5_2_2",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sumpool",
+      "case_name": "sumpool_4_56_56_128_5_5_3_3",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sumpool",
+      "case_name": "sumpool_5_32_32_64_5_5_3_3",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sumpool",
+      "case_name": "sumpool_5_112_112_64_3_3_2_2",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sumpool",
+      "case_name": "sumpool_16_64_64_64_5_5_1_1",
+      "success": true,
+      "rounds": 2
+    },
+    {
+      "case_type": "sumpool",
+      "case_name": "sumpool_16_112_112_64_5_5_3_3",
+      "success": true,
+      "rounds": 1
+    }
+  ]
+}
