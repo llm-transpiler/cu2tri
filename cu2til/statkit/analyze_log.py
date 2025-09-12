@@ -62,28 +62,63 @@ def get_default_statistics_dir(log_file_path):
     return Path("statistics_results")
 
 
-def parse_log_file(log_file_path):
+def detect_log_format(content):
+    """
+    Automatically detect the log format style.
+    Returns 'comprehensive' for new format with case names, 'compact' for old format.
+    """
+    # Check for new format pattern (case_type/case_name with round info)
+    comprehensive_pattern = r'🔹+ (\w+/[\w_]+): ([✅❌]) (SUCCESS|FAILED) \(Round \d+\) 🔹+'
+    if re.search(comprehensive_pattern, content):
+        return 'comprehensive'
+    
+    # Check for old format pattern (case_type only)
+    compact_pattern = r'🔹+ (\w+): ([✅❌]) (SUCCESS|FAILED) 🔹+'
+    if re.search(compact_pattern, content):
+        return 'compact'
+    
+    # Default to compact for backward compatibility
+    return 'compact'
+
+def parse_log_file(log_file_path, log_format='auto'):
     """
     Parse the log file and extract test case results.
     Returns a detailed analysis ignoring the final summary.
+    
+    Args:
+        log_file_path: Path to the log file
+        log_format: 'auto', 'compact', or 'comprehensive'
     """
     print(f"📖 Analyzing log file: {log_file_path}")
     
     with open(log_file_path, 'r', encoding='utf-8') as f:
         content = f.read()
     
+    # Auto-detect format if requested
+    if log_format == 'auto':
+        log_format = detect_log_format(content)
+        print(f"🔍 Auto-detected log format: {log_format}")
+    else:
+        print(f"📝 Using specified log format: {log_format}")
+    
     # Extract model name from first line
     model_match = re.search(r'Using (\w+) model: (.+)', content)
     model_info = {
         "model_type": model_match.group(1) if model_match else "unknown",
-        "model_name": model_match.group(2) if model_match else "unknown"
+        "model_name": model_match.group(2) if model_match else "unknown",
+        "log_format": log_format
     }
     
     # Find all test case starts and results
     case_pattern = r'🎯 Testing case type: (\w+)\s*\n📁 Case name: ([^\n]+)'
     test_round_pattern = r'✅ Test round (\d+) PASSED! Triton kernel is working correctly\.'
     max_rounds_pattern = r'❌ Maximum rounds \((\d+)\) reached\. Manual intervention required\.'
-    case_result_pattern = r'🔹+ (\w+): ([✅❌]) (SUCCESS|FAILED) 🔹+'
+    
+    # Choose pattern based on format
+    if log_format == 'comprehensive':
+        case_result_pattern = r'🔹+ ([\w/]+): ([✅❌]) (SUCCESS|FAILED) \(Round (\d+)\) 🔹+'
+    else:  # compact format
+        case_result_pattern = r'🔹+ (\w+): ([✅❌]) (SUCCESS|FAILED) 🔹+'
     
     # Find all cases
     case_matches = re.findall(case_pattern, content)
@@ -95,8 +130,13 @@ def parse_log_file(log_file_path):
     detailed_results = defaultdict(list)
     all_case_results = []
     
-    # Split content by case boundaries for detailed analysis
-    case_sections = re.split(r'🔹{20} Starting \w+ 🔹{20}', content)
+    # Split content by case boundaries for detailed analysis  
+    if log_format == 'comprehensive':
+        # Comprehensive format includes case names in section headers
+        case_sections = re.split(r'🔹{20} Starting [\w/]+ 🔹{20}', content)
+    else:
+        # Compact format only has case types in section headers
+        case_sections = re.split(r'🔹{20} Starting \w+ 🔹{20}', content)
     
     case_idx = 0
     for section in case_sections[1:]:  # Skip first empty section
@@ -109,26 +149,41 @@ def parse_log_file(log_file_path):
         success_matches = re.findall(test_round_pattern, section)
         max_rounds_matches = re.findall(max_rounds_pattern, section)
         
-        if success_matches:
-            # Case succeeded
-            success_round = int(success_matches[-1])  # Take the last success round
-            success = True
-            rounds = success_round
-        elif max_rounds_matches:
-            # Case failed after max rounds
-            max_rounds = int(max_rounds_matches[0])
-            success = False
-            rounds = max_rounds
-        else:
-            # Fallback: check for any test round failures
-            failure_matches = re.findall(r'❌ Test round (\d+) FAILED\.', section)
-            if failure_matches:
+        success_round = None
+        
+        # Try to get round info from case result pattern first (more accurate for comprehensive format)
+        case_result_match = None
+        if log_format == 'comprehensive' and case_idx < len(case_results):
+            # For comprehensive format, extract round info from the result line
+            result_match = case_results[case_idx]
+            if len(result_match) >= 4:  # (case_type/case_name, emoji, status, round)
+                case_result_match = result_match
+                _, _, status, round_str = result_match[:4]
+                success = status == "SUCCESS"
+                rounds = int(round_str) if round_str.isdigit() else None
+        
+        # Fallback to section analysis if no result match found
+        if case_result_match is None:
+            if success_matches:
+                # Case succeeded
+                success_round = int(success_matches[-1])  # Take the last success round
+                success = True
+                rounds = success_round
+            elif max_rounds_matches:
+                # Case failed after max rounds
+                max_rounds = int(max_rounds_matches[0])
                 success = False
-                rounds = int(failure_matches[-1])
+                rounds = max_rounds
             else:
-                # Unknown case - mark as error
-                success = False
-                rounds = None
+                # Fallback: check for any test round failures
+                failure_matches = re.findall(r'❌ Test round (\d+) FAILED\.', section)
+                if failure_matches:
+                    success = False
+                    rounds = int(failure_matches[-1])
+                else:
+                    # Unknown case - mark as error
+                    success = False
+                    rounds = None
         
         case_result = {
             "case_type": case_type,
@@ -323,18 +378,34 @@ def generate_charts(model_info, statistics, all_case_results, output_dir):
     plt.style.use('default')
     sns.set_palette("husl")
     
-    # 1. Rounds Distribution Chart
+    # 1. Complete Rounds Distribution Chart (including failed cases)
     rounds_dist = statistics["rounds_distribution"]
     if rounds_dist:
         plt.figure(figsize=(10, 6))
-        rounds = list(rounds_dist.keys())
-        counts = list(rounds_dist.values())
+        rounds = sorted(rounds_dist.keys())
+        counts = [rounds_dist[r] for r in rounds]
         
-        bars = plt.bar(rounds, counts, alpha=0.8, color=sns.color_palette("viridis", len(rounds)))
+        # Add failed cases as a separate bar
+        failed_cases = statistics["overall"]["failed_cases"]
+        labels = [f'Round {r}' for r in rounds]  # Convert all to string labels
+        
+        if failed_cases > 0:
+            counts = list(counts) + [failed_cases]
+            labels = labels + ['Failed']
+            # Color scheme: viridis for success rounds, gray for failed
+            success_colors = sns.color_palette("viridis", len(sorted(rounds_dist.keys())))
+            colors = list(success_colors) + ['#808080']  # Gray for failed
+        else:
+            colors = sns.color_palette("viridis", len(rounds))
+        
+        # Use position indices for x-axis
+        x_pos = range(len(labels))
+        bars = plt.bar(x_pos, counts, alpha=0.8, color=colors)
         plt.xlabel('Round')
-        plt.ylabel('Successful Cases')
-        plt.title(f'Success Distribution by Round - {model_info["model_name"]}')
+        plt.ylabel('Cases')
+        plt.title(f'Complete Distribution by Round - {model_info["model_name"]}')
         plt.grid(axis='y', alpha=0.3)
+        plt.xticks(x_pos, labels, rotation=45 if failed_cases > 0 else 0)
         
         # Add value labels on bars
         for bar, count in zip(bars, counts):
@@ -409,12 +480,29 @@ def generate_charts(model_info, statistics, all_case_results, output_dir):
     plt.title('Case Type Status Distribution', fontsize=12)
     
     # Second row: Detailed round analysis
-    # Rounds distribution as donut chart (original style)
+    # Rounds distribution as donut chart (including failed cases)
     plt.subplot(2, 4, 5)
     if rounds_dist:
-        colors_rounds = plt.cm.RdYlGn_r(np.linspace(0.2, 0.8, len(rounds_dist)))
+        # Include failed cases in the distribution
+        sorted_rounds = sorted(rounds_dist.keys())  # Sort rounds numerically
+        sorted_values = [rounds_dist[r] for r in sorted_rounds]  # Get values in sorted order
         
-        wedges, texts, autotexts = plt.pie(list(rounds_dist.values()), 
+        # Add failed cases as a separate segment
+        failed_cases = statistics["overall"]["failed_cases"]
+        if failed_cases > 0:
+            sorted_values.append(failed_cases)
+            all_labels = [f'Round {r}' for r in sorted_rounds] + ['Failed']
+        else:
+            all_labels = [f'Round {r}' for r in sorted_rounds]
+        
+        # Create color scheme: green to red for success rounds, gray for failed
+        if failed_cases > 0:
+            success_colors = plt.cm.RdYlGn_r(np.linspace(0.2, 0.7, len(sorted_rounds)))
+            colors_rounds = list(success_colors) + ['#808080']  # Gray for failed
+        else:
+            colors_rounds = plt.cm.RdYlGn_r(np.linspace(0.2, 0.8, len(rounds_dist)))
+        
+        wedges, texts, autotexts = plt.pie(sorted_values, 
                                            autopct='%1.1f%%', 
                                            startangle=90, 
                                            pctdistance=0.75,
@@ -428,24 +516,38 @@ def generate_charts(model_info, statistics, all_case_results, output_dir):
             autotext.set_color('black')
             autotext.set_weight('bold')
         
-        # Add a legend
-        legend_labels = [f'Round {r}' for r in rounds_dist.keys()]
-        plt.legend(legend_labels, loc='center left', bbox_to_anchor=(1, 0, 0.5, 1), fontsize=9)
+        # Add a legend (sorted by round number, failed at end)
+        plt.legend(all_labels, loc='center left', bbox_to_anchor=(1, 0, 0.5, 1), fontsize=9)
         
-        plt.title('Success Round Distribution\n(Donut Chart)', fontsize=11)
+        plt.title('Complete Round Distribution\n(Donut Chart)', fontsize=11)
     
-    # Rounds distribution as a bar chart
+    # Rounds distribution as a bar chart (including failed cases)
     plt.subplot(2, 4, 6)
     if rounds_dist:
-        rounds = list(rounds_dist.keys())
-        counts = list(rounds_dist.values())
-        colors_rounds = plt.cm.RdYlGn_r(np.linspace(0.2, 0.8, len(rounds)))
+        rounds = sorted(rounds_dist.keys())  # Sort rounds numerically
+        counts = [rounds_dist[r] for r in rounds]  # Get counts in sorted order
         
-        bars = plt.bar(rounds, counts, color=colors_rounds, alpha=0.8)
+        # Add failed cases as a separate bar
+        failed_cases = statistics["overall"]["failed_cases"]
+        labels = [f'R{r}' for r in rounds]  # Use short labels for compact display
+        
+        if failed_cases > 0:
+            counts = list(counts) + [failed_cases]
+            labels = labels + ['Failed']
+            # Color scheme: green to red for success rounds, gray for failed
+            success_colors = plt.cm.RdYlGn_r(np.linspace(0.2, 0.7, len(sorted(rounds_dist.keys()))))
+            colors_rounds = list(success_colors) + ['#808080']  # Gray for failed
+        else:
+            colors_rounds = plt.cm.RdYlGn_r(np.linspace(0.2, 0.8, len(rounds)))
+        
+        # Use position indices for x-axis
+        x_pos = range(len(labels))
+        bars = plt.bar(x_pos, counts, color=colors_rounds, alpha=0.8)
         plt.xlabel('Round', fontsize=10)
         plt.ylabel('Cases', fontsize=10)
-        plt.title('Success Round Distribution\n(Bar Chart)', fontsize=11)
+        plt.title('Complete Round Distribution\n(Bar Chart)', fontsize=11)
         plt.grid(axis='y', alpha=0.3)
+        plt.xticks(x_pos, labels, rotation=45 if failed_cases > 0 else 0, fontsize=9)
         
         # Add value labels on bars
         for bar, count in zip(bars, counts):
@@ -818,6 +920,8 @@ def main():
     parser.add_argument('--statistics-dir', help='Base directory for statistics results (default: dev_/statistics_results)')
     parser.add_argument('--all-viz', action='store_true', help='Enable charts, tables, detailed tables, and markdown report')
     parser.add_argument('--timestamp', help='Custom timestamp for output directory (default: extracted from log path)')
+    parser.add_argument('--log-format', choices=['auto', 'compact', 'comprehensive'], default='auto',
+                       help='Log format style: "compact" (case_type only), "comprehensive" (case_type/case_name with rounds), "auto" (auto-detect)')
     
     args = parser.parse_args()
     
@@ -828,7 +932,7 @@ def main():
     
     # Parse log file
     try:
-        model_info, detailed_results, all_case_results = parse_log_file(log_path)
+        model_info, detailed_results, all_case_results = parse_log_file(log_path, args.log_format)
         # Add log file info to model_info
         model_info["log_file"] = str(log_path)
     except Exception as e:
