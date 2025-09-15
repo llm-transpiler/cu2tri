@@ -1,0 +1,151 @@
+#include <algorithm>
+#include <cuda_bf16.h>
+#include <cuda_fp16.h>
+#include <cuda_fp8.h>
+#include <cuda_runtime.h>
+#include <float.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define WARP_SIZE 32
+#define FLOAT4(value) (reinterpret_cast<float4 *>(&(value))[0])
+#define LDST128BITS(value) (reinterpret_cast<float4 *>(&(value))[0])
+
+// Warp reduce sum
+template <const int kWarpSize = WARP_SIZE>
+__device__ __forceinline__ float warp_reduce_sum_f32(float val) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    val += __shfl_xor_sync(0xffffffff, val, mask);
+  }
+  return val;
+}
+
+// Warp reduce max
+template <const int kWarpSize = WARP_SIZE>
+__device__ __forceinline__ float warp_reduce_max_f32(float val) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    val = fmaxf(val, __shfl_xor_sync(0xffffffff, val, mask));
+  }
+  return val;
+}
+
+// Block reduce max - optimized version based on reference implementation
+template <const int NUM_THREADS = 256>
+__device__ float block_reduce_max_f32(float val) {
+  // always <= 32 warps per block (limited by 1024 threads per block)
+  constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
+  int warp = threadIdx.x / WARP_SIZE;
+  int lane = threadIdx.x % WARP_SIZE;
+  static __shared__ float shared[NUM_WARPS];
+
+  float value = warp_reduce_max_f32<WARP_SIZE>(val);
+  if (lane == 0)
+    shared[warp] = value;
+  __syncthreads();
+  value = (lane < NUM_WARPS) ? shared[lane] : -FLT_MAX;
+  value = warp_reduce_max_f32<NUM_WARPS>(value);
+  // CRITICAL: broadcast value to all threads within warp
+  value = __shfl_sync(0xffffffff, value, 0, 32);
+  return value;
+}
+
+// Block reduce sum - optimized version based on reference implementation  
+template <const int NUM_THREADS = 256>
+__device__ float block_reduce_sum_f32(float val) {
+  // always <= 32 warps per block (limited by 1024 threads per block)
+  constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
+  int warp = threadIdx.x / WARP_SIZE;
+  int lane = threadIdx.x % WARP_SIZE;
+  static __shared__ float shared[NUM_WARPS];
+
+  float value = warp_reduce_sum_f32<WARP_SIZE>(val);
+  if (lane == 0)
+    shared[warp] = value;
+  __syncthreads();
+  value = (lane < NUM_WARPS) ? shared[lane] : 0.0f;
+  value = warp_reduce_sum_f32<NUM_WARPS>(value);
+  // CRITICAL: broadcast value to all threads within warp
+  value = __shfl_sync(0xffffffff, value, 0, 32);
+  return value;
+}
+
+// Online Safe Softmax Vec4 Pack Per Token: x: NxK, y: NxK, y=softmax(x) each row
+// Based on reference safe_softmax_f32x4_per_token_kernel implementation
+template <const int NUM_THREADS = 256 / 4>
+__global__ void _cuda_kernel_impl(float *x, float *y, int N, int K) {
+  const int tid = threadIdx.x; // 0..NUM_THREADS-1 (K/4 threads per block)
+  const int idx = (blockIdx.x * blockDim.x + tid) * 4; // global index * 4
+  const int row_size = K; // elements per row
+
+  // Load 4 float values packed as float4
+  float4 reg_x = FLOAT4(x[idx]);
+  // Handle boundary conditions by clamping to -FLT_MAX for max reduction
+  reg_x.x = (idx + 0 < N * K) ? reg_x.x : -FLT_MAX;
+  reg_x.y = (idx + 1 < N * K) ? reg_x.y : -FLT_MAX;
+  reg_x.z = (idx + 2 < N * K) ? reg_x.z : -FLT_MAX;
+  reg_x.w = (idx + 3 < N * K) ? reg_x.w : -FLT_MAX;
+  
+  // Find local max among the 4 values
+  float val = reg_x.x;
+  val = fmaxf(val, reg_x.y);
+  val = fmaxf(val, reg_x.z);  
+  val = fmaxf(val, reg_x.w);
+  
+  // Block-wide max reduction (all threads get the result)
+  float max_val = block_reduce_max_f32<NUM_THREADS>(val);
+
+  // Compute exp values using the block max
+  float4 reg_exp;
+  reg_exp.x = (idx + 0 < N * K) ? expf(reg_x.x - max_val) : 0.0f;
+  reg_exp.y = (idx + 1 < N * K) ? expf(reg_x.y - max_val) : 0.0f;
+  reg_exp.z = (idx + 2 < N * K) ? expf(reg_x.z - max_val) : 0.0f;
+  reg_exp.w = (idx + 3 < N * K) ? expf(reg_x.w - max_val) : 0.0f;
+
+  // Sum the exp values for this thread
+  float exp_val = (reg_exp.x + reg_exp.y + reg_exp.z + reg_exp.w);
+  
+  // Block-wide sum reduction (all threads get the result)
+  float exp_sum = block_reduce_sum_f32<NUM_THREADS>(exp_val);
+  
+  // Compute final softmax values  
+  if ((idx + 3) < N * K) {
+    float4 reg_y;
+    reg_y.x = reg_exp.x / exp_sum;
+    reg_y.y = reg_exp.y / exp_sum;
+    reg_y.z = reg_exp.z / exp_sum;
+    reg_y.w = reg_exp.w / exp_sum;
+    FLOAT4(y[idx]) = reg_y;
+  }
+}
+
+extern "C" void cuda_kernel(float* x, float* y, int N, int K) {
+    dim3 block(K / 4);  // K/4 threads per block <=1024 --> K <=8192
+    dim3 grid(N);       // N blocks, one per row
+    switch (K) {
+    case 128:
+        _cuda_kernel_impl<32><<<grid, block>>>(x, y, N, K);
+        break;
+    case 256:
+        _cuda_kernel_impl<64><<<grid, block>>>(x, y, N, K);
+        break;
+    case 512:
+        _cuda_kernel_impl<128><<<grid, block>>>(x, y, N, K);
+        break;
+    case 1024:
+        _cuda_kernel_impl<256><<<grid, block>>>(x, y, N, K);
+        break;
+    case 2048:
+        _cuda_kernel_impl<512><<<grid, block>>>(x, y, N, K);
+        break;
+    case 4096:
+        _cuda_kernel_impl<1024><<<grid, block>>>(x, y, N, K);
+        break;
+    case 8192:
+        _cuda_kernel_impl<2048><<<grid, block>>>(x, y, N, K);
+        break;
+    default:
+        printf("only support K: 128/256/512/1024/2048/4096/8192\n");
+    }
+}

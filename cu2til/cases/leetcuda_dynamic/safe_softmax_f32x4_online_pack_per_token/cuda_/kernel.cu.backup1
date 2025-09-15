@@ -1,0 +1,155 @@
+#include <algorithm>
+#include <cuda_bf16.h>
+#include <cuda_fp16.h>
+#include <cuda_fp8.h>
+#include <cuda_runtime.h>
+#include <float.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define WARP_SIZE 32
+#define FLOAT4(value) (reinterpret_cast<float4 *>(&(value))[0])
+#define LDST128BITS(value) (reinterpret_cast<float4 *>(&(value))[0])
+
+// Warp reduce sum
+template <const int kWarpSize = WARP_SIZE>
+__device__ __forceinline__ float warp_reduce_sum_f32(float val) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    val += __shfl_xor_sync(0xffffffff, val, mask);
+  }
+  return val;
+}
+
+// Warp reduce max
+template <const int kWarpSize = WARP_SIZE>
+__device__ __forceinline__ float warp_reduce_max_f32(float val) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    val = fmaxf(val, __shfl_xor_sync(0xffffffff, val, mask));
+  }
+  return val;
+}
+
+// Block reduce max
+template <const int NUM_THREADS>
+__device__ __forceinline__ float block_reduce_max_f32(float val) {
+  __shared__ float shared[NUM_THREADS / WARP_SIZE];
+  int lane = threadIdx.x % WARP_SIZE;
+  int wid = threadIdx.x / WARP_SIZE;
+  
+  val = warp_reduce_max_f32<WARP_SIZE>(val);
+  
+  if (lane == 0) shared[wid] = val;
+  __syncthreads();
+  
+  if (threadIdx.x < NUM_THREADS / WARP_SIZE) {
+    val = shared[threadIdx.x];
+  } else {
+    val = -INFINITY;
+  }
+  
+  if (wid == 0) val = warp_reduce_max_f32<NUM_THREADS / WARP_SIZE>(val);
+  
+  return val;
+}
+
+// Block reduce sum
+template <const int NUM_THREADS>
+__device__ __forceinline__ float block_reduce_sum_f32(float val) {
+  __shared__ float shared[NUM_THREADS / WARP_SIZE];
+  int lane = threadIdx.x % WARP_SIZE;
+  int wid = threadIdx.x / WARP_SIZE;
+  
+  val = warp_reduce_sum_f32<WARP_SIZE>(val);
+  
+  if (lane == 0) shared[wid] = val;
+  __syncthreads();
+  
+  if (threadIdx.x < NUM_THREADS / WARP_SIZE) {
+    val = shared[threadIdx.x];
+  } else {
+    val = 0.0f;
+  }
+  
+  if (wid == 0) val = warp_reduce_sum_f32<NUM_THREADS / WARP_SIZE>(val);
+  
+  return val;
+}
+
+// Online Safe Softmax Vec4 Pack Per Token: x: NxK(K=256<1024), y': NxK, y'=softmax(x) each row
+template <const int NUM_THREADS = 256 / 4>
+__global__ void _cuda_kernel_impl(float *x, float *y, int N, int K) {
+  int tid = threadIdx.x; // 0..K/4-1
+  int bid = blockIdx.x;  // 0..N-1
+  int idx = (bid * blockDim.x + threadIdx.x) * 4;
+
+  __shared__ float s_max;     // shared within block
+  __shared__ float s_sum;     // shared within block
+  
+  float pack_x[4];
+  if (idx < N * K) {
+    LDST128BITS(pack_x[0]) = LDST128BITS(x[idx]);
+  }
+  
+  float max_val = -INFINITY;
+  if (idx < N * K) {
+    for (int i = 0; i < 4; i++) {
+      max_val = fmaxf(max_val, pack_x[i]);
+    }
+  }
+  
+  max_val = block_reduce_max_f32<NUM_THREADS>(max_val);
+  if (tid == 0)
+    s_max = max_val;
+  __syncthreads();
+  
+  float pack_y[4];
+  float sum = 0.0f;
+  if (idx < N * K) {
+    for (int i = 0; i < 4; i++) {
+      float exp_val = expf(pack_x[i] - s_max);
+      pack_y[i] = exp_val;
+      sum += exp_val;
+    }
+  }
+  
+  sum = block_reduce_sum_f32<NUM_THREADS>(sum);
+  if (tid == 0)
+    s_sum = sum;
+  __syncthreads();
+  
+  if (idx < N * K) {
+    for (int i = 0; i < 4; i++) {
+      pack_y[i] = pack_y[i] / s_sum;
+    }
+    LDST128BITS(y[idx]) = LDST128BITS(pack_y[0]);
+  }
+}
+
+extern "C" void cuda_kernel(float* x, float* y, int N, int K) {
+    dim3 block(K / 4);  // K/4 threads per block
+    dim3 grid(N);       // N blocks, one per row
+    switch (K) {
+    case 128:
+        _cuda_kernel_impl<32><<<grid, block>>>(x, y, N, K);
+        break;
+    case 256:
+        _cuda_kernel_impl<64><<<grid, block>>>(x, y, N, K);
+        break;
+    case 512:
+        _cuda_kernel_impl<128><<<grid, block>>>(x, y, N, K);
+        break;
+    case 1024:
+        _cuda_kernel_impl<256><<<grid, block>>>(x, y, N, K);
+        break;
+    case 2048:
+        _cuda_kernel_impl<512><<<grid, block>>>(x, y, N, K);
+        break;
+    case 4096:
+        _cuda_kernel_impl<1024><<<grid, block>>>(x, y, N, K);
+        break;
+    default:
+        printf("only support K: 128/256/512/1024/2048/4096\n");
+    }
+}
