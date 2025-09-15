@@ -7,7 +7,7 @@ import subprocess
 import argparse
 from pathlib import Path
 from datetime import datetime
-from case_config import XPILER_ALL_CASES
+from case_config import XPILER_ALL_CASES, LEETCUDA_DYNAMIC_ALL_CASES
 from openai import OpenAI
 from cu2til.prompt.cuda2triton import simple_initial_prompt, feedback_prompt
 import dotenv
@@ -20,7 +20,7 @@ def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Run CUDA to Triton translation with iterative fixing')
     parser.add_argument('--model', choices=['qwen', 'gpt', 'gemini', 'deepseek', 'claude'], 
-                       default='gpt', help='Model to use for translation')
+                       default='qwen', help='Model to use for translation')
     parser.add_argument('--console', action='store_true', default=True,
                        help='Output logs to console (default: True)')
     parser.add_argument('--no-console', action='store_true', default=False,
@@ -31,6 +31,8 @@ def parse_args():
                        help='Test only the first case from each case type')
     parser.add_argument('--no-perf', action='store_true', default=False,
                        help='Skip performance testing (add --no-perf to check_triton.py)')
+    parser.add_argument('--testset', choices=['xpiler', 'leetcuda_dynamic'], 
+                       default='leetcuda_dynamic', help='Test set to use (default: xpiler)')
     return parser.parse_args()
 
 # Parse arguments
@@ -82,12 +84,17 @@ else:
 DIR_CUDA_ = Path("cuda_")
 DIR_TORCH_ = Path("torch_")
 DIR_TRITON_ = Path("triton_")
-TESTSET_ROOT_DIR = Path("/workspace/cu2til/cases/xpiler")
+TESTSET_ROOT_DIR = Path(f"/workspace/cu2til/cases/{args.testset}")
 TEMPERATURE = 0.35
 TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
 MAX_ROUNDS = 5
 CONSOLE_OUTPUT = args.console and not args.no_console  # Whether to output to console
+CHECK_SUFFIX = "_dynamic" if args.testset.startswith("leetcuda_dynamic") else ""
 
+# Select appropriate case configuration based on testset
+ALL_CASES = LEETCUDA_DYNAMIC_ALL_CASES if args.testset.startswith("leetcuda_dynamic") else XPILER_ALL_CASES
+
+# ALL_CASES = {"add": ["add_f16x8_pack"]}
 # Setup work directory
 model_name_clean = "".join(c if c.isalnum() else "_" for c in model_name.split("/")[-1].lower())
 WORK_DIR = Path(__file__).parent.absolute() / f"{model_name_clean}" / TIMESTAMP
@@ -119,9 +126,9 @@ logger.info(f"Using {run_model} model: {model_name}")
 
 
 def get_first_case_from_each_type():
-    """Extract the first case from each case type in XPILER_ALL_CASES."""
+    """Extract the first case from each case type in ALL_CASES."""
     first_cases = {}
-    for case_type, cases in XPILER_ALL_CASES.items():
+    for case_type, cases in ALL_CASES.items():
         if cases:  # Make sure the list is not empty
             first_cases[case_type] = cases[0]
     return first_cases
@@ -149,11 +156,11 @@ def get_failed_cases():
 
     failed_cases = {}
     for case_type in failed_case_types:
-        if case_type in XPILER_ALL_CASES:
-            failed_cases[case_type] = XPILER_ALL_CASES[case_type]
+        if case_type in ALL_CASES:
+            failed_cases[case_type] = ALL_CASES[case_type]
         else:
             logger.warning(
-                f"Case type '{case_type}' not found in XPILER_ALL_CASES")
+                f"Case type '{case_type}' not found in ALL_CASES")
 
     return failed_cases
 
@@ -164,7 +171,7 @@ def get_available_cases():
     if args.first_only:
         cases = get_first_case_from_each_type()
     else:
-        cases = XPILER_ALL_CASES.copy()
+        cases = ALL_CASES.copy()
     
     # Filter by specified case types if provided
     if args.case_types:
@@ -194,7 +201,7 @@ def run_single_case_translation(case_type, case_name):
 
     # Copy necessary files
     files_to_copy = [DIR_TORCH_ / "ref.py", DIR_CUDA_ / "kernel.cu",
-                     "check_cuda.py", "check_triton.py", "get_data.py"]
+                     f"check_cuda{CHECK_SUFFIX}.py", f"check_triton{CHECK_SUFFIX}.py", "get_data.py"]
 
     for file_path in files_to_copy:
         src_file = testcase_src_dir / file_path
@@ -338,7 +345,7 @@ def run_test_round(round_num, test_work_dir):
 
     # Run the test and capture output
     log_file = logs_dir / f"triton_test_round_{round_num}.log"
-    cmd = [sys.executable, "check_triton.py"]
+    cmd = [sys.executable, f"check_triton{CHECK_SUFFIX}.py"]
     if args.no_perf:
         cmd.append("--no-perf")
     try:
@@ -479,6 +486,7 @@ def test_cases():
     # Log configuration summary
     logger.info(f"⚙️  Configuration:")
     logger.info(f"   - Model: {model_name}")
+    logger.info(f"   - Testset: {args.testset}")
     logger.info(f"   - Max rounds: {MAX_ROUNDS}")
     logger.info(f"   - Console output: {CONSOLE_OUTPUT}")
     logger.info(f"   - First only: {args.first_only}")
@@ -596,20 +604,23 @@ if __name__ == "__main__":
     """
     Examples of usage:
     
-    # Test all cases with iterative fixing using gpt model
+    # Test all cases with iterative fixing using default (xpiler) testset
     python llm_trans.py
     
+    # Test with leetcuda_dynamic_test testset
+    python llm_trans.py --testset leetcuda_dynamic_test
+    
     # Test with different model
-    python llm_trans.py --model claude
+    python llm_trans.py --model claude --testset xpiler
     
     # Test only specific case types
     python llm_trans.py --case-types conv2d gemm layernorm
     
     # Test only first case from each type with no console output
-    python llm_trans.py --first-only --no-console
+    python llm_trans.py --first-only --no-console --testset leetcuda_dynamic_test
     
     # Test with different model and skip performance testing
-    python llm_trans.py --model qwen --case-types softmax relu --no-perf
+    python llm_trans.py --model qwen --case-types add --no-perf --testset leetcuda_dynamic_test
     """
     
     # Validate configuration

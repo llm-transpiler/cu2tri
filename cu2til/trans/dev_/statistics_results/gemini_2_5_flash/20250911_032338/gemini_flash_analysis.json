@@ -6,7 +6,7 @@
       "log_format": "compact",
       "log_file": "/workspace/cu2til/trans/dev_/gemini_2_5_flash/20250911_032338/gemini_flash.log"
     },
-    "analysis_timestamp": "2025-09-12T15:42:44.162175",
+    "analysis_timestamp": "2025-09-15T09:26:06.157430",
     "total_cases": 168
   },
   "statistics": {

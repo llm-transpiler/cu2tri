@@ -230,3 +230,80 @@ XPILER_ALL_CASES = {
         "sumpool_16_112_112_64_5_5_3_3"
     ]
 }
+LEETCUDA_DYNAMIC_ALL_CASES = {
+    "add": [
+        "add_f16x8_pack",
+        "add_f32x4"
+    ],
+    "dot_prod": [
+        "dot_prod_f16x8_pack_f32",
+        "dot_prod_f32x4_f32"
+    ],
+    "elu": [
+        "elu_f16x8_pack",
+        "elu_f32x4"
+    ],
+    "embedding": [
+        "embedding_f16x8_pack",
+        "embedding_f32x4",
+        "embedding_f32x4_pack"
+    ],
+    "flash_attn": [
+        "flash_attn_mma_stages_split_q_shared_kv"
+    ],
+    "gelu": [
+        "gelu_f16x8_pack",
+        "gelu_f32x4"
+    ],
+    "hgemm": [
+        "hgemm"
+    ],
+    "hgemv": [
+        "hgemv_k128_f16x4",
+        "hgemv_k16_f16",
+        "hgemv_k32_f16"
+    ],
+    "hardshrink": [
+        "hardshrink_f16x8_pack",
+        "hardshrink_f32x4"
+    ],
+    "hardswish": [
+        "hardswish_f16x8_pack",
+        "hardswish_f32x4"
+    ],
+    "layer_norm": [
+        "layer_norm_f16x8_pack_f32",
+        "layer_norm_f32x4"
+    ],
+    "relu": [
+        "relu_f16x8pack",
+        "relu_f32x4"
+    ],
+    "rmsnorm": [
+        "rmsnorm_f16x8packf16",
+        "rmsnorm_f32x4"
+    ],
+    "safe_softmax": [
+        "safe_softmax_f16x8_pack_f32_per_token",
+        "safe_softmax_f32x4_online_pack_per_token"
+    ],
+    "sgemm": [
+        "sgemm",
+        "sgemm_wmma_tf32_stage_dsmem"
+    ],
+    "sgemv": [
+        "sgemv_k128f32x4"
+    ],
+    "sigmoid": [
+        "sigmoid_f16x8pack",
+        "sigmoid_f32x4"
+    ],
+    "sum": [
+        "sum_f16x8_pack_f16",
+        "sum_f32x4_f32"
+    ],
+    "swish": [
+        "swish_f16x8_pack",
+        "swish_f32x4"
+    ]
+}
