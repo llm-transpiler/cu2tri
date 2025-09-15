@@ -5,6 +5,8 @@ import sys
 import json
 import subprocess
 import argparse
+import time
+import re
 from pathlib import Path
 from datetime import datetime
 from case_config import XPILER_ALL_CASES
@@ -34,6 +36,12 @@ def parse_args():
                        help='Test only the first case from each case type')
     parser.add_argument('--no-perf', action='store_true', default=False,
                        help='Skip performance testing (add --no-perf to check_triton.py)')
+    parser.add_argument('--retry-wait', type=int, default=60,
+                       help='Wait time in seconds when encountering API overload errors (default: 60)')
+    parser.add_argument('--max-retries', type=int, default=5,
+                       help='Maximum number of retries for API overload errors (default: 5)')
+    parser.add_argument('--no-early-stop', action='store_true', default=False,
+                       help='Test all max-times attempts even if some succeed (default: stop on first success)')
     return parser.parse_args()
 
 # Parse arguments
@@ -113,8 +121,8 @@ if CONSOLE_OUTPUT:
     console_handler.setLevel(logging.INFO)
     handlers.append(console_handler)
 
-# Formatter
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+# Formatter with fixed-width levelname for better alignment
+formatter = logging.Formatter('%(asctime)s - %(levelname)-7s - %(message)s')
 for handler in handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -179,9 +187,38 @@ def get_last_code_block(resp_content):
         extracted_code = matches[-1][1].strip()
     else:
         extracted_code = resp_content
-        logger.warning("Cannot find code block, using original content")
+        logger.debug("Cannot find code block, using original content (will retry)")
     
     return extracted_code
+
+def is_retryable_error(error_message):
+    """Check if the error is a retryable API overload/rate limit error."""
+    error_str = str(error_message).lower()
+    
+    # Common overload/rate limit patterns
+    retryable_patterns = [
+        r'overloaded',
+        r'rate limit',
+        r'quota exceeded',
+        r'too many requests',
+        r'service unavailable',
+        r'temporarily unavailable',
+        r'try again later',
+        r'error code: 503',
+        r'error code: 429',
+        r'error code: 502',
+        r'status: unavailable',
+        r'status: resource_exhausted',
+        r'capacity',
+        r'busy',
+        r'throttled'
+    ]
+    
+    for pattern in retryable_patterns:
+        if re.search(pattern, error_str):
+            return True
+    
+    return False
 
 def run_test(test_work_dir, attempt_num):
     """Run a single test attempt and return success status."""
@@ -245,7 +282,7 @@ def run_test(test_work_dir, attempt_num):
         return False, log_file
 
 def generate_triton_code(cuda_code, attempt_num):
-    """Generate Triton code using LLM for a single attempt."""
+    """Generate Triton code using LLM for a single attempt with retry logic for overload errors."""
     logger.debug(f"Generating Triton code for attempt {attempt_num}...")
     
     # Create fresh conversation for each attempt (no history)
@@ -255,16 +292,88 @@ def generate_triton_code(cuda_code, attempt_num):
         make_openai_message_user(simple_initial_prompt.format(cuda_code=cuda_code))
     ]
     
+    retry_count = 0
+    while retry_count <= args.max_retries:
+        try:
+            api_params = get_api_param(conversation_history, model_name)
+            resp_content = openai_llm_call(client, api_params)
+            triton_code = get_last_code_block(resp_content)
+            
+            # Check if we got valid code (not just the original response due to missing code block)
+            if triton_code == resp_content:
+                # This means get_last_code_block couldn't find a code block and returned the full response
+                # This should be retried, not counted as a failed attempt
+                if retry_count < args.max_retries:
+                    retry_count += 1
+                    wait_time = args.retry_wait // 2  # Shorter wait for format issues
+                    logger.warning(f"🔄 No code block found in response (retry {retry_count}/{args.max_retries})")
+                    logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                    
+                    # Wait with countdown
+                    for remaining in range(wait_time, 0, -1):
+                        if remaining % 5 == 0 or remaining <= 3:
+                            logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                        time.sleep(1)
+                    
+                    logger.info(f"🔄 Retrying API call for better code format...")
+                    continue
+                else:
+                    logger.error(f"❌ Max retries exceeded - no valid code block found")
+                    return None, None, conversation_history
+            
+            if retry_count > 0:
+                logger.info(f"✅ Successfully generated code after {retry_count} retries")
+            logger.debug(f"Successfully generated Triton code for attempt {attempt_num}")
+            
+            # Add assistant response to conversation history
+            from llm import make_openai_message_assistant
+            conversation_history.append(make_openai_message_assistant(resp_content))
+            
+            return triton_code, resp_content, conversation_history
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Check if this is a retryable error
+            if is_retryable_error(error_msg) and retry_count < args.max_retries:
+                retry_count += 1
+                wait_time = args.retry_wait
+                logger.warning(f"🔄 API overload detected (retry {retry_count}/{args.max_retries}): {error_msg}")
+                logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                
+                # Wait with countdown (only show every 10 seconds to avoid spam)
+                for remaining in range(wait_time, 0, -1):
+                    if remaining % 10 == 0 or remaining <= 5:
+                        logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                    time.sleep(1)
+                
+                logger.info(f"🔄 Retrying API call (attempt {retry_count + 1})...")
+                continue
+            else:
+                # Non-retryable error or max retries exceeded
+                if retry_count >= args.max_retries:
+                    logger.error(f"❌ Max retries ({args.max_retries}) exceeded for attempt {attempt_num}")
+                logger.error(f"Failed to generate Triton code for attempt {attempt_num}: {error_msg}")
+                return None, None, conversation_history
+    
+    return None, None, conversation_history
+
+def save_conversation_history(conversation_history, test_work_dir, attempt_num):
+    """Save the conversation history to a JSON file for debugging and reference."""
     try:
-        api_params = get_api_param(conversation_history, model_name)
-        resp_content = openai_llm_call(client, api_params)
-        triton_code = get_last_code_block(resp_content)
+        logs_dir = test_work_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.debug(f"Successfully generated Triton code for attempt {attempt_num}")
-        return triton_code, resp_content
+        conversation_file = logs_dir / f"conversation_history_attempt_{attempt_num}.json"
+        
+        with open(conversation_file, 'w', encoding='utf-8') as f:
+            json.dump(conversation_history, f, indent=2, ensure_ascii=False)
+        
+        logger.debug(f"📝 Conversation history saved to {conversation_file}")
+        return str(conversation_file)
     except Exception as e:
-        logger.error(f"Failed to generate Triton code for attempt {attempt_num}: {str(e)}")
-        return None, None
+        logger.warning(f"⚠️ Failed to save conversation history: {e}")
+        return None
 
 def run_pass_at_n_case(case_type, case_name):
     """Run pass@n testing for a single case."""
@@ -309,25 +418,33 @@ def run_pass_at_n_case(case_type, case_name):
     
     # Track all attempts
     attempts_log = []
+    successful_attempts = []
+    attempt_count = 0
     
-    # Run MAX_TIMES independent attempts
-    for attempt in range(1, MAX_TIMES + 1):
-        logger.info(f"🔄 Starting attempt {attempt}/{MAX_TIMES}...")
+    # Run attempts until we reach MAX_TIMES successful generations (or early stop)
+    while attempt_count < MAX_TIMES:
+        attempt_count += 1
+        logger.info(f"🔄 Starting attempt {attempt_count}/{MAX_TIMES}...")
         
-        # Generate Triton code (independent attempt)
-        triton_code, llm_response = generate_triton_code(cuda_code, attempt)
+        # Generate Triton code (with retry logic, retries don't count as attempts)
+        triton_code, llm_response, conversation_history = generate_triton_code(cuda_code, attempt_count)
+        
+        # Save conversation history (regardless of success/failure)
+        conversation_file = save_conversation_history(conversation_history, test_work_dir, attempt_count)
         
         if triton_code is None:
-            logger.error(f"Failed to generate code for attempt {attempt}")
+            # This means we failed even after all retries - this counts as a failed attempt
+            logger.error(f"❌ Failed to generate code for attempt {attempt_count} (after all retries)")
             attempts_log.append({
-                "attempt": attempt,
+                "attempt": attempt_count,
                 "success": False,
-                "error": "Code generation failed"
+                "error": "Code generation failed after retries",
+                "conversation_file": conversation_file
             })
             continue
         
-        # Save generated code
-        kernel_path = TRITON_DIR / f"kernel_attempt_{attempt}.py"
+        # Save generated code for this attempt
+        kernel_path = TRITON_DIR / f"kernel_attempt_{attempt_count}.py"
         with open(kernel_path, "w") as f:
             f.write(triton_code)
         
@@ -335,29 +452,43 @@ def run_pass_at_n_case(case_type, case_name):
         shutil.copy(kernel_path, TRITON_DIR / "kernel.py")
         
         # Save LLM response
-        response_file = test_work_dir / "logs" / f"llm_response_attempt_{attempt}.txt"
+        response_file = test_work_dir / "logs" / f"llm_response_attempt_{attempt_count}.txt"
         response_file.parent.mkdir(parents=True, exist_ok=True)
         with open(response_file, "w") as f:
             f.write(llm_response)
         
         # Test the generated code
-        success, log_file = run_test(test_work_dir, attempt)
+        success, log_file = run_test(test_work_dir, attempt_count)
         
         attempts_log.append({
-            "attempt": attempt,
+            "attempt": attempt_count,
             "success": success,
             "log_file": str(log_file),
-            "kernel_file": str(kernel_path)
+            "kernel_file": str(kernel_path),
+            "conversation_file": conversation_file
         })
         
         if success:
-            logger.info(f"✅ SUCCESS at attempt {attempt}! (pass@{attempt})")
-            return True, attempt, attempts_log
+            successful_attempts.append(attempt_count)
+            logger.info(f"✅ SUCCESS at attempt {attempt_count}!")
+            
+            # Check if we should stop early (default behavior)
+            if not args.no_early_stop:
+                logger.info(f"🎯 Early stop enabled - stopping at first success (pass@{attempt_count})")
+                return True, attempt_count, attempts_log
+            else:
+                logger.info(f"🔄 No early stop - continuing to test all {MAX_TIMES} attempts")
         else:
-            logger.info(f"❌ Attempt {attempt} failed")
+            logger.info(f"❌ Attempt {attempt_count} failed")
     
-    logger.info(f"❌ All {MAX_TIMES} attempts failed")
-    return False, None, attempts_log
+    # Check final results
+    if successful_attempts:
+        first_success = min(successful_attempts)
+        logger.info(f"✅ Final result: SUCCESS (first success at attempt {first_success}, total successes: {len(successful_attempts)})")
+        return True, first_success, attempts_log
+    else:
+        logger.info(f"❌ All {MAX_TIMES} attempts failed")
+        return False, None, attempts_log
 
 def test_cases():
     """Test cases using pass@n methodology."""
@@ -368,6 +499,9 @@ def test_cases():
     logger.info(f"   - Console output: {CONSOLE_OUTPUT}")
     logger.info(f"   - First only: {args.first_only}")
     logger.info(f"   - Skip performance: {args.no_perf}")
+    logger.info(f"   - Early stop: {not args.no_early_stop}")
+    logger.info(f"   - Retry wait time: {args.retry_wait}s")
+    logger.info(f"   - Max retries: {args.max_retries}")
     logger.info(f"   - Specific case types: {args.case_types if args.case_types else 'All'}")
     logger.info(f"📋 Available case types: {list(AVAILABLE_CASES.keys())}")
     logger.info(f"📁 Work directory: {WORK_DIR}")
@@ -397,7 +531,12 @@ def test_cases():
                 all_case_results.append(case_result)
                 
                 if success:
-                    status = f"✅ SUCCESS (pass@{pass_at_n})"
+                    if args.no_early_stop:
+                        # Count successful attempts from attempts_log
+                        success_count = sum(1 for log in attempts_log if log["success"])
+                        status = f"✅ SUCCESS (pass@{pass_at_n}, {success_count}/{MAX_TIMES} successful)"
+                    else:
+                        status = f"✅ SUCCESS (pass@{pass_at_n})"
                 else:
                     status = f"❌ FAILED (all {MAX_TIMES} attempts)"
                 logger.info(f"{'🔹'*15} {case_type}/{case_name_single}: {status} {'🔹'*15}")
@@ -497,6 +636,15 @@ if __name__ == "__main__":
     
     # Test with different model and max attempts, skip performance testing
     python llm_trans_pass_at_n.py --model gpt --max-times 3 --case-types softmax relu --no-perf
+    
+    # Test with custom retry settings (30s wait, max 3 retries)
+    python llm_trans_pass_at_n.py --retry-wait 30 --max-retries 3
+    
+    # Test all attempts without early stopping (get full distribution)
+    python llm_trans_pass_at_n.py --no-early-stop --max-times 5
+    
+    # Development mode with fast retries and no early stop
+    python llm_trans_pass_at_n.py --first-only --retry-wait 10 --max-retries 2 --no-early-stop
     """
     
     # Validate configuration
