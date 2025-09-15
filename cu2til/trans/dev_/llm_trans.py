@@ -1,23 +1,41 @@
-from case_config import XPILER_ALL_CASES
-from openai import OpenAI
+import logging
 import os
 import shutil
-from pathlib import Path
-from cu2til.prompt.cuda2triton import simple_initial_prompt, feedback_prompt
-import dotenv
-import subprocess
 import sys
 import json
+import subprocess
+import argparse
+from pathlib import Path
 from datetime import datetime
+from case_config import XPILER_ALL_CASES
+from openai import OpenAI
+from cu2til.prompt.cuda2triton import simple_initial_prompt, feedback_prompt
+import dotenv
 from cu2til.trans.dev_.llm import get_api_param_openai_default
 from llm import openai_llm_call, CallingIdentifier, get_api_params_method, make_openai_message_system, make_openai_message_user, make_openai_message_assistant
 # 执行自动化测试和修复
 dotenv.load_dotenv()
-# run_model = "qwen"
-# run_model = "gemini"
-# run_model = "deepseek"
-# run_model = "claude"
-run_model = "gpt"
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='Run CUDA to Triton translation with iterative fixing')
+    parser.add_argument('--model', choices=['qwen', 'gpt', 'gemini', 'deepseek', 'claude'], 
+                       default='gpt', help='Model to use for translation')
+    parser.add_argument('--console', action='store_true', default=True,
+                       help='Output logs to console (default: True)')
+    parser.add_argument('--no-console', action='store_true', default=False,
+                       help='Disable console output')
+    parser.add_argument('--case-types', nargs='*', 
+                       help='Specific case types to test (default: all)')
+    parser.add_argument('--first-only', action='store_true', default=False,
+                       help='Test only the first case from each case type')
+    parser.add_argument('--no-perf', action='store_true', default=False,
+                       help='Skip performance testing (add --no-perf to check_triton.py)')
+    return parser.parse_args()
+
+# Parse arguments
+args = parse_args()
+run_model = args.model
 get_api_param = get_api_param_openai_default
 model_name = "DEFAULT_MODEL_NAME"
 if run_model == "qwen":
@@ -60,20 +78,44 @@ elif run_model == "claude":
 else:
     raise ValueError(f"Unsupported model: {run_model}")
 
-print(f"Using {run_model} model: {model_name}")
-# Import case configuration
-
+# Constants
 DIR_CUDA_ = Path("cuda_")
 DIR_TORCH_ = Path("torch_")
 DIR_TRITON_ = Path("triton_")
 TESTSET_ROOT_DIR = Path("/workspace/cu2til/cases/xpiler")
-WORK_DIR = Path(__file__).parent.absolute()
 TEMPERATURE = 0.35
 TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
-# TIMESTAMP = "20250910_210335"
-WORK_DIR = Path(__file__).parent.absolute() / "".join(c if c.isalnum()
-                                                      else "_" for c in model_name.split("/")[-1].lower()) / TIMESTAMP
 MAX_ROUNDS = 5
+CONSOLE_OUTPUT = args.console and not args.no_console  # Whether to output to console
+
+# Setup work directory
+model_name_clean = "".join(c if c.isalnum() else "_" for c in model_name.split("/")[-1].lower())
+WORK_DIR = Path(__file__).parent.absolute() / f"{model_name_clean}" / TIMESTAMP
+WORK_DIR.mkdir(parents=True, exist_ok=True)
+
+# Setup logging
+log_file = WORK_DIR / f"{model_name_clean}.log"
+logger = logging.getLogger('llm_trans')
+logger.setLevel(logging.DEBUG)
+
+# File handler
+file_handler = logging.FileHandler(log_file, encoding='utf-8')
+file_handler.setLevel(logging.DEBUG)
+
+# Console handler (optional)
+handlers = [file_handler]
+if CONSOLE_OUTPUT:
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    handlers.append(console_handler)
+
+# Formatter with fixed-width levelname for better alignment
+formatter = logging.Formatter('%(asctime)s - %(levelname)-7s - %(message)s')
+for handler in handlers:
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+logger.info(f"Using {run_model} model: {model_name}")
 
 
 def get_first_case_from_each_type():
@@ -110,24 +152,41 @@ def get_failed_cases():
         if case_type in XPILER_ALL_CASES:
             failed_cases[case_type] = XPILER_ALL_CASES[case_type]
         else:
-            print(
-                f"⚠️ Warning: case_type '{case_type}' not found in XPILER_ALL_CASES")
+            logger.warning(
+                f"Case type '{case_type}' not found in XPILER_ALL_CASES")
 
     return failed_cases
 
 
-# Configuration - can be changed to test different cases
-# AVAILABLE_CASES = get_first_case_from_each_type()
-AVAILABLE_CASES = XPILER_ALL_CASES
-# AVAILABLE_CASES = get_failed_cases()
+# Configure available cases based on command line arguments
+def get_available_cases():
+    """Get available cases based on command line arguments."""
+    if args.first_only:
+        cases = get_first_case_from_each_type()
+    else:
+        cases = XPILER_ALL_CASES.copy()
+    
+    # Filter by specified case types if provided
+    if args.case_types:
+        filtered_cases = {}
+        for case_type in args.case_types:
+            if case_type in cases:
+                filtered_cases[case_type] = cases[case_type]
+            else:
+                logger.warning(f"Case type '{case_type}' not found in available cases")
+        cases = filtered_cases
+    
+    return cases
+
+AVAILABLE_CASES = get_available_cases()
 
 
 def run_single_case_translation(case_type, case_name):
     """Run translation for a single case."""
-    print(f"\n{'='*60}")
-    print(f"🎯 Testing case type: {case_type}")
-    print(f"📁 Case name: {case_name}")
-    print(f"{'='*60}")
+    logger.info(f"{'='*60}")
+    logger.info(f"🎯 Testing case type: {case_type}")
+    logger.info(f"📁 Case name: {case_name}")
+    logger.info(f"{'='*60}")
 
     testcase_src_dir = TESTSET_ROOT_DIR / case_name
     test_work_dir = WORK_DIR / case_name
@@ -145,14 +204,14 @@ def run_single_case_translation(case_type, case_name):
 
         if src_file.exists():
             shutil.copy2(src_file, dst_file)
-            print(f"✅ Copy {file_path} to {test_work_dir}")
+            logger.debug(f"Copy {file_path} to {test_work_dir}")
         else:
-            print(f"❌ Warning: Source file {src_file} does not exist")
+            logger.warning(f"Source file {src_file} does not exist")
 
     # Read CUDA code
     cuda_file_path = test_work_dir / DIR_CUDA_ / "kernel.cu"
     if not cuda_file_path.exists():
-        print(f"❌ CUDA file not found: {cuda_file_path}")
+        logger.error(f"CUDA file not found: {cuda_file_path}")
         return False
 
     with open(cuda_file_path, "r") as f:
@@ -180,14 +239,14 @@ def run_single_case_translation(case_type, case_name):
     with open(TRITON_DIR / "kernel.py", "w") as f:
         f.write(get_last_code_block(resp_content))
 
-    print(f"✅ Triton code generated successfully")
+    logger.info(f"Triton code generated successfully")
 
     # Save initial conversation history (round 1)
     save_conversation_history(conversation_history,
                               test_work_dir, round_num=1, timestamp=TIMESTAMP)
 
     # 开始自动化测试和修复流程
-    print(f"\n🔄 Starting automated testing and fixing process...")
+    logger.info(f"Starting automated testing and fixing process...")
 
     success, rounds = run_testing_loop(conversation_history, test_work_dir)
     return success, rounds
@@ -234,7 +293,7 @@ def get_last_code_block(resp_content):
         extracted_code = matches[-1][1].strip()
     else:
         extracted_code = resp_content
-        print(f"⚠️ Cannot find code block, using original content")
+        logger.debug("Cannot find code block, using original content (will retry)")
 
     return extracted_code
 
@@ -256,22 +315,22 @@ def save_conversation_history(conversation_history, test_work_dir, round_num=Non
         with open(conversation_file, 'w', encoding='utf-8') as f:
             json.dump(conversation_history, f, indent=2, ensure_ascii=False)
 
-        print(f"📝 Conversation history saved to {conversation_file}")
+        logger.debug(f"Conversation history saved to {conversation_file}")
         return str(conversation_file)
     except Exception as e:
-        print(f"⚠️ Failed to save conversation history: {e}")
+        logger.warning(f"Failed to save conversation history: {e}")
         return None
 
 
 def run_test_round(round_num, test_work_dir):
     """Run a single test round and capture all output."""
-    print(f"\n🔄 Running test round {round_num}...")
+    logger.debug(f"Running test round {round_num}...")
 
     # Backup current kernel
     kernel_path = test_work_dir / DIR_TRITON_ / "kernel.py"
     backup_path = test_work_dir / DIR_TRITON_ / f"kernel_v{round_num}.py"
     shutil.copy(kernel_path, backup_path)
-    print(f"✅ Backed up kernel to kernel_v{round_num}.py")
+    logger.debug(f"Backed up kernel to kernel_v{round_num}.py")
 
     # Create logs directory if it doesn't exist
     logs_dir = test_work_dir / "logs"
@@ -280,7 +339,7 @@ def run_test_round(round_num, test_work_dir):
     # Run the test and capture output
     log_file = logs_dir / f"triton_test_round_{round_num}.log"
     cmd = [sys.executable, "check_triton.py"]
-    if os.environ.get("CUDA_VISIBLE_DEVICES") == "1":
+    if args.no_perf:
         cmd.append("--no-perf")
     try:
         # Change to target directory for test execution
@@ -308,7 +367,7 @@ def run_test_round(round_num, test_work_dir):
             f.write(result.stderr)
             f.write(f"\n=== END OF LOG ===\n")
 
-        print(f"📋 Test output saved to {log_file}")
+        logger.debug(f"Test output saved to {log_file}")
 
         # Check if test passed (look for success indicators)
         success = result.returncode == 0 and ("PASSED" in result.stdout)
@@ -343,7 +402,7 @@ def get_feedback_from_llm(round_num, error_output, stderr_output, test_work_dir,
             traceback_info=traceback_info
         )
 
-        print(f"🤖 Requesting LLM feedback for round {round_num}...")
+        logger.debug(f"Requesting LLM feedback for round {round_num}...")
 
         # Add the current kernel code and error feedback to conversation history
         conversation_history.append(make_openai_message_user(prompt))
@@ -361,7 +420,7 @@ def get_feedback_from_llm(round_num, error_output, stderr_output, test_work_dir,
         return fixed_code
 
     except Exception as e:
-        print(f"❌ Failed to get LLM feedback: {str(e)}")
+        logger.error(f"Failed to get LLM feedback: {str(e)}")
         return None
 
 
@@ -372,17 +431,17 @@ def run_testing_loop(conversation_history, test_work_dir):
             round_num, test_work_dir)
 
         if success:
-            print(
+            logger.info(
                 f"✅ Test round {round_num} PASSED! Triton kernel is working correctly.")
-            print(f"📊 Final results saved in {log_file}")
+            logger.info(f"Final results saved in {log_file}")
 
             return True, round_num
         else:
-            print(f"❌ Test round {round_num} FAILED.")
-            print(f"📋 Error details saved in {log_file}")
+            logger.info(f"❌ Test round {round_num} FAILED.")
+            logger.debug(f"Error details saved in {log_file}")
 
             if round_num < MAX_ROUNDS:
-                print(f"🔧 Attempting to fix with LLM feedback...")
+                logger.info(f"🔧 Attempting to fix with LLM feedback...")
 
                 # Get feedback from LLM using cumulative conversation history
                 # 这将产生第(round_num+1)轮对话
@@ -394,18 +453,18 @@ def run_testing_loop(conversation_history, test_work_dir):
                     kernel_path = test_work_dir / DIR_TRITON_ / "kernel.py"
                     with open(kernel_path, 'w') as f:
                         f.write(fixed_code)
-                    print(f"💾 Updated kernel.py with LLM feedback")
+                    logger.debug(f"Updated kernel.py with LLM feedback")
 
                     # 保存第(round_num+1)轮对话历史
                     save_conversation_history(
                         conversation_history, test_work_dir, round_num + 1, timestamp=TIMESTAMP)
                 else:
-                    print(
-                        f"❌ Failed to get valid LLM feedback for round {round_num}")
+                    logger.error(
+                        f"Failed to get valid LLM feedback for round {round_num}")
                     break
             else:
-                print(
-                    f"❌ Maximum rounds ({MAX_ROUNDS}) reached. Manual intervention required.")
+                logger.error(
+                    f"Maximum rounds ({MAX_ROUNDS}) reached. Manual intervention required.")
                 break
 
     return False, MAX_ROUNDS
@@ -413,8 +472,18 @@ def run_testing_loop(conversation_history, test_work_dir):
 
 def test_cases():
     """Test the first case from each case type."""
-    print(f"🚀 Starting batch testing of first cases from each type...")
-    print(f"📋 Available case types: {list(AVAILABLE_CASES.keys())}")
+    logger.info(f"🚀 Starting batch testing...")
+    logger.info(f"📋 Available case types: {list(AVAILABLE_CASES.keys())}")
+    logger.info(f"📁 Work directory: {WORK_DIR}")
+    
+    # Log configuration summary
+    logger.info(f"⚙️  Configuration:")
+    logger.info(f"   - Model: {model_name}")
+    logger.info(f"   - Max rounds: {MAX_ROUNDS}")
+    logger.info(f"   - Console output: {CONSOLE_OUTPUT}")
+    logger.info(f"   - First only: {args.first_only}")
+    logger.info(f"   - Skip performance: {args.no_perf}")
+    logger.info(f"   - Specific case types: {args.case_types if args.case_types else 'All'}")
 
     # 使用详细的结果存储结构
     detailed_results = {}  # case_type -> list of case results
@@ -428,8 +497,8 @@ def test_cases():
 
         for case_name_single in case_name:
             try:
-                print(
-                    f"\n{'🔹'*20} Starting {case_type}/{case_name_single} {'🔹'*20}")
+                logger.info(
+                    f"{'🔹'*20} Starting {case_type}/{case_name_single} {'🔹'*20}")
                 success, rounds = run_single_case_translation(
                     case_type, case_name_single)
 
@@ -446,10 +515,10 @@ def test_cases():
                     status = f"✅ SUCCESS (Round {rounds})"
                 else:
                     status = f"❌ FAILED (Round {rounds})"
-                print(f"{'🔹'*15} {case_type}/{case_name_single}: {status} {'🔹'*15}")
+                logger.info(f"{'🔹'*15} {case_type}/{case_name_single}: {status} {'🔹'*15}")
 
             except Exception as e:
-                print(f"❌ Error in {case_type}/{case_name_single}: {e}")
+                logger.error(f"Error in {case_type}/{case_name_single}: {e}")
                 case_result = {
                     "case_type": case_type,
                     "case_name": case_name_single,
@@ -461,9 +530,9 @@ def test_cases():
                 all_case_results.append(case_result)
 
     # Print detailed summary
-    print(f"\n{'='*80}")
-    print(f"📊 DETAILED BATCH TESTING SUMMARY")
-    print(f"{'='*80}")
+    logger.info(f"{'='*80}")
+    logger.info(f"📊 DETAILED BATCH TESTING SUMMARY")
+    logger.info(f"{'='*80}")
 
     total_success = 0
     total_cases = 0
@@ -477,7 +546,7 @@ def test_cases():
 
         # Case type level summary
         case_type_status = "✅" if case_type_success == case_type_total else "❌" if case_type_success == 0 else "⚠️ "
-        print(
+        logger.info(
             f"{case_type_status} {case_type:<15} ({case_type_success}/{case_type_total})")
 
         # Individual case details
@@ -490,8 +559,8 @@ def test_cases():
                 status = f"  ❌ ({rounds_info})"
 
             error_info = f" - {result.get('error', '')}" if not result["success"] and 'error' in result else ""
-            print(f"{status} {result['case_name']}{error_info}")
-        print()
+            logger.info(f"{status} {result['case_name']}{error_info}")
+        logger.info("")
 
     # 轮次分布统计
     rounds_distribution = {}
@@ -503,33 +572,50 @@ def test_cases():
         rounds_distribution[round_num] = rounds_distribution.get(
             round_num, 0) + 1
 
-    print(f"📊 Success rounds distribution:")
+    logger.info(f"📊 Success rounds distribution:")
     for round_num in sorted(rounds_distribution.keys()):
         count = rounds_distribution[round_num]
-        print(f"   Round {round_num}: {count} cases")
+        logger.info(f"   Round {round_num}: {count} cases")
 
     avg_rounds = sum(result["rounds"] for result in successful_cases) / \
         len(successful_cases) if successful_cases else 0
-    print(f"📈 Average rounds for successful cases: {avg_rounds:.2f}")
+    logger.info(f"📈 Average rounds for successful cases: {avg_rounds:.2f}")
 
-    print(f"{'='*80}")
-    print(
+    logger.info(f"{'='*80}")
+    logger.info(
         f"🏆 OVERALL TOTAL: {total_success}/{total_cases} individual cases succeeded")
-    print(
+    logger.info(
         f"📊 Case type success rate: {sum(1 for case_type, results in detailed_results.items() if all(r['success'] for r in results))}/{len(detailed_results)} case types fully passed")
-    print(f"{'='*80}")
+    logger.info(f"📋 Log file: {log_file}")
+    logger.info(f"{'='*80}")
 
     return {"detailed_results": detailed_results, "all_case_results": all_case_results}
 
 
 if __name__ == "__main__":
-    # Configuration options:
-
-    # # Option 1: Test a single specific case
-    # case_type = "conv2d"  # Change this to test different case types
-    # case_name = "conv2d_16_8_8_64_64_2_2_64_2_0"
-    # run_single_case_translation(case_type, case_name)
-    # exit(0)
-
-    # Option 2: Test all first cases (uncomment to enable)
+    """
+    Examples of usage:
+    
+    # Test all cases with iterative fixing using gpt model
+    python llm_trans.py
+    
+    # Test with different model
+    python llm_trans.py --model claude
+    
+    # Test only specific case types
+    python llm_trans.py --case-types conv2d gemm layernorm
+    
+    # Test only first case from each type with no console output
+    python llm_trans.py --first-only --no-console
+    
+    # Test with different model and skip performance testing
+    python llm_trans.py --model qwen --case-types softmax relu --no-perf
+    """
+    
+    # Validate configuration
+    if not AVAILABLE_CASES:
+        logger.error("No cases available for testing. Check your case types filter.")
+        sys.exit(1)
+    
+    # Test all cases using iterative fixing methodology
     test_cases()
