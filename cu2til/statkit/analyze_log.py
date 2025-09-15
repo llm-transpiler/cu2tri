@@ -65,8 +65,13 @@ def get_default_statistics_dir(log_file_path):
 def detect_log_format(content):
     """
     Automatically detect the log format style.
-    Returns 'comprehensive' for new format with case names, 'compact' for old format.
+    Returns 'pass_n' for pass@n format, 'comprehensive' for new format with case names, 'compact' for old format.
     """
+    # Check for pass@n format pattern (pass@n testing with multiple attempts)
+    pass_n_pattern = r'🔹+ (\w+/[\w_]+): ([✅❌]) (SUCCESS|FAILED) \(pass@\d+, \d+/\d+ successful\) 🔹+'
+    if re.search(pass_n_pattern, content):
+        return 'pass_n'
+    
     # Check for new format pattern (case_type/case_name with round info)
     comprehensive_pattern = r'🔹+ (\w+/[\w_]+): ([✅❌]) (SUCCESS|FAILED) \(Round \d+\) 🔹+'
     if re.search(comprehensive_pattern, content):
@@ -80,6 +85,150 @@ def detect_log_format(content):
     # Default to compact for backward compatibility
     return 'compact'
 
+def parse_pass_n_log_file(log_file_path):
+    """
+    Parse pass@n format log file where each case has multiple attempts.
+    Returns detailed analysis with pass@n statistics.
+    """
+    print(f"📖 Analyzing pass@n log file: {log_file_path}")
+    
+    with open(log_file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Extract model name and max attempts
+    model_match = re.search(r'🤖 Using model: (.+)', content)
+    max_attempts_match = re.search(r'🔢 Max attempts: (\d+)', content)
+    
+    model_info = {
+        "model_type": "pass_n",
+        "model_name": model_match.group(1) if model_match else "unknown",
+        "log_format": "pass_n",
+        "max_attempts": int(max_attempts_match.group(1)) if max_attempts_match else 10
+    }
+    
+    # Find all test case starts and attempts
+    case_pattern = r'🔹{20} Starting ([\w/]+) 🔹{20}'
+    case_info_pattern = r'🎯 Testing case type: (\w+)\s*\n📁 Case name: ([^\n]+)'
+    attempt_result_pattern = r'Test attempt (\d+) result: (PASSED|FAILED)'
+    final_result_pattern = r'🔹+ ([\w/]+): ([✅❌]) (SUCCESS|FAILED) \(pass@\d+, (\d+)/(\d+) successful\) 🔹+'
+    
+    # Find all cases
+    case_matches = re.findall(case_pattern, content)
+    case_info_matches = re.findall(case_info_pattern, content)
+    final_results = re.findall(final_result_pattern, content)
+    
+    print(f"📊 Found {len(case_matches)} test cases with pass@n format")
+    
+    # Build detailed results
+    detailed_results = defaultdict(list)
+    all_case_results = []
+    
+    # Split content by case boundaries for detailed analysis
+    case_sections = re.split(r'🔹{20} Starting [\w/]+ 🔹{20}', content)
+    
+    case_idx = 0
+    for section in case_sections[1:]:  # Skip first empty section
+        if case_idx >= len(case_matches):
+            break
+            
+        case_full_name = case_matches[case_idx]
+        
+        # Extract case type and name
+        if case_idx < len(case_info_matches):
+            case_type, case_name = case_info_matches[case_idx]
+        else:
+            # Fallback: extract from full name
+            if '/' in case_full_name:
+                case_type, case_name = case_full_name.split('/', 1)
+            else:
+                case_type = case_full_name
+                case_name = case_full_name
+        
+        # Find all attempt results in this section
+        attempt_results = re.findall(attempt_result_pattern, section)
+        
+        # Build attempts list
+        attempts = []
+        for attempt_num, result in attempt_results:
+            attempts.append({
+                "attempt": int(attempt_num),
+                "result": result,
+                "success": result == "PASSED"
+            })
+        
+        # Sort attempts by attempt number
+        attempts.sort(key=lambda x: x["attempt"])
+        
+        # Calculate pass@n metrics
+        pass_metrics = calculate_pass_n_metrics(attempts, model_info["max_attempts"])
+        
+        # Get final result from summary line by matching case name
+        final_success = False
+        total_successful = 0
+        total_attempts = len(attempts)
+        
+        # Find matching final result by case name
+        for final_result in final_results:
+            final_case_name, emoji, status, successful_str, total_str = final_result
+            if final_case_name == case_full_name:
+                final_success = status == "SUCCESS"
+                total_successful = int(successful_str)
+                total_attempts = int(total_str)
+                break
+        
+        case_result = {
+            "case_type": case_type,
+            "case_name": case_name,
+            "case_full_name": case_full_name,
+            "success": final_success,
+            "attempts": attempts,
+            "total_attempts": total_attempts,
+            "total_successful": total_successful,
+            "success_rate": total_successful / total_attempts if total_attempts > 0 else 0,
+            "pass_metrics": pass_metrics
+        }
+        
+        detailed_results[case_type].append(case_result)
+        all_case_results.append(case_result)
+        
+        case_idx += 1
+    
+    return model_info, detailed_results, all_case_results
+
+
+def calculate_pass_n_metrics(attempts, max_attempts):
+    """Calculate pass@n metrics for a list of attempts."""
+    if not attempts:
+        return {}
+    
+    # Sort attempts by attempt number
+    sorted_attempts = sorted(attempts, key=lambda x: x["attempt"])
+    
+    # Find first success
+    first_success = None
+    for attempt in sorted_attempts:
+        if attempt["success"]:
+            first_success = attempt["attempt"]
+            break
+    
+    # Calculate pass@k for different values of k
+    pass_metrics = {}
+    for k in [1, 2, 3, 4, 5, max_attempts]:
+        if k <= max_attempts:
+            # pass@k: success within first k attempts
+            success_in_k = False
+            for attempt in sorted_attempts:
+                if attempt["attempt"] <= k and attempt["success"]:
+                    success_in_k = True
+                    break
+            pass_metrics[f"pass@{k}"] = success_in_k
+    
+    pass_metrics["first_success"] = first_success
+    pass_metrics["any_success"] = first_success is not None
+    
+    return pass_metrics
+
+
 def parse_log_file(log_file_path, log_format='auto'):
     """
     Parse the log file and extract test case results.
@@ -87,7 +236,7 @@ def parse_log_file(log_file_path, log_format='auto'):
     
     Args:
         log_file_path: Path to the log file
-        log_format: 'auto', 'compact', or 'comprehensive'
+        log_format: 'auto', 'compact', 'comprehensive', or 'pass_n'
     """
     print(f"📖 Analyzing log file: {log_file_path}")
     
@@ -101,6 +250,11 @@ def parse_log_file(log_file_path, log_format='auto'):
     else:
         print(f"📝 Using specified log format: {log_format}")
     
+    # Handle pass@n format
+    if log_format == 'pass_n':
+        print(f"🔄 Redirecting to pass@n parser...")
+        return parse_pass_n_log_file(log_file_path)
+    
     # Extract model name from first line
     model_match = re.search(r'Using (\w+) model: (.+)', content)
     model_info = {
@@ -110,7 +264,7 @@ def parse_log_file(log_file_path, log_format='auto'):
     }
     
     # Find all test case starts and results
-    case_pattern = r'🎯 Testing case type: (\w+)\s*\n📁 Case name: ([^\n]+)'
+    case_pattern = r'🎯 Testing case type: (\w+).*?\n.*?📁 Case name: ([^\n]+)'
     test_round_pattern = r'✅ Test round (\d+) PASSED! Triton kernel is working correctly\.'
     max_rounds_pattern = r'❌ Maximum rounds \((\d+)\) reached\. Manual intervention required\.'
     
@@ -121,7 +275,7 @@ def parse_log_file(log_file_path, log_format='auto'):
         case_result_pattern = r'🔹+ (\w+): ([✅❌]) (SUCCESS|FAILED) 🔹+'
     
     # Find all cases
-    case_matches = re.findall(case_pattern, content)
+    case_matches = re.findall(case_pattern, content, re.DOTALL)
     case_results = re.findall(case_result_pattern, content)
     
     print(f"📊 Found {len(case_matches)} individual test cases")
@@ -247,6 +401,152 @@ def generate_statistics(detailed_results, all_case_results):
     }
 
 
+def generate_pass_n_statistics(model_info, detailed_results, all_case_results):
+    """Generate comprehensive statistics for pass@n format logs."""
+    
+    max_attempts = model_info.get("max_attempts", 10)
+    total_cases = len(all_case_results)
+    
+    # Overall pass@n metrics
+    overall_pass_metrics = {}
+    for k in [1, 2, 3, 4, 5, max_attempts]:
+        if k <= max_attempts:
+            pass_k_count = sum(1 for result in all_case_results 
+                              if result["pass_metrics"].get(f"pass@{k}", False))
+            overall_pass_metrics[f"pass@{k}"] = {
+                "count": pass_k_count,
+                "rate": pass_k_count / total_cases if total_cases > 0 else 0
+            }
+    
+    # Case type level statistics
+    case_type_stats = {}
+    for case_type, case_results in detailed_results.items():
+        case_type_total = len(case_results)
+        
+        # Pass@n metrics for this case type
+        case_type_pass_metrics = {}
+        for k in [1, 2, 3, 4, 5, max_attempts]:
+            if k <= max_attempts:
+                pass_k_count = sum(1 for result in case_results 
+                                  if result["pass_metrics"].get(f"pass@{k}", False))
+                case_type_pass_metrics[f"pass@{k}"] = {
+                    "count": pass_k_count,
+                    "rate": pass_k_count / case_type_total if case_type_total > 0 else 0
+                }
+        
+        # Overall success rate (same as pass@max_attempts)
+        final_success_count = sum(1 for result in case_results if result["success"])
+        success_rate = final_success_count / case_type_total if case_type_total > 0 else 0
+        
+        # Average success rate per case (considering all attempts)
+        avg_attempt_success_rate = sum(result["success_rate"] for result in case_results) / case_type_total if case_type_total > 0 else 0
+        
+        # First success attempt distribution
+        first_success_attempts = [result["pass_metrics"].get("first_success") 
+                                 for result in case_results 
+                                 if result["pass_metrics"].get("first_success") is not None]
+        avg_first_success = sum(first_success_attempts) / len(first_success_attempts) if first_success_attempts else None
+        
+        case_type_stats[case_type] = {
+            "total": case_type_total,
+            "success": final_success_count,
+            "success_rate": success_rate,
+            "final_success": final_success_count,
+            "final_success_rate": success_rate,
+            "avg_attempt_success_rate": avg_attempt_success_rate,
+            "avg_first_success": avg_first_success,
+            "pass_metrics": case_type_pass_metrics,
+            "status": "✅" if success_rate == 1.0 else "❌" if success_rate == 0 else "⚠️"
+        }
+    
+    # Success attempt distribution
+    first_success_distribution = {}
+    for result in all_case_results:
+        first_success = result["pass_metrics"].get("first_success")
+        if first_success is not None:
+            first_success_distribution[first_success] = first_success_distribution.get(first_success, 0) + 1
+    
+    # Average success rate across all attempts
+    total_attempt_success_rate = sum(result["success_rate"] for result in all_case_results) / total_cases if total_cases > 0 else 0
+    
+    # Calculate overall success metrics
+    successful_cases = sum(1 for result in all_case_results if result["success"])
+    success_rate = successful_cases / total_cases if total_cases > 0 else 0
+    
+    return {
+        "overall": {
+            "total_cases": total_cases,
+            "max_attempts": max_attempts,
+            "successful_cases": successful_cases,
+            "failed_cases": total_cases - successful_cases,
+            "success_rate": success_rate,
+            "avg_attempt_success_rate": total_attempt_success_rate,
+            "pass_metrics": overall_pass_metrics,
+            "total_attempt_success_rate": total_attempt_success_rate,
+            "case_types_total": len(detailed_results)
+        },
+        "case_type_stats": case_type_stats,
+        "first_success_distribution": first_success_distribution
+    }
+
+
+def print_pass_n_summary(model_info, detailed_results, statistics):
+    """Print a detailed summary for pass@n format."""
+    
+    print(f"\n{'='*80}")
+    print(f"📊 PASS@N TESTING SUMMARY")
+    print(f"🤖 Model: {model_info['model_name']}")
+    print(f"🔢 Max Attempts: {model_info['max_attempts']}")
+    print(f"{'='*80}")
+    
+    # Overall pass@n metrics
+    overall = statistics["overall"]
+    pass_metrics = overall["pass_metrics"]
+    
+    print(f"🎯 Overall Pass@N Performance:")
+    for k in sorted([int(k.split('@')[1]) for k in pass_metrics.keys()]):
+        metric_key = f"pass@{k}"
+        if metric_key in pass_metrics:
+            count = pass_metrics[metric_key]["count"]
+            rate = pass_metrics[metric_key]["rate"]
+            print(f"   {metric_key}: {count}/{overall['total_cases']} ({rate:.1%})")
+    
+    print(f"📈 Average Success Rate per Attempt: {overall['total_attempt_success_rate']:.1%}")
+    
+    # Case type level summary
+    print(f"\n🔍 Case Type Breakdown:")
+    case_type_stats = statistics["case_type_stats"]
+    
+    for case_type, stats in case_type_stats.items():
+        print(f"\n{stats['status']} {case_type:<15} ({stats['final_success']}/{stats['total']})")
+        print(f"   📊 Pass@1: {stats['pass_metrics']['pass@1']['count']}/{stats['total']} ({stats['pass_metrics']['pass@1']['rate']:.1%})")
+        if model_info['max_attempts'] >= 5:
+            print(f"   📊 Pass@5: {stats['pass_metrics']['pass@5']['count']}/{stats['total']} ({stats['pass_metrics']['pass@5']['rate']:.1%})")
+        print(f"   📊 Pass@{model_info['max_attempts']}: {stats['final_success']}/{stats['total']} ({stats['final_success_rate']:.1%})")
+        print(f"   📈 Avg Success Rate per Attempt: {stats['avg_attempt_success_rate']:.1%}")
+        if stats['avg_first_success']:
+            print(f"   🎯 Average First Success: Attempt {stats['avg_first_success']:.1f}")
+    
+    # First success distribution
+    first_success_dist = statistics["first_success_distribution"]
+    if first_success_dist:
+        print(f"\n📊 First Success Distribution:")
+        for attempt in sorted(first_success_dist.keys()):
+            count = first_success_dist[attempt]
+            print(f"   Attempt {attempt}: {count} cases")
+    
+    print(f"\n{'='*80}")
+    print(f"🏆 SUMMARY:")
+    print(f"   📊 Total Cases: {overall['total_cases']}")
+    print(f"   🎯 Pass@1 Rate: {pass_metrics['pass@1']['rate']:.1%}")
+    if model_info['max_attempts'] >= 5:
+        print(f"   🎯 Pass@5 Rate: {pass_metrics['pass@5']['rate']:.1%}")
+    max_attempts_key = f"pass@{model_info['max_attempts']}"
+    print(f"   🎯 Pass@{model_info['max_attempts']} Rate: {pass_metrics[max_attempts_key]['rate']:.1%}")
+    print(f"   📈 Overall Attempt Success Rate: {overall['total_attempt_success_rate']:.1%}")
+    print(f"{'='*80}")
+
+
 def print_detailed_summary(model_info, detailed_results, statistics):
     """Print a detailed summary in the new format."""
     
@@ -314,6 +614,32 @@ def save_results(output_path, model_info, detailed_results, all_case_results, st
     return output_file
 
 
+def generate_pass_n_summary_table(statistics):
+    """Generate a summary table for pass@n statistics."""
+    if not VISUALIZATION_AVAILABLE:
+        return None
+    
+    overall = statistics["overall"]
+    pass_metrics = overall["pass_metrics"]
+    
+    # Prepare data for table
+    max_attempts = overall["max_attempts"]
+    max_attempts_key = f"pass@{max_attempts}"
+    
+    summary_data = [
+        ["Total Test Cases", overall["total_cases"]],
+        ["Max Attempts per Case", max_attempts],
+        ["Pass@1 Rate", f"{pass_metrics['pass@1']['rate']:.1%}"],
+        ["Pass@5 Rate", f"{pass_metrics['pass@5']['rate']:.1%}" if 'pass@5' in pass_metrics else "N/A"],
+        [f"Pass@{max_attempts} Rate", f"{pass_metrics[max_attempts_key]['rate']:.1%}"],
+        ["Overall Attempt Success Rate", f"{overall['total_attempt_success_rate']:.1%}"],
+        ["Total Case Types", overall["case_types_total"]]
+    ]
+    
+    table = tabulate(summary_data, headers=["Metric", "Value"], tablefmt="grid")
+    return table
+
+
 def generate_summary_table(statistics):
     """Generate a summary table of overall statistics."""
     if not VISUALIZATION_AVAILABLE:
@@ -333,6 +659,35 @@ def generate_summary_table(statistics):
     ]
     
     table = tabulate(summary_data, headers=["Metric", "Value"], tablefmt="grid")
+    return table
+
+
+def generate_pass_n_case_type_table(statistics):
+    """Generate a detailed table of case type statistics for pass@n format."""
+    if not VISUALIZATION_AVAILABLE:
+        return None
+    
+    case_type_stats = statistics["case_type_stats"]
+    
+    # Prepare data for table
+    table_data = []
+    for case_type, stats in case_type_stats.items():
+        pass_metrics = stats["pass_metrics"]
+        table_data.append([
+            stats["status"],
+            case_type,
+            f"{pass_metrics['pass@1']['rate']:.1%}",
+            f"{pass_metrics.get('pass@5', {'rate': 0})['rate']:.1%}",
+            f"{stats['final_success_rate']:.1%}",
+            f"{stats['avg_attempt_success_rate']:.1%}",
+            f"{stats['avg_first_success']:.1f}" if stats['avg_first_success'] else "N/A"
+        ])
+    
+    # Sort by pass@1 rate descending
+    table_data.sort(key=lambda x: float(x[2].rstrip('%')), reverse=True)
+    
+    headers = ["Status", "Case Type", "Pass@1", "Pass@5", "Final Success", "Avg Attempt Rate", "Avg First Success"]
+    table = tabulate(table_data, headers=headers, tablefmt="grid")
     return table
 
 
@@ -361,6 +716,206 @@ def generate_case_type_table(statistics):
     headers = ["Status", "Case Type", "Success", "Total", "Success Rate", "Failed"]
     table = tabulate(table_data, headers=headers, tablefmt="grid")
     return table
+
+
+def generate_pass_n_charts(model_info, statistics, all_case_results, output_dir):
+    """Generate charts specifically for pass@n analysis."""
+    if not VISUALIZATION_AVAILABLE:
+        print("⚠️ Visualization packages not available. Install matplotlib, seaborn, pandas, and tabulate to enable charts.")
+        return []
+    
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True)
+    
+    generated_files = []
+    
+    # Set up the plotting style
+    plt.style.use('default')
+    sns.set_palette("husl")
+    
+    max_attempts = model_info.get("max_attempts", 10)
+    
+    # 1. Pass@N Success Rate Chart
+    overall = statistics["overall"]
+    pass_metrics = overall["pass_metrics"]
+    
+    plt.figure(figsize=(12, 6))
+    pass_rates = []
+    pass_labels = []
+    
+    for k in [1, 2, 3, 4, 5, max_attempts]:
+        metric_key = f"pass@{k}"
+        if metric_key in pass_metrics:
+            pass_rates.append(pass_metrics[metric_key]["rate"] * 100)
+            pass_labels.append(f"Pass@{k}")
+    
+    bars = plt.bar(pass_labels, pass_rates, alpha=0.8, color=sns.color_palette("viridis", len(pass_rates)))
+    plt.xlabel('Pass@N Metric')
+    plt.ylabel('Success Rate (%)')
+    plt.title(f'Pass@N Success Rates - {model_info["model_name"]}')
+    plt.grid(axis='y', alpha=0.3)
+    
+    # Add value labels on bars
+    for bar, rate in zip(bars, pass_rates):
+        plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
+                f'{rate:.1f}%', ha='center', va='bottom')
+    
+    chart_file = output_dir / "pass_n_success_rates.png"
+    plt.tight_layout()
+    plt.savefig(chart_file, dpi=300, bbox_inches='tight')
+    plt.close()
+    generated_files.append(chart_file)
+    print(f"📊 Pass@N success rates chart saved to: {chart_file}")
+    
+    # 2. Swimlane Chart - Each Case's Attempt Results
+    try:
+        plt.figure(figsize=(16, max(12, len(all_case_results) * 0.3)))
+        
+        # Prepare data for swimlane chart
+        case_names = []
+        attempt_data = []
+        
+        for i, result in enumerate(all_case_results):
+            case_name = f"{result['case_type']}/{result['case_name']}"
+            case_names.append(case_name)
+            
+            # Create attempt array (1 for success, 0 for failure, -1 for not attempted)
+            attempts = [-1] * max_attempts  # Initialize with "not attempted"
+            
+            for attempt in result['attempts']:
+                attempt_num = attempt['attempt'] - 1  # Convert to 0-based index
+                if attempt_num < max_attempts:
+                    attempts[attempt_num] = 1 if attempt['success'] else 0
+            
+            attempt_data.append(attempts)
+        
+        # Create the heatmap
+        attempt_array = np.array(attempt_data)
+        
+        # Create custom colormap: green for success, red for failure, gray for not attempted
+        from matplotlib.colors import ListedColormap
+        colors = ['#cccccc', '#ff4444', '#44ff44']  # gray, red, green
+        cmap = ListedColormap(colors)
+        
+        # Create the plot
+        im = plt.imshow(attempt_array, cmap=cmap, aspect='auto', vmin=-1, vmax=1)
+        
+        # Set labels and title
+        plt.xlabel('Attempt Number')
+        plt.ylabel('Test Cases')
+        plt.title(f'Attempt Results Swimlane Chart - {model_info["model_name"]}\n'
+                  f'Green: Success, Red: Failure, Gray: Not Attempted')
+        
+        # Set x-axis ticks
+        plt.xticks(range(max_attempts), [f'Attempt {i+1}' for i in range(max_attempts)])
+        
+        # Set y-axis ticks - show all case names for better readability
+        plt.yticks(range(len(case_names)), case_names, fontsize=max(6, min(10, 120 // len(case_names))))
+        
+        # Rotate labels if there are many cases to improve readability
+        if len(case_names) > 15:
+            plt.gca().tick_params(axis='y', labelrotation=0)
+            # Make the figure taller to accommodate all labels
+            plt.gcf().set_size_inches(16, max(12, len(case_names) * 0.4))
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, shrink=0.6)
+        cbar.set_ticks([-1, 0, 1])
+        cbar.set_ticklabels(['Not Attempted', 'Failed', 'Passed'])
+        
+        chart_file = output_dir / "attempts_swimlane.png"
+        plt.tight_layout()
+        plt.savefig(chart_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        generated_files.append(chart_file)
+        print(f"📊 Attempts swimlane chart saved to: {chart_file}")
+    except Exception as e:
+        print(f"⚠️ Error generating swimlane chart: {e}")
+        plt.close('all')  # Close any open figures
+    
+    # 3. Case Type Pass@N Comparison
+    try:
+        case_type_stats = statistics["case_type_stats"]
+        
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        
+        # Pass@1 rates by case type - sort by case type name for consistent ordering
+        case_types = sorted(case_type_stats.keys())
+        pass1_rates = [case_type_stats[ct]["pass_metrics"]["pass@1"]["rate"] * 100 for ct in case_types]
+        
+        axes[0, 0].barh(case_types, pass1_rates, color='#44ff44', alpha=0.7)
+        axes[0, 0].set_xlabel('Pass@1 Rate (%)')
+        axes[0, 0].set_title('Pass@1 Success Rate by Case Type')
+        axes[0, 0].grid(axis='x', alpha=0.3)
+        
+        # Pass@5 rates by case type (if available)
+        if max_attempts >= 5:
+            pass5_rates = [case_type_stats[ct]["pass_metrics"].get("pass@5", {"rate": 0})["rate"] * 100 
+                          for ct in case_types]
+            
+            axes[0, 1].barh(case_types, pass5_rates, color='#ffaa44', alpha=0.7)
+            axes[0, 1].set_xlabel('Pass@5 Rate (%)')
+            axes[0, 1].set_title('Pass@5 Success Rate by Case Type')
+            axes[0, 1].grid(axis='x', alpha=0.3)
+        
+        # Final success rates by case type
+        final_rates = [case_type_stats[ct]["final_success_rate"] * 100 for ct in case_types]
+        
+        axes[1, 0].barh(case_types, final_rates, color='#4444ff', alpha=0.7)
+        axes[1, 0].set_xlabel(f'Pass@{max_attempts} Rate (%)')
+        axes[1, 0].set_title(f'Final Success Rate by Case Type (Pass@{max_attempts})')
+        axes[1, 0].grid(axis='x', alpha=0.3)
+        
+        # Average attempt success rate
+        avg_rates = [case_type_stats[ct]["avg_attempt_success_rate"] * 100 for ct in case_types]
+        
+        axes[1, 1].barh(case_types, avg_rates, color='#ff8844', alpha=0.7)
+        axes[1, 1].set_xlabel('Average Attempt Success Rate (%)')
+        axes[1, 1].set_title('Average Success Rate per Attempt by Case Type')
+        axes[1, 1].grid(axis='x', alpha=0.3)
+        
+        plt.tight_layout()
+        chart_file = output_dir / "case_type_pass_comparison.png"
+        plt.savefig(chart_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        generated_files.append(chart_file)
+        print(f"📊 Case type pass@n comparison chart saved to: {chart_file}")
+    except Exception as e:
+        print(f"⚠️ Error generating case type comparison chart: {e}")
+        plt.close('all')
+    
+    # 4. First Success Distribution
+    try:
+        first_success_dist = statistics["first_success_distribution"]
+        if first_success_dist:
+            plt.figure(figsize=(10, 6))
+            attempts = sorted(first_success_dist.keys())
+            counts = [first_success_dist[attempt] for attempt in attempts]
+            
+            bars = plt.bar([f'Attempt {a}' for a in attempts], counts, alpha=0.8, 
+                          color=sns.color_palette("viridis", len(attempts)))
+            plt.xlabel('First Success Attempt')
+            plt.ylabel('Number of Cases')
+            plt.title(f'Distribution of First Success Attempts - {model_info["model_name"]}')
+            plt.grid(axis='y', alpha=0.3)
+            plt.xticks(rotation=45)
+            
+            # Add value labels on bars
+            for bar, count in zip(bars, counts):
+                plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
+                        str(count), ha='center', va='bottom')
+            
+            chart_file = output_dir / "first_success_distribution.png"
+            plt.tight_layout()
+            plt.savefig(chart_file, dpi=300, bbox_inches='tight')
+            plt.close()
+            generated_files.append(chart_file)
+            print(f"📊 First success distribution chart saved to: {chart_file}")
+    except Exception as e:
+        print(f"⚠️ Error generating first success distribution chart: {e}")
+        plt.close('all')
+    
+    return generated_files
 
 
 def generate_charts(model_info, statistics, all_case_results, output_dir):
@@ -670,6 +1225,49 @@ Case Type Statistics:
     return generated_files
 
 
+def generate_pass_n_detailed_case_table(all_case_results):
+    """Generate a detailed table showing individual case results for pass@n format."""
+    if not VISUALIZATION_AVAILABLE:
+        return None
+    
+    # Prepare data for detailed case table
+    table_data = []
+    for result in all_case_results:
+        case_type = result["case_type"]
+        case_name = result["case_name"]
+        success = result["success"]
+        pass_metrics = result.get("pass_metrics", {})
+        
+        # Get pass@1 and pass@5 status
+        pass_1 = "✅" if pass_metrics.get("pass@1", False) else "❌"
+        pass_5 = "✅" if pass_metrics.get("pass@5", False) else "❌"
+        
+        # Get first success attempt
+        first_success = pass_metrics.get("first_success", "N/A")
+        first_success_str = f"Attempt {first_success}" if first_success != "N/A" else "N/A"
+        
+        # Get success rate
+        success_rate = result.get("success_rate", 0)
+        success_rate_str = f"{success_rate:.1%}"
+        
+        table_data.append([
+            case_type,
+            case_name,
+            pass_1,
+            pass_5,
+            first_success_str,
+            success_rate_str,
+            "✅ Success" if success else "❌ Failed"
+        ])
+    
+    # Sort by case type, then by case name
+    table_data.sort(key=lambda x: (x[0], x[1]))
+    
+    headers = ["Case Type", "Case Name", "Pass@1", "Pass@5", "First Success", "Success Rate", "Final Status"]
+    table = tabulate(table_data, headers=headers, tablefmt="grid")
+    return table
+
+
 def generate_detailed_case_table(all_case_results):
     """Generate a detailed table showing individual case results."""
     if not VISUALIZATION_AVAILABLE:
@@ -683,16 +1281,27 @@ def generate_detailed_case_table(all_case_results):
         success = result["success"]
         rounds = result.get("rounds", "N/A")
         
+        # Handle both string and integer rounds
+        if isinstance(rounds, str) and rounds != "N/A":
+            try:
+                rounds = int(rounds)
+            except (ValueError, TypeError):
+                rounds = "N/A"
+        
         # Determine pass status for different rounds
-        pass_round_1 = "✅" if success and rounds == 1 else "❌"
-        pass_round_5 = "✅" if success and rounds <= 5 else "❌"
+        if rounds == "N/A" or rounds is None:
+            pass_round_1 = "❌"
+            pass_round_5 = "❌"
+        else:
+            pass_round_1 = "✅" if success and rounds == 1 else "❌"
+            pass_round_5 = "✅" if success and rounds <= 5 else "❌"
         
         table_data.append([
             case_type,
             case_name,
             pass_round_1,
             pass_round_5,
-            rounds if rounds is not None else "Error",
+            rounds if rounds != "N/A" else "Error",
             "✅ Success" if success else "❌ Failed"
         ])
     
@@ -731,11 +1340,13 @@ def generate_round_analysis_table(all_case_results):
     table_data = []
     for round_num in range(1, 6):
         stats = round_stats[round_num]
+        # Add safety check for empty case list
+        success_rate = f"{stats['pass_by_this_round']/len(all_case_results)*100:.1f}%" if len(all_case_results) > 0 else "0.0%"
         table_data.append([
             f"Round {round_num}",
             stats["pass_this_round"],
             stats["pass_by_this_round"],
-            f"{stats['pass_by_this_round']/len(all_case_results)*100:.1f}%"
+            success_rate
         ])
     
     headers = ["Round", "Cases Passed in This Round", "Cumulative Cases Passed", "Cumulative Success Rate"]
@@ -778,13 +1389,62 @@ def generate_markdown_summary(model_info, statistics, detailed_results, all_case
     
     overall = statistics["overall"]
     case_type_stats = statistics["case_type_stats"]
-    rounds_dist = statistics["rounds_distribution"]
     
-    # Calculate additional metrics
-    round_1_success = len([r for r in all_case_results if r["success"] and r.get("rounds") == 1])
-    round_5_success = len([r for r in all_case_results if r["success"] and r.get("rounds", 6) <= 5])
+    # Check if this is pass@n format
+    is_pass_n = "first_success_distribution" in statistics
     
-    markdown_content = f"""# Test Results Summary
+    if is_pass_n:
+        # For pass@n format, use pass@n specific metrics
+        pass_n_rates = statistics["overall"]["pass_metrics"]
+        first_success_dist = statistics["first_success_distribution"]
+        
+        # Calculate additional metrics for pass@n
+        pass_1_success = pass_n_rates.get("pass@1", {"count": 0})["count"]
+        pass_5_success = pass_n_rates.get("pass@5", {"count": 0})["count"]
+        pass_10_success = pass_n_rates.get("pass@10", {"count": 0})["count"]
+    else:
+        # For traditional format, use rounds
+        rounds_dist = statistics["rounds_distribution"]
+        
+        # Calculate additional metrics
+        round_1_success = len([r for r in all_case_results if r["success"] and r.get("rounds") == 1])
+        round_5_success = len([r for r in all_case_results if r["success"] and r.get("rounds", 6) <= 5])
+    
+    if is_pass_n:
+        # Generate pass@n specific markdown content
+        markdown_content = f"""# Pass@N Test Results Summary
+
+## 📊 Model: {model_info["model_name"]}
+
+**Analysis Timestamp:** {output_path.parent.name}  
+**Total Cases:** {overall["total_cases"]} | **Max Attempts:** {overall["max_attempts"]} | **Overall Success:** {overall["successful_cases"]} ({overall['success_rate']:.1%})
+
+---
+
+## 🎯 Pass@N Performance Indicators
+
+| Metric | Value | Percentage |
+|--------|-------|------------|
+| **Pass@1** | {pass_1_success}/{overall['total_cases']} | {pass_1_success/overall['total_cases']*100:.1f}% |
+| **Pass@5** | {pass_5_success}/{overall['total_cases']} | {pass_5_success/overall['total_cases']*100:.1f}% |
+| **Pass@10** | {pass_10_success}/{overall['total_cases']} | {pass_10_success/overall['total_cases']*100:.1f}% |
+| **Overall Success** | {overall["successful_cases"]}/{overall["total_cases"]} | {overall['success_rate']:.1%} |
+| **Avg Attempt Success Rate** | {overall["avg_attempt_success_rate"]:.1f}% | - |
+
+---
+
+## 📈 First Success Distribution
+
+| Attempt | Cases | Percentage |
+|---------|-------|------------|"""
+
+        for attempt_num in sorted(first_success_dist.keys()):
+            count = first_success_dist[attempt_num]
+            rate = count / overall["total_cases"] * 100
+            markdown_content += f"\n| Attempt {attempt_num} | {count} | {rate:.1f}% |"
+    else:
+        # Generate traditional round-based markdown content
+        markdown_content = f"""# Test Results Summary
 
 ## 📊 Model: {model_info["model_name"]}
 
@@ -810,14 +1470,51 @@ def generate_markdown_summary(model_info, statistics, detailed_results, all_case
 | Round | Cases | Cumulative | Success Rate |
 |-------|-------|------------|--------------|"""
 
-    cumulative = 0
-    for round_num in sorted(rounds_dist.keys()):
-        count = rounds_dist[round_num]
-        cumulative += count
-        rate = cumulative / overall["total_cases"] * 100
-        markdown_content += f"\n| Round {round_num} | {count} | {cumulative} | {rate:.1f}% |"
+        cumulative = 0
+        for round_num in sorted(rounds_dist.keys()):
+            count = rounds_dist[round_num]
+            cumulative += count
+            rate = cumulative / overall["total_cases"] * 100
+            markdown_content += f"\n| Round {round_num} | {count} | {cumulative} | {rate:.1f}% |"
 
-    markdown_content += f"""
+    if is_pass_n:
+        markdown_content += f"""
+
+---
+
+## 📋 Case Type Performance (Pass@N)
+
+| Status | Case Type | Pass@1 | Pass@5 | Pass@10 | Avg Success Rate | Performance |
+|--------|-----------|--------|--------|---------|------------------|-------------|"""
+
+        # Sort case types by pass@1 rate for better readability
+        sorted_case_types = sorted(case_type_stats.items(), key=lambda x: x[1].get("pass@1", 0), reverse=True)
+        
+        for case_type, stats in sorted_case_types:
+            pass_1 = stats.get("pass@1", 0)
+            pass_5 = stats.get("pass@5", 0)
+            pass_10 = stats.get("pass@10", 0)
+            avg_success = stats.get("avg_attempt_success_rate", 0)
+            
+            if pass_1 == 1.0 and pass_10 == 1.0:
+                status = "✅"
+                performance = "Excellent"
+            elif pass_5 >= 0.8 and pass_10 == 1.0:
+                status = "🟢"
+                performance = "Good"
+            elif pass_10 >= 0.8:
+                status = "🟡"
+                performance = "Moderate"
+            elif pass_10 > 0:
+                status = "⚠️"
+                performance = "Poor"
+            else:
+                status = "❌"
+                performance = "Failed"
+                
+            markdown_content += f"\n| {status} | `{case_type}` | {pass_1:.1%} | {pass_5:.1%} | {pass_10:.1%} | {avg_success:.1%} | {performance} |"
+    else:
+        markdown_content += f"""
 
 ---
 
@@ -826,27 +1523,27 @@ def generate_markdown_summary(model_info, statistics, detailed_results, all_case
 | Status | Case Type | Success Rate | Results | Performance |
 |--------|-----------|--------------|---------|-------------|"""
 
-    # Sort case types by success rate for better readability
-    sorted_case_types = sorted(case_type_stats.items(), key=lambda x: x[1]["success_rate"], reverse=True)
-    
-    for case_type, stats in sorted_case_types:
-        if stats["success_rate"] == 1.0:
-            status = "✅"
-            performance = "Excellent"
-        elif stats["success_rate"] >= 0.8:
-            status = "🟢"
-            performance = "Good"
-        elif stats["success_rate"] >= 0.5:
-            status = "🟡"
-            performance = "Moderate"
-        elif stats["success_rate"] > 0:
-            status = "⚠️"
-            performance = "Poor"
-        else:
-            status = "❌"
-            performance = "Failed"
-            
-        markdown_content += f"\n| {status} | `{case_type}` | {stats['success_rate']:.1%} | {stats['success']}/{stats['total']} | {performance} |"
+        # Sort case types by success rate for better readability
+        sorted_case_types = sorted(case_type_stats.items(), key=lambda x: x[1]["success_rate"], reverse=True)
+        
+        for case_type, stats in sorted_case_types:
+            if stats["success_rate"] == 1.0:
+                status = "✅"
+                performance = "Excellent"
+            elif stats["success_rate"] >= 0.8:
+                status = "🟢"
+                performance = "Good"
+            elif stats["success_rate"] >= 0.5:
+                status = "🟡"
+                performance = "Moderate"
+            elif stats["success_rate"] > 0:
+                status = "⚠️"
+                performance = "Poor"
+            else:
+                status = "❌"
+                performance = "Failed"
+                
+            markdown_content += f"\n| {status} | `{case_type}` | {stats['success_rate']:.1%} | {stats['success']}/{stats['total']} | {performance} |"
 
     markdown_content += f"""
 
@@ -875,11 +1572,34 @@ def generate_markdown_summary(model_info, statistics, detailed_results, all_case
     else:
         markdown_content += "- *All case types achieved ≥50% success rate*\n"
 
-    markdown_content += f"""
+    if is_pass_n:
+        markdown_content += f"""
+### Pass@N Analysis Insights
+- **{pass_1_success}** cases ({pass_1_success/overall['total_cases']*100:.1f}%) succeeded on first attempt (Pass@1)
+- **{pass_5_success - pass_1_success}** additional cases succeeded within 5 attempts (Pass@5)
+- **{overall['failed_cases']}** cases ({overall['failed_cases']/overall['total_cases']*100:.1f}%) failed after maximum attempts
+"""
+    else:
+        markdown_content += f"""
 ### Round Analysis Insights
 - **{round_1_success}** cases ({round_1_success/overall['total_cases']*100:.1f}%) succeeded on first attempt
 - **{round_5_success - round_1_success}** additional cases succeeded within 5 rounds
 - **{overall['failed_cases']}** cases ({overall['failed_cases']/overall['total_cases']*100:.1f}%) failed after maximum rounds
+"""
+
+    # Calculate case type performance categories
+    excellent_count = len([s for s in case_type_stats.values() if s['success_rate'] == 1.0])
+    good_count = len([s for s in case_type_stats.values() if 0.8 <= s['success_rate'] < 1.0])
+    moderate_count = len([s for s in case_type_stats.values() if 0.5 <= s['success_rate'] < 0.8])
+    poor_count = len([s for s in case_type_stats.values() if s['success_rate'] < 0.5])
+    total_case_types = len(case_type_stats)
+    
+    excellent_pct = excellent_count/total_case_types*100
+    good_pct = good_count/total_case_types*100
+    moderate_pct = moderate_count/total_case_types*100
+    poor_pct = poor_count/total_case_types*100
+
+    markdown_content += f"""
 
 ---
 
@@ -887,10 +1607,10 @@ def generate_markdown_summary(model_info, statistics, detailed_results, all_case
 
 | Category | Count | Percentage |
 |----------|-------|------------|
-| **Excellent Case Types** (100%) | {len([s for s in case_type_stats.values() if s['success_rate'] == 1.0])} | {len([s for s in case_type_stats.values() if s['success_rate'] == 1.0])/len(case_type_stats)*100:.1f}% |
-| **Good Case Types** (80-99%) | {len([s for s in case_type_stats.values() if 0.8 <= s['success_rate'] < 1.0])} | {len([s for s in case_type_stats.values() if 0.8 <= s['success_rate'] < 1.0])/len(case_type_stats)*100:.1f}% |
-| **Moderate Case Types** (50-79%) | {len([s for s in case_type_stats.values() if 0.5 <= s['success_rate'] < 0.8])} | {len([s for s in case_type_stats.values() if 0.5 <= s['success_rate'] < 0.8])/len(case_type_stats)*100:.1f}% |
-| **Poor Case Types** (<50%) | {len([s for s in case_type_stats.values() if s['success_rate'] < 0.5])} | {len([s for s in case_type_stats.values() if s['success_rate'] < 0.5])/len(case_type_stats)*100:.1f}% |
+| **Excellent Case Types** (100%) | {excellent_count} | {excellent_pct:.1f}% |
+| **Good Case Types** (80-99%) | {good_count} | {good_pct:.1f}% |
+| **Moderate Case Types** (50-79%) | {moderate_count} | {moderate_pct:.1f}% |
+| **Poor Case Types** (<50%) | {poor_count} | {poor_pct:.1f}% |
 
 ---
 
@@ -907,6 +1627,7 @@ def generate_markdown_summary(model_info, statistics, detailed_results, all_case
 
 
 def main():
+    print("🚀 Starting analyze_log.py...")
     parser = argparse.ArgumentParser(description='Analyze CUDA to Triton translation test logs')
     parser.add_argument('log_file', help='Path to the log file to analyze')
     parser.add_argument('--output', '-o', help='Output file path (without extension)')
@@ -920,8 +1641,9 @@ def main():
     parser.add_argument('--statistics-dir', help='Base directory for statistics results (default: dev_/statistics_results)')
     parser.add_argument('--all-viz', action='store_true', help='Enable charts, tables, detailed tables, and markdown report')
     parser.add_argument('--timestamp', help='Custom timestamp for output directory (default: extracted from log path)')
-    parser.add_argument('--log-format', choices=['auto', 'compact', 'comprehensive'], default='auto',
-                       help='Log format style: "compact" (case_type only), "comprehensive" (case_type/case_name with rounds), "auto" (auto-detect)')
+    parser.add_argument('--log-format', choices=['auto', 'compact', 'comprehensive', 'pass_n'], default='auto',
+                       help='Log format style: "compact" (case_type only), "comprehensive" (case_type/case_name with rounds), "pass_n" (pass@n testing), "auto" (auto-detect)')
+    parser.add_argument('--pass-n-analysis', action='store_true', help='Enable detailed pass@n analysis (automatically enabled for pass@n format logs)')
     
     args = parser.parse_args()
     
@@ -940,7 +1662,10 @@ def main():
         return 1
     
     # Generate statistics
-    statistics = generate_statistics(detailed_results, all_case_results)
+    if model_info.get("log_format") == "pass_n":
+        statistics = generate_pass_n_statistics(model_info, detailed_results, all_case_results)
+    else:
+        statistics = generate_statistics(detailed_results, all_case_results)
     
     # Handle visualization options
     enable_charts = args.charts or args.all_viz
@@ -998,14 +1723,20 @@ def main():
             print(f"\n{'='*80}")
             print(f"📊 Overall Statistics Table")
             print(f"{'='*80}")
-            summary_table = generate_summary_table(statistics)
+            if model_info.get("log_format") == "pass_n":
+                summary_table = generate_pass_n_summary_table(statistics)
+            else:
+                summary_table = generate_summary_table(statistics)
             if summary_table:
                 print(summary_table)
             
             print(f"\n{'='*80}")
             print(f"📊 Case Type Statistics Table")
             print(f"{'='*80}")
-            case_type_table = generate_case_type_table(statistics)
+            if model_info.get("log_format") == "pass_n":
+                case_type_table = generate_pass_n_case_type_table(statistics)
+            else:
+                case_type_table = generate_case_type_table(statistics)
             if case_type_table:
                 print(case_type_table)
         
@@ -1014,16 +1745,21 @@ def main():
             print(f"\n{'='*80}")
             print(f"📋 Detailed Case Results Table")
             print(f"{'='*80}")
-            detailed_table = generate_detailed_case_table(all_case_results)
+            if model_info.get("log_format") == "pass_n":
+                detailed_table = generate_pass_n_detailed_case_table(all_case_results)
+            else:
+                detailed_table = generate_detailed_case_table(all_case_results)
             if detailed_table:
                 print(detailed_table)
             
-            print(f"\n{'='*80}")
-            print(f"📈 Round Analysis Table")
-            print(f"{'='*80}")
-            round_table = generate_round_analysis_table(all_case_results)
-            if round_table:
-                print(round_table)
+            # Only show Round Analysis for non-pass@n formats
+            if model_info.get("log_format") != 'pass_n':
+                print(f"\n{'='*80}")
+                print(f"📈 Round Analysis Table")
+                print(f"{'='*80}")
+                round_table = generate_round_analysis_table(all_case_results)
+                if round_table:
+                    print(round_table)
     
     finally:
         # Restore stdout
@@ -1031,7 +1767,10 @@ def main():
     
     # Print summary unless disabled (this goes to console only, not captured)
     if not args.no_summary:
-        print_detailed_summary(model_info, detailed_results, statistics)
+        if model_info.get("log_format") == "pass_n":
+            print_pass_n_summary(model_info, detailed_results, statistics)
+        else:
+            print_detailed_summary(model_info, detailed_results, statistics)
     
     # Display what was captured to console as well
     captured_content = console_output.getvalue()
@@ -1043,7 +1782,10 @@ def main():
     if enable_charts:
         charts_dir = base_dir / "charts"
         print(f"\n📊 Generating visualization charts...")
-        generated_chart_files = generate_charts(model_info, statistics, all_case_results, charts_dir)
+        if model_info.get("log_format") == "pass_n":
+            generated_chart_files = generate_pass_n_charts(model_info, statistics, all_case_results, charts_dir)
+        else:
+            generated_chart_files = generate_charts(model_info, statistics, all_case_results, charts_dir)
     
     # Generate markdown report with captured output
     markdown_file = None
@@ -1056,7 +1798,10 @@ def main():
         sys.stdout = summary_output
         try:
             if not args.no_summary:
-                print_detailed_summary(model_info, detailed_results, statistics)
+                if model_info.get("log_format") == "pass_n":
+                    print_pass_n_summary(model_info, detailed_results, statistics)
+                else:
+                    print_detailed_summary(model_info, detailed_results, statistics)
         finally:
             sys.stdout = original_stdout_temp
         
