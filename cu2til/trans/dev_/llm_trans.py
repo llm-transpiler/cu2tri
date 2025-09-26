@@ -5,9 +5,11 @@ import sys
 import json
 import subprocess
 import argparse
+import time
+import re
 from pathlib import Path
 from datetime import datetime
-from case_config import XPILER_ALL_CASES, LEETCUDA_DYNAMIC_ALL_CASES
+from case_config import XPILER_ALL_CASES, LEETCUDA_DYNAMIC_ALL_CASES, LEETCUDA_DYNAMIC_CASES_2
 from openai import OpenAI
 from cu2til.prompt.cuda2triton import simple_initial_prompt, feedback_prompt
 import dotenv
@@ -20,7 +22,7 @@ def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='Run CUDA to Triton translation with iterative fixing')
     parser.add_argument('--model', choices=['qwen', 'gpt', 'gemini', 'deepseek', 'claude'], 
-                       default='qwen', help='Model to use for translation')
+                       default='gpt', help='Model to use for translation')
     parser.add_argument('--console', action='store_true', default=True,
                        help='Output logs to console (default: True)')
     parser.add_argument('--no-console', action='store_true', default=False,
@@ -31,8 +33,12 @@ def parse_args():
                        help='Test only the first case from each case type')
     parser.add_argument('--no-perf', action='store_true', default=False,
                        help='Skip performance testing (add --no-perf to check_triton.py)')
-    parser.add_argument('--testset', choices=['xpiler', 'leetcuda_dynamic'], 
-                       default='leetcuda_dynamic', help='Test set to use (default: xpiler)')
+    parser.add_argument('--testset', choices=['xpiler', 'leetcuda_dynamic', 'leetcuda_dynamic_2', 'hard'], 
+                       default='xpiler', help='Test set to use (default: xpiler)')
+    parser.add_argument('--retry-wait', type=int, default=60,
+                       help='Wait time in seconds when encountering API overload errors (default: 60)')
+    parser.add_argument('--max-retries', type=int, default=5,
+                       help='Maximum number of retries for API overload errors (default: 5)')
     return parser.parse_args()
 
 # Parse arguments
@@ -48,15 +54,20 @@ if run_model == "qwen":
     )
     get_api_param = get_api_params_method(CallingIdentifier.OPENAI_OFFICIAL)
 elif run_model == "gpt":
-    model_name = "openai/gpt-5"
+    # model_name = "openai/gpt-5"
+    # client = OpenAI(
+    #     base_url="https://openrouter.ai/api/v1",
+    #     api_key=os.getenv("OPENROUTER_API_KEY"),
+    # )
+    model_name = "openai/gpt-oss-20b"
     client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
+        base_url='http://10.156.112.253:8000/v1',  # api_base
+        api_key="EMPTY"
     )
     get_api_param = get_api_params_method(CallingIdentifier.OPENAI_OPENROUTER)
 elif run_model == "gemini":
     model_name = "gemini-2.5-pro"
-    model_name = "gemini-2.5-flash"
+    # model_name = "gemini-2.5-flash"
     client = OpenAI(
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         api_key=os.getenv("GEMINI_API_KEY")
@@ -80,6 +91,35 @@ elif run_model == "claude":
 else:
     raise ValueError(f"Unsupported model: {run_model}")
 
+def is_retryable_error(error_message):
+    """Check if the error is a retryable API overload/rate limit error."""
+    error_str = str(error_message).lower()
+    
+    # Common overload/rate limit patterns
+    retryable_patterns = [
+        r'overloaded',
+        r'rate limit',
+        r'quota exceeded',
+        r'too many requests',
+        r'service unavailable',
+        r'temporarily unavailable',
+        r'try again later',
+        r'error code: 503',
+        r'error code: 429',
+        r'error code: 502',
+        r'status: unavailable',
+        r'status: resource_exhausted',
+        r'capacity',
+        r'busy',
+        r'throttled'
+    ]
+    
+    for pattern in retryable_patterns:
+        if re.search(pattern, error_str):
+            return True
+    
+    return False
+
 # Constants
 DIR_CUDA_ = Path("cuda_")
 DIR_TORCH_ = Path("torch_")
@@ -89,19 +129,27 @@ TEMPERATURE = 0.35
 TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
 MAX_ROUNDS = 5
 CONSOLE_OUTPUT = args.console and not args.no_console  # Whether to output to console
-CHECK_SUFFIX = "_dynamic" if args.testset.startswith("leetcuda_dynamic") else ""
+CHECK_SUFFIX = "_dynamic"
+if "xpiler" in args.testset:
+    CHECK_SUFFIX = ""
 
-# Select appropriate case configuration based on testset
-ALL_CASES = LEETCUDA_DYNAMIC_ALL_CASES if args.testset.startswith("leetcuda_dynamic") else XPILER_ALL_CASES
+if args.testset == "leetcuda_dynamic":
+    ALL_CASES = LEETCUDA_DYNAMIC_ALL_CASES
+elif args.testset == "leetcuda_dynamic_2":
+    ALL_CASES = LEETCUDA_DYNAMIC_CASES_2
+elif args.testset == "xpiler":
+    ALL_CASES = XPILER_ALL_CASES
+elif args.testset == "hard":
+    ALL_CASES = {"fa": ["fa_cute"]}
 
 # ALL_CASES = {"add": ["add_f16x8_pack"]}
 # Setup work directory
 model_name_clean = "".join(c if c.isalnum() else "_" for c in model_name.split("/")[-1].lower())
-WORK_DIR = Path(__file__).parent.absolute() / f"{model_name_clean}" / TIMESTAMP
+WORK_DIR = Path(__file__).parent.absolute() / f"{model_name_clean}_{args.testset}" / TIMESTAMP
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 
 # Setup logging
-log_file = WORK_DIR / f"{model_name_clean}.log"
+log_file = WORK_DIR / f"{model_name_clean}_{args.testset}.log"
 logger = logging.getLogger('llm_trans')
 logger.setLevel(logging.DEBUG)
 
@@ -232,19 +280,80 @@ def run_single_case_translation(case_type, case_name):
             simple_initial_prompt.format(cuda_code=cuda_code))
     ]
 
-    # Get API parameters based on model type
-    api_params = get_api_param(conversation_history, model_name)
-
-    # Call LLM using the wrapper function
-    resp_content = openai_llm_call(client, api_params)
-
+    # Get API parameters based on model type and call LLM with retry logic
+    retry_count = 0
+    resp_content = None
+    
+    while retry_count <= args.max_retries:
+        try:
+            api_params = get_api_param(conversation_history, model_name)
+            resp_content = openai_llm_call(client, api_params)
+            
+            # Check if we got valid code (not just the original response due to missing code block)
+            triton_code = get_last_code_block(resp_content)
+            if triton_code == resp_content:
+                # This means get_last_code_block couldn't find a code block and returned the full response
+                # This should be retried, not counted as a failed attempt
+                if retry_count < args.max_retries:
+                    retry_count += 1
+                    wait_time = args.retry_wait // 2  # Shorter wait for format issues
+                    logger.warning(f"🔄 No code block found in response (retry {retry_count}/{args.max_retries})")
+                    logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                    
+                    # Wait with countdown
+                    for remaining in range(wait_time, 0, -1):
+                        if remaining % 5 == 0 or remaining <= 3:
+                            logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                        time.sleep(1)
+                    
+                    logger.info(f"🔄 Retrying API call for better code format...")
+                    continue
+                else:
+                    logger.error(f"❌ Max retries exceeded - no valid code block found")
+                    return False, None
+            
+            if retry_count > 0:
+                logger.info(f"✅ Successfully generated code after {retry_count} retries")
+            logger.debug(f"Successfully generated initial Triton code")
+            break
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Check if this is a retryable error
+            if is_retryable_error(error_msg) and retry_count < args.max_retries:
+                retry_count += 1
+                wait_time = args.retry_wait
+                logger.warning(f"🔄 API overload detected (retry {retry_count}/{args.max_retries}): {error_msg}")
+                logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                
+                # Wait with countdown (only show every 10 seconds to avoid spam)
+                for remaining in range(wait_time, 0, -1):
+                    if remaining % 10 == 0 or remaining <= 5:
+                        logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                    time.sleep(1)
+                
+                logger.info(f"🔄 Retrying API call (attempt {retry_count + 1})...")
+                continue
+            else:
+                # Non-retryable error or max retries exceeded
+                if retry_count >= args.max_retries:
+                    logger.error(f"❌ Max retries ({args.max_retries}) exceeded for initial generation")
+                logger.error(f"Failed to generate initial Triton code: {error_msg}")
+                return False, None
+    
+    if resp_content is None:
+        logger.error(f"Failed to generate initial Triton code after all retries")
+        return False, None
+    
     # 将LLM的回复添加到对话历史中
     conversation_history.append(make_openai_message_assistant(resp_content))
 
     TRITON_DIR = test_work_dir / DIR_TRITON_
     TRITON_DIR.mkdir(parents=True, exist_ok=True)
+    final_triton_code = get_last_code_block(resp_content)
     with open(TRITON_DIR / "kernel.py", "w") as f:
-        f.write(get_last_code_block(resp_content))
+        f.write(final_triton_code)
 
     logger.info(f"Triton code generated successfully")
 
@@ -264,7 +373,6 @@ def get_last_code_block(resp_content):
 
     Handles cases where ```python tags may not be properly closed.
     """
-    import re
     resp_content = re.sub(r'<thought>.*?</thought>', '',
                           resp_content, flags=re.DOTALL)
 
@@ -357,7 +465,7 @@ def run_test_round(round_num, test_work_dir):
             cmd,
             capture_output=True,
             text=True,
-            timeout=120  # 2 minute timeout
+            timeout=10000  # 2 minute timeout
         )
 
         # Restore original directory
@@ -414,16 +522,77 @@ def get_feedback_from_llm(round_num, error_output, stderr_output, test_work_dir,
         # Add the current kernel code and error feedback to conversation history
         conversation_history.append(make_openai_message_user(prompt))
 
-        # Get API parameters and call LLM
-        api_params = get_api_param(conversation_history, model_name)
-
-        # Call LLM using the wrapper function
-        fixed_code = openai_llm_call(client, api_params)
+        # Call LLM with retry logic
+        retry_count = 0
+        fixed_code_response = None
+        
+        while retry_count <= args.max_retries:
+            try:
+                # Get API parameters and call LLM
+                api_params = get_api_param(conversation_history, model_name)
+                fixed_code_response = openai_llm_call(client, api_params)
+                
+                # Check if we got valid code (not just the original response due to missing code block)
+                fixed_code = get_last_code_block(fixed_code_response)
+                if fixed_code == fixed_code_response:
+                    # This means get_last_code_block couldn't find a code block and returned the full response
+                    # This should be retried, not counted as a failed attempt
+                    if retry_count < args.max_retries:
+                        retry_count += 1
+                        wait_time = args.retry_wait // 2  # Shorter wait for format issues
+                        logger.warning(f"🔄 No code block found in feedback response (retry {retry_count}/{args.max_retries})")
+                        logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                        
+                        # Wait with countdown
+                        for remaining in range(wait_time, 0, -1):
+                            if remaining % 5 == 0 or remaining <= 3:
+                                logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                            time.sleep(1)
+                        
+                        logger.info(f"🔄 Retrying feedback API call for better code format...")
+                        continue
+                    else:
+                        logger.error(f"❌ Max retries exceeded - no valid code block found in feedback")
+                        return None
+                
+                if retry_count > 0:
+                    logger.info(f"✅ Successfully generated feedback after {retry_count} retries")
+                logger.debug(f"Successfully got LLM feedback for round {round_num}")
+                break
+                
+            except Exception as e:
+                error_msg = str(e)
+                
+                # Check if this is a retryable error
+                if is_retryable_error(error_msg) and retry_count < args.max_retries:
+                    retry_count += 1
+                    wait_time = args.retry_wait
+                    logger.warning(f"🔄 API overload detected in feedback (retry {retry_count}/{args.max_retries}): {error_msg}")
+                    logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                    
+                    # Wait with countdown (only show every 10 seconds to avoid spam)
+                    for remaining in range(wait_time, 0, -1):
+                        if remaining % 10 == 0 or remaining <= 5:
+                            logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                        time.sleep(1)
+                    
+                    logger.info(f"🔄 Retrying feedback API call (attempt {retry_count + 1})...")
+                    continue
+                else:
+                    # Non-retryable error or max retries exceeded
+                    if retry_count >= args.max_retries:
+                        logger.error(f"❌ Max retries ({args.max_retries}) exceeded for feedback round {round_num}")
+                    logger.error(f"Failed to get LLM feedback for round {round_num}: {error_msg}")
+                    return None
+        
+        if fixed_code_response is None:
+            logger.error(f"Failed to get LLM feedback after all retries")
+            return None
 
         # Add LLM response to conversation history
-        conversation_history.append(make_openai_message_assistant(fixed_code))
+        conversation_history.append(make_openai_message_assistant(fixed_code_response))
 
-        fixed_code = get_last_code_block(fixed_code)
+        fixed_code = get_last_code_block(fixed_code_response)
         return fixed_code
 
     except Exception as e:
@@ -491,6 +660,8 @@ def test_cases():
     logger.info(f"   - Console output: {CONSOLE_OUTPUT}")
     logger.info(f"   - First only: {args.first_only}")
     logger.info(f"   - Skip performance: {args.no_perf}")
+    logger.info(f"   - Retry wait time: {args.retry_wait}s")
+    logger.info(f"   - Max retries: {args.max_retries}")
     logger.info(f"   - Specific case types: {args.case_types if args.case_types else 'All'}")
 
     # 使用详细的结果存储结构
@@ -604,11 +775,11 @@ if __name__ == "__main__":
     """
     Examples of usage:
     
-    # Test all cases with iterative fixing using default (xpiler) testset
+    # Test all cases with iterative fixing using default (leetcuda_dynamic) testset
     python llm_trans.py
     
-    # Test with leetcuda_dynamic_test testset
-    python llm_trans.py --testset leetcuda_dynamic_test
+    # Test with xpiler testset
+    python llm_trans.py --testset xpiler
     
     # Test with different model
     python llm_trans.py --model claude --testset xpiler
@@ -617,10 +788,16 @@ if __name__ == "__main__":
     python llm_trans.py --case-types conv2d gemm layernorm
     
     # Test only first case from each type with no console output
-    python llm_trans.py --first-only --no-console --testset leetcuda_dynamic_test
+    python llm_trans.py --first-only --no-console --testset leetcuda_dynamic
     
     # Test with different model and skip performance testing
-    python llm_trans.py --model qwen --case-types add --no-perf --testset leetcuda_dynamic_test
+    python llm_trans.py --model qwen --case-types add --no-perf --testset leetcuda_dynamic
+    
+    # Test with custom retry settings (30s wait, max 3 retries)
+    python llm_trans.py --retry-wait 30 --max-retries 3
+    
+    # Test with fast retries for development
+    python llm_trans.py --first-only --retry-wait 10 --max-retries 2
     """
     
     # Validate configuration
