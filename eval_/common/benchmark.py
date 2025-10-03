@@ -12,7 +12,7 @@ def benchmark_kernel(
     kernel_func: Callable, 
     inputs: list | tuple,
     warmup: int = 100,
-    iterations: int = 500,
+    iterations: int = 250,
     quantiles: List[float] = [0.2, 0.5, 0.8]
 ) -> float:
     ret = []

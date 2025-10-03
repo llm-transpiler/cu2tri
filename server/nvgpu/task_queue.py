@@ -1,0 +1,166 @@
+"""Task queue management for NVGPU server."""
+import threading
+from collections import deque
+from typing import Dict, List, Optional
+from datetime import datetime
+
+from models import Task, TaskStatus
+from logger import setup_logger
+
+logger = setup_logger("task_queue")
+
+
+class TaskQueue:
+    """Thread-safe task queue with global and per-GPU queues."""
+    
+    def __init__(self):
+        self.lock = threading.RLock()
+        
+        # Global task queue (pending tasks)
+        self.global_queue: deque[Task] = deque()
+        
+        # Per-GPU task queues (queued for specific GPU)
+        self.gpu_queues: Dict[int, deque[Task]] = {}
+        
+        # All tasks by ID
+        self.tasks: Dict[str, Task] = {}
+    
+    def submit_task(self, task: Task) -> str:
+        """Submit a new task."""
+        with self.lock:
+            task.status = TaskStatus.PENDING
+            self.tasks[task.task_id] = task
+            self.global_queue.append(task)
+            
+            logger.info(f"Task {task.task_id} submitted: type={task.task_type.value}, "
+                       f"script={task.script_path}, gpu={task.gpu_id}")
+            return task.task_id
+    
+    def get_task(self, task_id: str) -> Optional[Task]:
+        """Get task by ID."""
+        with self.lock:
+            return self.tasks.get(task_id)
+    
+    def list_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
+        """List all tasks, optionally filtered by status."""
+        with self.lock:
+            if status:
+                return [t for t in self.tasks.values() if t.status == status]
+            return list(self.tasks.values())
+    
+    def pop_pending_task(self) -> Optional[Task]:
+        """Pop a pending task from global queue."""
+        with self.lock:
+            if not self.global_queue:
+                return None
+            return self.global_queue.popleft()
+    
+    def queue_task_for_gpu(self, task: Task, gpu_id: int):
+        """Queue a task for a specific GPU."""
+        with self.lock:
+            if gpu_id not in self.gpu_queues:
+                self.gpu_queues[gpu_id] = deque()
+            
+            task.status = TaskStatus.QUEUED
+            task.assigned_gpu = gpu_id
+            self.gpu_queues[gpu_id].append(task)
+            
+            logger.info(f"Task {task.task_id} queued for GPU {gpu_id}")
+    
+    def pop_gpu_task(self, gpu_id: int) -> Optional[Task]:
+        """Pop a task from GPU-specific queue."""
+        with self.lock:
+            if gpu_id not in self.gpu_queues or not self.gpu_queues[gpu_id]:
+                return None
+            return self.gpu_queues[gpu_id].popleft()
+    
+    def get_queue_size(self, gpu_id: Optional[int] = None) -> int:
+        """Get queue size for global or specific GPU queue."""
+        with self.lock:
+            if gpu_id is None:
+                return len(self.global_queue)
+            return len(self.gpu_queues.get(gpu_id, []))
+    
+    def cancel_task(self, task_id: str) -> bool:
+        """Cancel a pending or queued task."""
+        with self.lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return False
+            
+            if task.status not in [TaskStatus.PENDING, TaskStatus.QUEUED]:
+                logger.warning(f"Cannot cancel task {task_id} with status {task.status.value}")
+                return False
+            
+            # Remove from global queue
+            try:
+                self.global_queue.remove(task)
+            except ValueError:
+                pass
+            
+            # Remove from GPU queue
+            if task.assigned_gpu is not None:
+                gpu_id = task.assigned_gpu
+                if gpu_id in self.gpu_queues:
+                    try:
+                        self.gpu_queues[gpu_id].remove(task)
+                    except ValueError:
+                        pass
+            
+            task.status = TaskStatus.CANCELLED
+            logger.info(f"Task {task_id} cancelled")
+            return True
+    
+    def force_cancel_task(self, task_id: str, task_runner) -> bool:
+        """Force cancel a task, including running tasks.
+        
+        Args:
+            task_id: Task ID to cancel
+            task_runner: TaskRunner instance to kill running processes
+            
+        Returns:
+            True if cancelled, False otherwise
+        """
+        with self.lock:
+            if task_id not in self.tasks:
+                logger.warning(f"Cannot force cancel task {task_id}: not found")
+                return False
+            
+            task = self.tasks[task_id]
+            
+            # For pending or queued tasks, use regular cancel
+            if task.status in [TaskStatus.PENDING, TaskStatus.QUEUED]:
+                return self.cancel_task(task_id)
+            
+            # For running tasks, kill the process
+            if task.status == TaskStatus.RUNNING:
+                logger.info(f"Force cancelling running task {task_id}")
+                if task_runner.kill_task(task_id):
+                    task.status = TaskStatus.CANCELLED
+                    task.error_message = "Cancelled by user (force)"
+                    task.end_time = datetime.now()
+                    logger.info(f"Task {task_id} force cancelled")
+                    return True
+                else:
+                    logger.error(f"Failed to kill running task {task_id}")
+                    return False
+            
+            # Already finished tasks cannot be cancelled
+            logger.warning(f"Cannot cancel task {task_id} with status {task.status.value}")
+            return False
+    
+    def get_statistics(self) -> Dict:
+        """Get queue statistics."""
+        with self.lock:
+            stats = {
+                "global_queue_size": len(self.global_queue),
+                "total_tasks": len(self.tasks),
+                "pending": sum(1 for t in self.tasks.values() if t.status == TaskStatus.PENDING),
+                "queued": sum(1 for t in self.tasks.values() if t.status == TaskStatus.QUEUED),
+                "running": sum(1 for t in self.tasks.values() if t.status == TaskStatus.RUNNING),
+                "completed": sum(1 for t in self.tasks.values() if t.status == TaskStatus.COMPLETED),
+                "failed": sum(1 for t in self.tasks.values() if t.status == TaskStatus.FAILED),
+                "gpu_queues": {gpu_id: len(queue) for gpu_id, queue in self.gpu_queues.items()}
+            }
+            return stats
+

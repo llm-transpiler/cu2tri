@@ -1,0 +1,47 @@
+# GPU Resource Configuration
+# This file defines the available GPUs and their mappings
+
+# GPU list configuration
+gpus:
+  # GPU 0 - First RTX 6000 Ada
+  - logical_id: 0           # Logical ID used by this system
+    nvidia_smi_id: 0        # GPU index shown in nvidia-smi
+    cuda_visible_id: 0      # CUDA_VISIBLE_DEVICES mapping
+    name: "NVIDIA RTX 6000 Ada Generation"
+    uuid: "GPU-1b8c43a8-35ba-a01b-a2ee-0d6fe8f1f60f"
+    memory_gb: 48           # Memory in GB
+    enabled: true           # Whether to register this GPU on startup
+    default_mode: "shared"  # Default mode: "shared" or "exclusive"
+    memory_threshold: 0.75  # Memory usage threshold (0-1)
+    max_concurrent_tasks: 3 # Max concurrent tasks in shared mode
+    
+  # GPU 1 - Second RTX 6000 Ada
+  - logical_id: 1
+    nvidia_smi_id: 1
+    cuda_visible_id: 1
+    name: "NVIDIA RTX 6000 Ada Generation"
+    uuid: "GPU-78b50b8e-ef33-b3fd-2c52-e3f135990f31"
+    memory_gb: 48
+    enabled: true
+    default_mode: "shared"
+    memory_threshold: 0.75
+    max_concurrent_tasks: 3
+
+# Server settings
+server:
+  auto_register_gpus: true  # Auto-register enabled GPUs on startup
+  use_gpu_uuid: true        # Use UUID for GPU identification (more reliable)
+
+# Notes:
+# - logical_id: The ID used by this scheduling system (0, 1, 2, ...)
+# - nvidia_smi_id: The GPU index shown in nvidia-smi command
+# - cuda_visible_id: The ID to use when setting CUDA_VISIBLE_DEVICES
+# 
+# In most cases, all three IDs are the same, but they can differ in some
+# multi-GPU systems or when using MIG (Multi-Instance GPU) partitions.
+#
+# Example of different mappings:
+# If your system has nvidia-smi showing [0, 1] but CUDA sees them as [1, 0]:
+#   logical_id: 0, nvidia_smi_id: 0, cuda_visible_id: 1
+#   logical_id: 1, nvidia_smi_id: 1, cuda_visible_id: 0
+
