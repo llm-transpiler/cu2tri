@@ -3,6 +3,9 @@ import logging
 import os
 from datetime import datetime
 
+def get_clean_model_name(model_name: str) -> str:
+    return model_name.replace('.', '_').replace('/', '_').replace('-', '_').replace(':', '_').replace('(', '_').replace(')', '_').replace(' ', '_')
+
 def setup_logging(
     log_file: str, 
     latest_log_file: Optional[str] = None,
