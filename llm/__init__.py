@@ -22,6 +22,23 @@ from .history import (
     MessageNode, ConversationTree,
 )
 
+# OpenAI-compatible helpers (moved from cu2til/trans/dev_/llm.py)
+from .client.openai_compat import (
+    openai_llm_call,
+    async_openai_llm_call,
+    CallingIdentifier,
+    get_api_params_method,
+    get_api_param_openai_default,
+    get_api_param_openai_openrouter,
+    get_api_param_gemini_openai,
+    get_api_param_deepseek_openai,
+    get_api_param_anthropic_openrouter,
+    make_openai_single_message,
+    make_openai_message_system,
+    make_openai_message_user,
+    make_openai_message_assistant,
+)
+
 __version__ = "1.0.0"
 
 __all__ = [
@@ -34,4 +51,13 @@ __all__ = [
     
     # 节点和树
     'MessageNode', 'ConversationTree',
+
+    # OpenAI-compatible helpers
+    'openai_llm_call', 'async_openai_llm_call',
+    'CallingIdentifier', 'get_api_params_method',
+    'get_api_param_openai_default', 'get_api_param_openai_openrouter',
+    'get_api_param_gemini_openai', 'get_api_param_deepseek_openai',
+    'get_api_param_anthropic_openrouter',
+    'make_openai_single_message', 'make_openai_message_system',
+    'make_openai_message_user', 'make_openai_message_assistant',
 ] 
