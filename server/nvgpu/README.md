@@ -17,7 +17,7 @@ python main.py --gpu-config configs/gpu_resource.yml
 
 ## 目录结构
 
-```
+```shell
 nvgpu/
 ├── README.md                # 本文件
 ├── requirements.txt         # Python依赖
@@ -79,10 +79,16 @@ nvgpu/
 
 ## 文档
 
+### 核心文档
 - **[快速入门](docs/QUICKSTART.md)** - 5分钟上手指南
 - **[详细文档](docs/README.md)** - 完整功能说明
+- **[设计架构](docs/DESIGN_ARCHITECTURE.md)** ⭐ - 深入理解GPU模式、任务类型、调度器设计 (English)
+- **[核心概念说明](docs/DESIGN_CORE_CONCEPTS_ZH.md)** ⭐ - GPU模式与任务类型详解 (中文)
+
+### 配置与参考
 - **[目录结构](docs/DIRECTORY_STRUCTURE.md)** - 文件组织和路径说明
 - **[GPU配置指南](docs/GPU_CONFIG_GUIDE.md)** - 如何配置GPU资源
+- **[work_dir使用指南](docs/WORK_DIR_GUIDE.md)** - 工作目录功能说明
 - **[变更日志](docs/CHANGELOG.md)** - 版本更新记录
 
 ## API文档

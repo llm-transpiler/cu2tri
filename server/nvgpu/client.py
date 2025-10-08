@@ -90,6 +90,52 @@ class NVGPUClient:
         result = response.json()
         return result["task_id"]
     
+    def submit_task_in_script_dir(
+        self,
+        script_path: str,
+        task_type: str = "functional",
+        args: Optional[List[str]] = None,
+        env: Optional[Dict[str, str]] = None,
+        gpu_id: Optional[int] = None
+    ) -> str:
+        """Submit task with work_dir automatically set to script's directory.
+        
+        This is a convenience method that automatically uses the script's
+        parent directory as the working directory. Useful when the script
+        needs to access files in its own directory.
+        
+        Args:
+            script_path: Path to the Python script to run
+            task_type: Task type ("functional" or "performance")
+            args: Command line arguments for the script
+            env: Environment variables
+            gpu_id: Specific GPU ID, or None for auto-assignment
+            
+        Returns:
+            Task ID
+            
+        Example:
+            >>> # These are equivalent:
+            >>> client.submit_task(
+            ...     script_path="/workspace/test/script.py",
+            ...     work_dir="/workspace/test"
+            ... )
+            >>> client.submit_task_in_script_dir(
+            ...     script_path="/workspace/test/script.py"
+            ... )
+        """
+        from pathlib import Path
+        work_dir = str(Path(script_path).parent.absolute())
+        
+        return self.submit_task(
+            script_path=script_path,
+            task_type=task_type,
+            work_dir=work_dir,
+            args=args,
+            env=env,
+            gpu_id=gpu_id
+        )
+    
     def get_task(self, task_id: str) -> TaskResult:
         """Get task status and results.
         

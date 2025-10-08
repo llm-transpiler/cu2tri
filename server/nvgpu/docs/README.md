@@ -217,6 +217,38 @@ curl http://localhost:8080/stats
 4. **维护**：硬件维护前将 GPU 设置为 `offline`
 5. **错误恢复**：清除严重错误前先查看日志
 
+## 相关文档
+
+### 深入理解系统设计
+
+如果你对以下问题有疑惑，请阅读设计文档：
+
+- **GPU模式是什么时候切换的？** 🤔
+- **为什么要区分exclusive和shared模式？** 🤔
+- **任务类型(functional/performance)有什么作用？** 🤔
+- **调度器如何决定任务分配？** 🤔
+- **模式切换时正在运行的任务会怎样？** 🤔
+
+推荐阅读：
+- **[设计架构文档](DESIGN_ARCHITECTURE.md)** ⭐ - 完整的设计逻辑说明（English）
+- **[核心概念说明](DESIGN_CORE_CONCEPTS_ZH.md)** ⭐ - GPU模式与任务类型详解（中文）
+
+### 其他文档
+
+- **[快速入门](QUICKSTART.md)** - 5分钟上手指南
+- **[GPU配置指南](GPU_CONFIG_GUIDE.md)** - 配置GPU资源
+- **[目录结构说明](DIRECTORY_STRUCTURE.md)** - 文件组织
+- **[work_dir使用指南](WORK_DIR_GUIDE.md)** - 工作目录功能
+- **[变更日志](CHANGELOG.md)** - 版本更新记录
+
+### 示例代码
+
+- **[examples/](../examples/)** - 各种使用场景的示例代码
+  - `example_mode_switching.py` ⭐ - GPU模式切换示例（推荐）
+  - `example_basic.py` - 基础用法
+  - `example_concurrent_tasks.py` - 并发任务
+  - 以及更多...
+
 ## 许可证
 
 内部使用。

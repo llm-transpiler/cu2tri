@@ -102,6 +102,42 @@ python examples/example_custom_env.py
 
 ---
 
+### 6. `example_mode_switching.py` - GPU模式切换 ⭐ 推荐
+
+展示GPU模式的动态切换及其对运行中任务的影响。
+
+```bash
+python examples/example_mode_switching.py
+```
+
+**演示内容：**
+- **Demo 1**: Shared → Exclusive 切换（有运行中任务）
+  - 运行中的任务不受影响，继续执行
+  - 新提交的任务正确排队等待
+  - 切换后系统按新模式运行
+  
+- **Demo 2**: Exclusive模式行为
+  - 同时最多1个任务运行
+  - 其他任务自动排队
+  - 适用于需要全部GPU资源的任务
+
+- **Demo 3**: Shared模式并发控制
+  - 多任务并发执行
+  - max_concurrent_tasks限制并发数
+  - 防止GPU过载
+
+**关键特性：**
+- ✅ 模式切换不中断运行中任务（优雅过渡）
+- ✅ 新任务遵守新模式的约束
+- ✅ 安全的动态资源管理
+
+**适用场景：**
+- 需要动态调整GPU资源分配
+- 临时独占GPU运行重要任务
+- 灵活的多任务管理
+
+---
+
 ## 在你自己的项目中使用
 
 ### 安装依赖

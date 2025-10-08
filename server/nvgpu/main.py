@@ -274,3 +274,14 @@ def main():
 if __name__ == "__main__":
     main()
 
+'''
+root@ubuntu-ThinkStation-P520:/workspace# cd /workspace/server/nvgpu && python main.py > /tmp/nvgpu_test_server.log 2>&1 &
+[1] 2511310
+root@ubuntu-ThinkStation-P520:/workspace# ps aux | grep "python main.py" | grep -v grep
+root     2511312  2.6  0.0 325064 66692 pts/231  Sl   04:10   0:00 python main.py
+root@ubuntu-ThinkStation-P520:/workspace# pgrep -f "python main.py"
+2511312
+'''
+'''
+grep 的 -v 选项：这个选项的意思是 --invert-match，也就是反向查找。它会显示出所有不包含指定字符串的行。
+'''
