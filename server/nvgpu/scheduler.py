@@ -1,7 +1,6 @@
 """Task scheduler for NVGPU server."""
 import threading
 import time
-from typing import Optional
 
 from gpu_manager import GPUManager
 from task_queue import TaskQueue
@@ -22,7 +21,7 @@ class Scheduler:
         self.task_runner = task_runner
         
         self.running = False
-        self.scheduler_thread: Optional[threading.Thread] = None
+        self.scheduler_thread: threading.Thread | None = None
     
     def _schedule_round(self):
         """One round of scheduling: assign pending tasks to GPUs and execute queued tasks."""
@@ -32,8 +31,8 @@ class Scheduler:
             if not task:
                 break
             
-            # Find available GPU
-            gpu_id = self.gpu_manager.find_available_gpu(task.gpu_id)
+            # Find available GPU that can accept this task mode
+            gpu_id = self.gpu_manager.find_available_gpu(task.gpu_id, task.task_mode)
             if gpu_id is None:
                 # No GPU available, put back to queue
                 self.task_queue.global_queue.appendleft(task)
@@ -46,14 +45,23 @@ class Scheduler:
         for gpu in self.gpu_manager.list_gpus():
             gpu_id = gpu.gpu_id
             
-            # Check if GPU can accept new task
-            if not gpu.can_accept_task():
-                continue
-            
             # Get next task from GPU queue
             task = self.task_queue.pop_gpu_task(gpu_id)
             if not task:
                 continue
+            
+            # Check if GPU can accept this task's mode
+            if not gpu.can_accept_task(task.task_mode):
+                # Put task back and try next GPU
+                self.task_queue.gpu_queues[gpu_id].appendleft(task)
+                continue
+            
+            # Mark task as running BEFORE creating thread to prevent race condition
+            # This ensures subsequent checks in the same scheduling round see the updated state
+            self.gpu_manager.mark_task_running(gpu_id, task.task_id)
+            
+            # Set GPU mode based on task requirements (task-driven mode switching)
+            self.gpu_manager.set_gpu_mode_for_task(gpu_id, task.task_id, task.task_mode)
             
             # Execute task in a separate thread
             thread = threading.Thread(
@@ -64,9 +72,11 @@ class Scheduler:
             thread.start()
     
     def _execute_task(self, task, gpu_id: int):
-        """Execute a single task on GPU."""
-        # Mark task as running on GPU
-        self.gpu_manager.mark_task_running(gpu_id, task.task_id)
+        """Execute a single task on GPU.
+        
+        Note: Task is already marked as running and GPU mode is already set
+        in the main scheduler thread before this thread is created.
+        """
         
         try:
             # Run the task
@@ -89,6 +99,9 @@ class Scheduler:
                     except Exception as e:
                         logger.debug(f"Could not check stderr for GPU errors: {e}")
         finally:
+            # Restore GPU mode after task completes
+            self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task.task_id)
+            
             # Mark task as completed on GPU
             self.gpu_manager.mark_task_completed(gpu_id, task.task_id)
     

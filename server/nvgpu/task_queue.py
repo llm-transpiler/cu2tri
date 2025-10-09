@@ -1,7 +1,6 @@
 """Task queue management for NVGPU server."""
 import threading
 from collections import deque
-from typing import Dict, List, Optional
 from datetime import datetime
 
 from models import Task, TaskStatus
@@ -20,10 +19,10 @@ class TaskQueue:
         self.global_queue: deque[Task] = deque()
         
         # Per-GPU task queues (queued for specific GPU)
-        self.gpu_queues: Dict[int, deque[Task]] = {}
+        self.gpu_queues: dict[int, deque[Task]] = {}
         
         # All tasks by ID
-        self.tasks: Dict[str, Task] = {}
+        self.tasks: dict[str, Task] = {}
     
     def submit_task(self, task: Task) -> str:
         """Submit a new task."""
@@ -32,23 +31,38 @@ class TaskQueue:
             self.tasks[task.task_id] = task
             self.global_queue.append(task)
             
-            logger.info(f"Task {task.task_id} submitted: type={task.task_type.value}, "
-                       f"script={task.script_path}, gpu={task.gpu_id}")
-            return task.task_id
+        # Log with type and label if set
+        type_info = f", type={task.task_type.value}" if task.task_type else ""
+        label_info = f", label={task.task_label}" if task.task_label else ""
+        logger.info(f"Task {task.task_id} submitted: mode={task.task_mode.value}{type_info}{label_info}, "
+                   f"script={task.script_path}, gpu={task.gpu_id}")
+        return task.task_id
     
-    def get_task(self, task_id: str) -> Optional[Task]:
+    def push_front(self, task: Task):
+        """Push a task to the front of global queue (for requeue after error).
+        
+        Args:
+            task: Task to requeue at front
+        """
+        with self.lock:
+            task.status = TaskStatus.PENDING
+            task.assigned_gpu = None  # Clear assignment
+            self.global_queue.appendleft(task)
+            logger.info(f"Task {task.task_id} requeued at front (priority)")
+    
+    def get_task(self, task_id: str) -> Task | None:
         """Get task by ID."""
         with self.lock:
             return self.tasks.get(task_id)
     
-    def list_tasks(self, status: Optional[TaskStatus] = None) -> List[Task]:
+    def list_tasks(self, status: TaskStatus | None = None) -> list[Task]:
         """List all tasks, optionally filtered by status."""
         with self.lock:
             if status:
                 return [t for t in self.tasks.values() if t.status == status]
             return list(self.tasks.values())
     
-    def pop_pending_task(self) -> Optional[Task]:
+    def pop_pending_task(self) -> Task | None:
         """Pop a pending task from global queue."""
         with self.lock:
             if not self.global_queue:
@@ -67,14 +81,14 @@ class TaskQueue:
             
             logger.info(f"Task {task.task_id} queued for GPU {gpu_id}")
     
-    def pop_gpu_task(self, gpu_id: int) -> Optional[Task]:
+    def pop_gpu_task(self, gpu_id: int) -> Task | None:
         """Pop a task from GPU-specific queue."""
         with self.lock:
             if gpu_id not in self.gpu_queues or not self.gpu_queues[gpu_id]:
                 return None
             return self.gpu_queues[gpu_id].popleft()
     
-    def get_queue_size(self, gpu_id: Optional[int] = None) -> int:
+    def get_queue_size(self, gpu_id: int | None = None) -> int:
         """Get queue size for global or specific GPU queue."""
         with self.lock:
             if gpu_id is None:
@@ -149,7 +163,7 @@ class TaskQueue:
             logger.warning(f"Cannot cancel task {task_id} with status {task.status.value}")
             return False
     
-    def get_statistics(self) -> Dict:
+    def get_statistics(self) -> dict:
         """Get queue statistics."""
         with self.lock:
             stats = {

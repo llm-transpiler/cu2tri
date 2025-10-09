@@ -360,3 +360,164 @@ def main():
 if __name__ == "__main__":
     sys.exit(main())
 
+'''
+root@ubuntu-ThinkStation-P520:/workspace# /usr/bin/python /workspace/server/nvgpu/examples/example_mode_switching.py
+
+======================================================================
+  GPU Mode Switching Examples
+  Demonstrating Dynamic GPU Mode Management
+======================================================================
+
+✓ Connected to NVGPU server
+✓ Using GPU 0
+
+
+======================================================================
+  Demo 1: Shared → Exclusive with Running Tasks
+======================================================================
+
+Step 1: Setting GPU to shared mode...
+  GPU 0 Status:
+    Mode: shared
+    Running tasks: 0
+
+Step 2: Submitting 3 concurrent tasks (each runs 15 seconds)...
+  ✓ Task 1 submitted: 5d1ad5d3...
+  ✓ Task 2 submitted: 0e3a38ad...
+  ✓ Task 3 submitted: 3240f952...
+
+Step 3: Waiting for tasks to start running...
+  Running: 3/3
+  GPU 0 Status:
+    Mode: shared
+    Running tasks: 3
+    Task IDs: ['5d1ad5d3...', '0e3a38ad...', '3240f952...']
+
+🔄 Step 4: Switching to EXCLUSIVE mode (while 3 tasks are running)...
+  ✓ Mode switched to exclusive
+  GPU 0 Status:
+    Mode: exclusive
+    Running tasks: 3
+    Task IDs: ['5d1ad5d3...', '0e3a38ad...', '3240f952...']
+
+Step 5: Submitting a new task to exclusive GPU...
+  ✓ Task submitted: 791f822f...
+  Task status: pending
+  ✅ CORRECT: Task is waiting because GPU has running tasks
+
+Step 6: Monitoring task completion...
+  (The 3 running tasks will complete, then the new task will start)
+  ✓ Task 1/3 completed
+  ✓ Task 2/3 completed
+  ✓ Task 3/3 completed
+
+  New task final status: running
+  ✅ SUCCESS: New task started after old tasks completed
+
+======================================================================
+Key Takeaway:
+  • Running tasks are NOT interrupted by mode switch
+  • New tasks respect the new mode constraints
+  • Mode switch is seamless and safe
+======================================================================
+
+======================================================================
+  Demo 2: Exclusive Mode Behavior
+======================================================================
+
+Step 1: Setting GPU to exclusive mode...
+  GPU 0 Status:
+    Mode: exclusive
+    Running tasks: 0
+
+Step 2: Submitting first task...
+  ✓ Task 1 submitted: 389730f0...
+  Task 1 status: running
+
+Step 3: Submitting second task (should be blocked)...
+  ✓ Task 2 submitted: 05e109b7...
+  Task 2 status: pending
+  ✅ CORRECT: Task 2 is blocked (status: pending)
+  → Exclusive mode ensures only one task runs at a time
+
+  GPU 0 Status:
+
+    Mode: exclusive
+
+    Running tasks: 1
+
+    Task IDs: ['389730f0...']
+
+Step 4: Waiting for Task 1 to complete...
+  ✓ Task 1 completed
+
+  Task 2 status after Task 1 completes: running
+  ✅ SUCCESS: Task 2 started after Task 1 completed
+
+======================================================================
+Key Takeaway:
+  • Exclusive mode = maximum 1 task at a time
+  • Additional tasks wait in queue
+  • Useful for tasks requiring full GPU resources
+======================================================================
+
+======================================================================
+  Demo 3: Shared Mode Controlled Concurrency
+======================================================================
+
+Step 1: Setting GPU to shared mode (max 2 concurrent tasks)...
+  GPU 0 Status:
+    Mode: shared
+    Running tasks: 0
+
+Step 2: Submitting 3 tasks (limit is 2)...
+  ✓ Task 1 submitted: d4e62297...
+  ✓ Task 2 submitted: 4987a87e...
+  ✓ Task 3 submitted: 698a0836...
+
+  Currently running: 2 tasks
+  ✅ CORRECT: Only 2 tasks running (respecting max_concurrent_tasks)
+  → Third task is waiting in queue
+
+Step 3: Monitoring task progression...
+  Running: 2, Completed: 0, Waiting: 1
+  Running: 2, Completed: 0, Waiting: 1
+  Running: 2, Completed: 0, Waiting: 1
+  Running: 2, Completed: 0, Waiting: 1
+  Running: 2, Completed: 0, Waiting: 1
+  Running: 2, Completed: 0, Waiting: 1
+
+======================================================================
+Key Takeaway:
+  • Shared mode allows controlled concurrent execution
+  • max_concurrent_tasks limits simultaneous tasks
+  • Prevents GPU overload from too many concurrent tasks
+======================================================================
+
+======================================================================
+  Cleanup
+======================================================================
+
+Restoring GPU to default settings...
+✓ GPU restored to shared mode with max 3 concurrent tasks
+
+======================================================================
+  Summary
+======================================================================
+
+✅ All demonstrations completed successfully!
+
+What we learned:
+  1. Mode switches don't interrupt running tasks
+  2. Exclusive mode ensures single-task execution
+  3. Shared mode provides controlled concurrency
+  4. The system handles transitions gracefully
+
+These features enable:
+  • Dynamic resource allocation
+  • Priority task execution (switch to exclusive)
+  • Efficient multi-tasking (shared mode)
+  • Safe mode transitions without task loss
+
+======================================================================
+'''

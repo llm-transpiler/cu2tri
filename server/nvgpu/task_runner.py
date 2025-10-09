@@ -6,7 +6,6 @@ import signal
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from models import Task, TaskStatus
 from config import config
@@ -25,7 +24,7 @@ class TaskRunner:
     """Executes tasks as Python subprocess."""
     
     def __init__(self):
-        self.running_processes = {}  # task_id -> subprocess.Popen
+        self.running_processes: dict[str, subprocess.Popen] = {}  # task_id -> subprocess.Popen
         self.lock = threading.RLock()
     
     def run_task(self, task: Task, gpu_id: int) -> bool:
@@ -124,23 +123,27 @@ class TaskRunner:
             task.exit_code = exit_code
             task.end_time = datetime.now()
             
-            # Write summary log file
-            self._write_log_file(task, script_abs_path, cmd, stdout_path, stderr_path)
-            
-            # Determine success
+            # Determine success and set final status BEFORE writing log
             if exit_code == 0:
                 task.status = TaskStatus.COMPLETED
                 logger.info(f"Task {task.task_id} completed successfully (exit_code=0)")
             elif exit_code < 0:
                 # Negative exit code indicates signal termination (e.g., SIGSEGV = -11)
                 signal_name = self._get_signal_name(abs(exit_code))
-                task.status = TaskStatus.FAILED
-                task.error_message = f"Process terminated by signal {signal_name} ({exit_code})"
+                # Don't override CANCELLED status (set by force_cancel_task)
+                if task.status != TaskStatus.CANCELLED:
+                    task.status = TaskStatus.FAILED
+                    task.error_message = f"Process terminated by signal {signal_name} ({exit_code})"
                 logger.error(f"Task {task.task_id} terminated by signal {signal_name} ({exit_code})")
             else:
-                task.status = TaskStatus.FAILED
-                task.error_message = f"Exit code {exit_code}"
+                # Don't override CANCELLED status
+                if task.status != TaskStatus.CANCELLED:
+                    task.status = TaskStatus.FAILED
+                    task.error_message = f"Exit code {exit_code}"
                 logger.warning(f"Task {task.task_id} failed with exit code {exit_code}")
+            
+            # Write summary log file AFTER status is finalized
+            self._write_log_file(task, script_abs_path, cmd, stdout_path, stderr_path)
             
             return True
             
@@ -212,7 +215,7 @@ class TaskRunner:
     
     def _write_log_file(self, task: Task, script_abs_path: str, cmd: list, 
                        stdout_path: Path, stderr_path: Path,
-                       timeout: bool = False, exception: Optional[str] = None):
+                       timeout: bool = False, exception: str | None = None):
         """Write task execution summary log to file."""
         if not task.log_file:
             return
@@ -220,7 +223,11 @@ class TaskRunner:
         try:
             with open(task.log_file, 'w') as f:
                 f.write(f"=== Task {task.task_id} ===\n")
-                f.write(f"Type: {task.task_type.value}\n")
+                f.write(f"Mode: {task.task_mode.value}\n")
+                if task.task_type:
+                    f.write(f"Type: {task.task_type.value}\n")
+                if task.task_label:
+                    f.write(f"Label: {task.task_label}\n")
                 f.write(f"Script: {script_abs_path}\n")
                 f.write(f"Work Dir: {os.path.abspath(task.work_dir)}\n")
                 f.write(f"GPU: {task.assigned_gpu}\n")

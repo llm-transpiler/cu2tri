@@ -1,7 +1,7 @@
 """Python client for NVGPU Server."""
 import requests
 import time
-from typing import Optional, Dict, List, Any
+from typing import Any
 from dataclasses import dataclass
 
 
@@ -10,15 +10,18 @@ class TaskResult:
     """Task result."""
     task_id: str
     status: str
-    exit_code: Optional[int] = None
-    log_file: Optional[str] = None
-    error_message: Optional[str] = None
-    submit_time: Optional[str] = None
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
+    task_mode: str | None = None  # Task mode (exclusive/shared)
+    task_type: str | None = None  # Task type (functional/performance/both)
+    task_label: str | None = None  # Task label
+    exit_code: int | None = None
+    log_file: str | None = None
+    error_message: str | None = None
+    submit_time: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
     stdout_size: int = 0
     stderr_size: int = 0
-    gpu_id: Optional[int] = None
+    gpu_id: int | None = None
 
 
 class NVGPUClient:
@@ -44,17 +47,30 @@ class NVGPUClient:
     def submit_task(
         self,
         script_path: str,
-        task_type: str = "functional",
+        task_mode: str | None = None,
+        task_type: str | None = None,
+        task_label: str | None = None,
         work_dir: str = ".",
-        args: Optional[List[str]] = None,
-        env: Optional[Dict[str, str]] = None,
-        gpu_id: Optional[int] = None
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        gpu_id: int | None = None
     ) -> str:
         """Submit a task to the server.
         
+        Smart defaults:
+        - task_type="functional" -> task_mode="shared" (if not specified)
+        - task_type="performance" -> task_mode="exclusive" (if not specified)
+        - task_type="both" -> task_mode="exclusive" (if not specified)
+        - No task_type/mode -> task_mode="shared" (safe default)
+        
         Args:
             script_path: Path to the Python script to run
-            task_type: Task type ("functional" or "performance")
+            task_mode: Task mode ("exclusive" or "shared"), controls GPU behavior.
+                      Optional - smart defaults applied based on task_type.
+            task_type: Business categorization ("functional", "performance", "both").
+                      Optional - for statistics and filtering.
+            task_label: Specific identification tag (e.g., "xpiler_cuda/add_3_3_256/cuda_vs_triton").
+                       Optional - for precise identification.
             work_dir: Working directory for the script
             args: Command line arguments for the script
             env: Environment variables
@@ -65,14 +81,34 @@ class NVGPUClient:
             
         Raises:
             RuntimeError: If submission fails
+            
+        Examples:
+            # Simple usage (smart defaults)
+            submit_task("test.py")  # shared mode
+            submit_task("test.py", task_type="functional")  # shared mode
+            submit_task("test.py", task_type="performance")  # exclusive mode
+            
+            # With specific label
+            submit_task("test.py", 
+                       task_type="functional",
+                       task_label="xpiler_cuda/add_3_3_256/cuda_vs_triton")
+            
+            # Explicit control
+            submit_task("test.py", task_mode="exclusive", task_type="functional")
         """
         payload = {
             "script_path": script_path,
-            "task_type": task_type,
             "work_dir": work_dir,
             "args": args or [],
         }
         
+        # Add optional parameters only if provided
+        if task_mode is not None:
+            payload["task_mode"] = task_mode
+        if task_type is not None:
+            payload["task_type"] = task_type
+        if task_label is not None:
+            payload["task_label"] = task_label
         if env:
             payload["env"] = env
         if gpu_id is not None:
@@ -93,10 +129,12 @@ class NVGPUClient:
     def submit_task_in_script_dir(
         self,
         script_path: str,
-        task_type: str = "functional",
-        args: Optional[List[str]] = None,
-        env: Optional[Dict[str, str]] = None,
-        gpu_id: Optional[int] = None
+        task_mode: str | None = None,
+        task_type: str | None = None,
+        task_label: str | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        gpu_id: int | None = None
     ) -> str:
         """Submit task with work_dir automatically set to script's directory.
         
@@ -106,7 +144,9 @@ class NVGPUClient:
         
         Args:
             script_path: Path to the Python script to run
-            task_type: Task type ("functional" or "performance")
+            task_mode: Task mode ("exclusive" or "shared"), controls GPU behavior
+            task_type: Business categorization ("functional", "performance", "both")
+            task_label: Specific identification tag
             args: Command line arguments for the script
             env: Environment variables
             gpu_id: Specific GPU ID, or None for auto-assignment
@@ -129,7 +169,9 @@ class NVGPUClient:
         
         return self.submit_task(
             script_path=script_path,
+            task_mode=task_mode,
             task_type=task_type,
+            task_label=task_label,
             work_dir=work_dir,
             args=args,
             env=env,
@@ -157,6 +199,9 @@ class NVGPUClient:
         return TaskResult(
             task_id=data["task_id"],
             status=data["status"],
+            task_mode=data.get("task_mode"),
+            task_type=data.get("task_type"),
+            task_label=data.get("task_label"),
             exit_code=data.get("exit_code"),
             log_file=data.get("log_file"),
             error_message=data.get("error_message"),
@@ -171,7 +216,7 @@ class NVGPUClient:
     def wait_for_task(
         self,
         task_id: str,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         poll_interval: float = 2.0
     ) -> TaskResult:
         """Wait for task to complete.
@@ -210,15 +255,22 @@ class NVGPUClient:
             
         Returns:
             True if cancelled successfully
+            
+        Raises:
+            RuntimeError: If cancellation fails (e.g., task not found, task in wrong state)
         """
         response = self.session.post(
             f"{self.base_url}/tasks/{task_id}/cancel",
             params={"force": force},
             timeout=10
         )
-        return response.status_code == 200
+        
+        if response.status_code != 200:
+            raise RuntimeError(f"Failed to cancel task: {response.text}")
+        
+        return True
     
-    def list_tasks(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_tasks(self, status: str | None = None) -> list[dict[str, Any]]:
         """List all tasks.
         
         Args:
@@ -237,7 +289,7 @@ class NVGPUClient:
         
         return response.json()["tasks"]
     
-    def list_gpus(self) -> List[Dict[str, Any]]:
+    def list_gpus(self) -> list[dict[str, Any]]:
         """List all GPUs.
         
         Returns:
@@ -249,7 +301,7 @@ class NVGPUClient:
         
         return response.json()["gpus"]
     
-    def get_gpu(self, gpu_id: int) -> Dict[str, Any]:
+    def get_gpu(self, gpu_id: int) -> dict[str, Any]:
         """Get GPU information.
         
         Args:
@@ -281,19 +333,38 @@ class NVGPUClient:
         )
         return response.status_code == 200
     
-    def set_gpu_mode(self, gpu_id: int, mode: str) -> bool:
+    def set_gpu_mode(self, gpu_id: int, mode: str, manual: bool = True) -> bool:
         """Set GPU mode.
         
         Args:
             gpu_id: GPU ID
             mode: Mode ("exclusive" or "shared")
+            manual: If True, sets as manual override that persists.
+                   If False, just changes current mode (task-driven).
             
         Returns:
             True if successful
         """
         response = self.session.put(
             f"{self.base_url}/gpus/{gpu_id}/mode",
-            json={"mode": mode},
+            json={"mode": mode, "manual": manual},
+            timeout=10
+        )
+        return response.status_code == 200
+    
+    def clear_gpu_manual_mode(self, gpu_id: int) -> bool:
+        """Clear manual mode override for a GPU.
+        
+        This allows the GPU to use task-driven mode switching.
+        
+        Args:
+            gpu_id: GPU ID
+            
+        Returns:
+            True if successful
+        """
+        response = self.session.delete(
+            f"{self.base_url}/gpus/{gpu_id}/mode",
             timeout=10
         )
         return response.status_code == 200
@@ -332,7 +403,7 @@ class NVGPUClient:
         )
         return response.status_code == 200
     
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get server statistics.
         
         Returns:
@@ -399,7 +470,7 @@ class NVGPUClient:
         log_type: str = "summary",
         offset: int = 0,
         limit: int = 102400
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get task log content.
         
         Args:

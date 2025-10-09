@@ -1,7 +1,6 @@
 """GPU configuration loader from YAML file."""
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional
 from dataclasses import dataclass
 
 from logger import setup_logger
@@ -16,8 +15,8 @@ class GPUConfig:
     nvidia_smi_id: int
     cuda_visible_id: int
     name: str
-    uuid: Optional[str] = None
-    memory_gb: Optional[float] = None
+    uuid: str | None = None
+    memory_gb: float | None = None
     enabled: bool = True
     default_mode: str = "shared"
     memory_threshold: float = 0.75
@@ -34,8 +33,8 @@ class GPUConfigLoader:
             config_file: Path to GPU configuration YAML file
         """
         self.config_file = Path(config_file)
-        self.gpu_configs: Dict[int, GPUConfig] = {}
-        self.server_config: Dict = {}
+        self.gpu_configs: dict[int, GPUConfig] = {}
+        self.server_config: dict = {}
     
     def load(self) -> bool:
         """Load GPU configuration from YAML file.
@@ -79,7 +78,7 @@ class GPUConfigLoader:
             for gpu_id, gpu_config in self.gpu_configs.items():
                 logger.info(f"  GPU {gpu_id}: {gpu_config.name} "
                            f"(nvidia-smi={gpu_config.nvidia_smi_id}, "
-                           f"cuda={gpu_config.cuda_visible_id}, "
+                           f"cuda_vis={gpu_config.cuda_visible_id}, "
                            f"enabled={gpu_config.enabled})")
             
             return True
@@ -88,7 +87,7 @@ class GPUConfigLoader:
             logger.error(f"Failed to load GPU configuration: {e}")
             return False
     
-    def get_gpu_config(self, logical_id: int) -> Optional[GPUConfig]:
+    def get_gpu_config(self, logical_id: int) -> GPUConfig | None:
         """Get GPU configuration by logical ID.
         
         Args:
@@ -99,7 +98,7 @@ class GPUConfigLoader:
         """
         return self.gpu_configs.get(logical_id)
     
-    def get_enabled_gpus(self) -> List[GPUConfig]:
+    def get_enabled_gpus(self) -> list[GPUConfig]:
         """Get list of enabled GPUs.
         
         Returns:
@@ -107,7 +106,7 @@ class GPUConfigLoader:
         """
         return [gpu for gpu in self.gpu_configs.values() if gpu.enabled]
     
-    def get_cuda_visible_id(self, logical_id: int) -> Optional[int]:
+    def get_cuda_visible_id(self, logical_id: int) -> int | None:
         """Get CUDA_VISIBLE_DEVICES ID for a logical GPU ID.
         
         Args:
@@ -119,7 +118,7 @@ class GPUConfigLoader:
         gpu_config = self.gpu_configs.get(logical_id)
         return gpu_config.cuda_visible_id if gpu_config else None
     
-    def get_nvidia_smi_id(self, logical_id: int) -> Optional[int]:
+    def get_nvidia_smi_id(self, logical_id: int) -> int | None:
         """Get nvidia-smi ID for a logical GPU ID.
         
         Args:

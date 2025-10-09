@@ -79,17 +79,21 @@ nvgpu/
 
 ## 文档
 
-### 核心文档
-- **[快速入门](docs/QUICKSTART.md)** - 5分钟上手指南
-- **[详细文档](docs/README.md)** - 完整功能说明
-- **[设计架构](docs/DESIGN_ARCHITECTURE.md)** ⭐ - 深入理解GPU模式、任务类型、调度器设计 (English)
-- **[核心概念说明](docs/DESIGN_CORE_CONCEPTS_ZH.md)** ⭐ - GPU模式与任务类型详解 (中文)
+### 📚 核心文档
+- **[快速入门](docs/QUICKSTART.md)** ⭐⭐⭐ - 5分钟上手指南
+- **[文档中心](docs/README.md)** - 完整文档索引
+- **[设计文档](docs/DESIGN.md)** ⭐⭐⭐⭐ - 完整设计说明（强烈推荐）
+- **[变更说明](docs/CHANGES.md)** ⭐⭐⭐ - 版本变更详情
+- **[API参考手册](docs/API_REFERENCE.md)** ⭐⭐⭐ - 完整的API文档
 
-### 配置与参考
-- **[目录结构](docs/DIRECTORY_STRUCTURE.md)** - 文件组织和路径说明
+### 🔧 配置与参考
 - **[GPU配置指南](docs/GPU_CONFIG_GUIDE.md)** - 如何配置GPU资源
-- **[work_dir使用指南](docs/WORK_DIR_GUIDE.md)** - 工作目录功能说明
+- **[工作目录指南](docs/WORK_DIR_GUIDE.md)** - work_dir功能说明
+- **[目录结构](docs/DIRECTORY_STRUCTURE.md)** - 文件组织和路径说明
+
+### 📋 其他
 - **[变更日志](docs/CHANGELOG.md)** - 版本更新记录
+- **[待办事项](docs/TODO.md)** - 开发计划
 
 ## API文档
 

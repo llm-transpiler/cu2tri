@@ -1,14 +1,14 @@
 """REST API server for NVGPU service."""
 from fastapi import FastAPI, HTTPException, Body, Query
 from fastapi.responses import JSONResponse
-from typing import Dict, Any, Optional, List
+from typing import Any
 from pydantic import BaseModel
 
 from gpu_manager import GPUManager
 from task_queue import TaskQueue
 from scheduler import Scheduler
 from models import Task, TaskType, GPUMode, GPUStatus
-from config import config
+from config import config, TaskMode
 from logger import setup_logger
 
 logger = setup_logger("api_server")
@@ -37,6 +37,7 @@ class GPUStatusUpdate(BaseModel):
 
 class GPUModeUpdate(BaseModel):
     mode: str
+    manual: bool = True  # If True, sets as manual override
 
 class GPUMemoryThresholdUpdate(BaseModel):
     threshold: float
@@ -46,20 +47,22 @@ class GPUMaxConcurrentTasksUpdate(BaseModel):
 
 class GPURegister(BaseModel):
     gpu_id: int
-    mode: Optional[str] = None
-    memory_threshold: Optional[float] = None
-    max_concurrent_tasks: Optional[int] = None
+    mode: str | None = None
+    memory_threshold: float | None = None
+    max_concurrent_tasks: int | None = None
 
 class GPUError(BaseModel):
     error_message: str = "Manual error trigger"
 
 class TaskSubmit(BaseModel):
     script_path: str
-    task_type: str = "functional"
+    task_mode: str | None = None  # "exclusive" or "shared" (smart default based on task_type)
+    task_type: str | None = None  # Business categorization ("functional", "performance", "both")
+    task_label: str | None = None  # Specific identification tag (e.g., "xpiler_cuda/add_3_3_256/cuda_vs_triton")
     work_dir: str = "."
-    args: List[str] = []
-    env: Optional[Dict[str, str]] = None
-    gpu_id: Optional[int] = None
+    args: list[str] = []
+    env: dict[str, str] | None = None
+    gpu_id: int | None = None
 
 
 @app.get("/health")
@@ -77,6 +80,8 @@ async def list_gpus():
             {
                 "gpu_id": g.gpu_id,
                 "mode": g.mode.value,
+                "manual_mode": g.manual_mode.value if g.manual_mode else None,
+                "mode_locked_by": g.mode_locked_by,
                 "status": g.status.value,
                 "memory_threshold": g.memory_threshold,
                 "max_concurrent_tasks": g.max_concurrent_tasks,
@@ -100,6 +105,8 @@ async def get_gpu(gpu_id: int):
     return {
         "gpu_id": gpu.gpu_id,
         "mode": gpu.mode.value,
+        "manual_mode": gpu.manual_mode.value if gpu.manual_mode else None,
+        "mode_locked_by": gpu.mode_locked_by,
         "status": gpu.status.value,
         "memory_threshold": gpu.memory_threshold,
         "max_concurrent_tasks": gpu.max_concurrent_tasks,
@@ -125,15 +132,32 @@ async def set_gpu_status(gpu_id: int, data: GPUStatusUpdate):
 
 @app.put("/gpus/{gpu_id}/mode")
 async def set_gpu_mode(gpu_id: int, data: GPUModeUpdate):
-    """Set GPU execution mode."""
+    """Set GPU execution mode.
+    
+    If manual=True, this sets a manual override that persists until cleared.
+    If manual=False, this just changes the current mode (task-driven).
+    """
     try:
         mode = GPUMode(data.mode)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid mode: {data.mode}")
     
-    if gpu_manager.set_gpu_mode(gpu_id, mode):
-        return {"success": True, "gpu_id": gpu_id, "mode": mode.value}
+    if gpu_manager.set_gpu_mode(gpu_id, mode, manual=data.manual):
+        return {
+            "success": True,
+            "gpu_id": gpu_id,
+            "mode": mode.value,
+            "manual": data.manual
+        }
     raise HTTPException(status_code=400, detail="Failed to set GPU mode")
+
+
+@app.delete("/gpus/{gpu_id}/mode")
+async def clear_gpu_manual_mode(gpu_id: int):
+    """Clear manual mode override for a GPU, allowing task-driven mode switching."""
+    if gpu_manager.clear_manual_mode(gpu_id):
+        return {"success": True, "gpu_id": gpu_id, "message": "Manual mode cleared"}
+    raise HTTPException(status_code=400, detail="Failed to clear manual mode")
 
 
 @app.put("/gpus/{gpu_id}/memory_threshold")
@@ -191,21 +215,55 @@ async def clear_severe_error():
 
 @app.post("/tasks")
 async def submit_task(data: TaskSubmit):
-    """Submit a new task."""
-    # Parse task type
+    """Submit a new task.
+    
+    Smart defaults:
+    - task_type="functional" -> task_mode="shared" (if not specified)
+    - task_type="performance" -> task_mode="exclusive" (if not specified)
+    - task_type="both" -> task_mode="exclusive" (if not specified)
+    - No task_type -> task_mode="shared" (safe default)
+    """
+    # Parse task_type
+    task_type = None
+    if data.task_type:
+        try:
+            task_type = TaskType(data.task_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid task_type: {data.task_type}. "
+                              f"Must be 'functional', 'performance', or 'both'")
+    
+    # Determine task_mode with smart defaults based on task_type
+    if data.task_mode is None:
+        # Apply smart defaults based on task_type
+        if task_type == TaskType.FUNCTIONAL:
+            task_mode_str = "shared"
+        elif task_type == TaskType.PERFORMANCE:
+            task_mode_str = "exclusive"
+        elif task_type == TaskType.BOTH:
+            task_mode_str = "exclusive"  # Both includes performance, needs exclusive
+        else:
+            # Safe default when no task_type specified
+            task_mode_str = "shared"
+    else:
+        task_mode_str = data.task_mode
+    
+    # Parse task mode
     try:
-        task_type = TaskType(data.task_type)
+        task_mode = TaskMode(task_mode_str)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid task_type: {data.task_type}")
+        raise HTTPException(status_code=400, detail=f"Invalid task_mode: {task_mode_str}. "
+                          f"Must be 'exclusive' or 'shared'")
     
     # Create task
     task = Task(
+        task_mode=task_mode,
         task_type=task_type,
+        task_label=data.task_label,
         script_path=data.script_path,
         work_dir=data.work_dir,
         args=data.args,
         env=data.env,
-        gpu_id=data.gpu_id,
+        gpu_id=data.gpu_id
     )
     
     # Submit to queue
@@ -229,7 +287,7 @@ async def get_task(task_id: str):
 
 
 @app.get("/tasks")
-async def list_tasks(status: Optional[str] = Query(None)):
+async def list_tasks(status: str | None = Query(None)):
     """List all tasks with optional status filter."""
     task_status = None
     

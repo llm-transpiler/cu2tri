@@ -1,7 +1,6 @@
 """GPU manager for monitoring and managing GPU resources."""
 import threading
 import time
-from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 
 try:
@@ -24,17 +23,32 @@ class GPUManager:
     """Manages GPU resources, monitoring, and status."""
     
     def __init__(self):
-        self.gpus: Dict[int, GPU] = {}
+        self.gpus: dict[int, GPU] = {}
         self.lock = threading.RLock()
-        self.monitor_thread: Optional[threading.Thread] = None
+        self.monitor_thread: threading.Thread | None = None
         self.running = False
         self.nvml_initialized = False
         
         # Severe error handling
         self.severe_error_active = False
-        self.severe_error_time: Optional[datetime] = None
+        self.severe_error_time: datetime | None = None
+        
+        # Dependencies (set after initialization)
+        self.task_queue = None
+        self.task_runner = None
         
         self._initialize_nvml()
+    
+    def set_dependencies(self, task_queue, task_runner):
+        """Set dependencies for advanced error handling.
+        
+        Args:
+            task_queue: TaskQueue instance
+            task_runner: TaskRunner instance
+        """
+        self.task_queue = task_queue
+        self.task_runner = task_runner
+        logger.debug("GPU manager dependencies set")
     
     def _initialize_nvml(self):
         """Initialize NVML for GPU monitoring."""
@@ -97,14 +111,124 @@ class GPUManager:
             logger.info(f"GPU {gpu_id} status changed to {status.value}")
             return True
     
-    def set_gpu_mode(self, gpu_id: int, mode: GPUMode) -> bool:
-        """Set GPU execution mode."""
+    def set_gpu_mode(self, gpu_id: int, mode: GPUMode, manual: bool = True) -> bool:
+        """Set GPU execution mode.
+        
+        Args:
+            gpu_id: GPU ID
+            mode: GPU mode to set
+            manual: If True, sets as manual override. If False, just changes current mode.
+        
+        Returns:
+            True if successful, False otherwise
+        """
         with self.lock:
             if gpu_id not in self.gpus:
                 return False
             
-            self.gpus[gpu_id].mode = mode
-            logger.info(f"GPU {gpu_id} mode changed to {mode.value}")
+            gpu = self.gpus[gpu_id]
+            gpu.mode = mode
+            
+            if manual:
+                gpu.manual_mode = mode
+                logger.info(f"GPU {gpu_id} manual mode set to {mode.value}")
+            else:
+                logger.debug(f"GPU {gpu_id} mode changed to {mode.value} (task-driven)")
+            
+            return True
+    
+    def clear_manual_mode(self, gpu_id: int) -> bool:
+        """Clear manual mode override for a GPU.
+        
+        Args:
+            gpu_id: GPU ID
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        with self.lock:
+            if gpu_id not in self.gpus:
+                return False
+            
+            self.gpus[gpu_id].manual_mode = None
+            logger.info(f"GPU {gpu_id} manual mode cleared")
+            return True
+    
+    def set_gpu_mode_for_task(self, gpu_id: int, task_id: str, task_mode) -> bool:
+        """Set GPU mode based on task requirements.
+        
+        This is called when a task starts running.
+        
+        Args:
+            gpu_id: GPU ID
+            task_id: Task ID
+            task_mode: Task mode (exclusive/shared)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        from config import TaskMode, GPUMode
+        
+        with self.lock:
+            if gpu_id not in self.gpus:
+                return False
+            
+            gpu = self.gpus[gpu_id]
+            
+            # If manual mode is set, respect it (don't change)
+            if gpu.manual_mode:
+                logger.debug(f"GPU {gpu_id} has manual mode {gpu.manual_mode.value}, "
+                           f"not changing for task {task_id[:8]}")
+                return True
+            
+            # Set mode based on task requirement
+            if task_mode == TaskMode.EXCLUSIVE:
+                gpu.mode = GPUMode.EXCLUSIVE
+                gpu.mode_locked_by = task_id
+                logger.info(f"GPU {gpu_id} mode set to EXCLUSIVE for task {task_id[:8]}")
+            else:  # SHARED
+                # Only change to shared if not locked by another task
+                if not gpu.mode_locked_by:
+                    gpu.mode = GPUMode.SHARED
+                    logger.debug(f"GPU {gpu_id} mode set to SHARED for task {task_id[:8]}")
+            
+            return True
+    
+    def restore_gpu_mode_after_task(self, gpu_id: int, task_id: str) -> bool:
+        """Restore GPU mode after a task completes.
+        
+        This is called when a task finishes running.
+        
+        Args:
+            gpu_id: GPU ID
+            task_id: Task ID that just finished
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        from config import GPUMode
+        
+        with self.lock:
+            if gpu_id not in self.gpus:
+                return False
+            
+            gpu = self.gpus[gpu_id]
+            
+            # If this task locked the mode, unlock it
+            if gpu.mode_locked_by == task_id:
+                gpu.mode_locked_by = None
+                logger.debug(f"GPU {gpu_id} mode unlocked by task {task_id[:8]}")
+                
+                # Restore to manual mode if set, otherwise default to shared
+                if gpu.manual_mode:
+                    gpu.mode = gpu.manual_mode
+                    logger.debug(f"GPU {gpu_id} mode restored to manual mode {gpu.manual_mode.value}")
+                else:
+                    # Default to shared if no manual mode and no running tasks
+                    if len(gpu.running_tasks) == 0:
+                        gpu.mode = GPUMode.SHARED
+                        logger.debug(f"GPU {gpu_id} mode restored to SHARED (default)")
+            
             return True
     
     def set_gpu_memory_threshold(self, gpu_id: int, threshold: float) -> bool:
@@ -135,21 +259,28 @@ class GPUManager:
             logger.info(f"GPU {gpu_id} max concurrent tasks set to {max_tasks}")
             return True
     
-    def get_gpu(self, gpu_id: int) -> Optional[GPU]:
+    def get_gpu(self, gpu_id: int) -> GPU | None:
         """Get GPU info."""
         with self.lock:
             return self.gpus.get(gpu_id)
     
-    def list_gpus(self) -> List[GPU]:
+    def list_gpus(self) -> list[GPU]:
         """List all registered GPUs."""
         with self.lock:
             return list(self.gpus.values())
     
-    def find_available_gpu(self, preferred_gpu: Optional[int] = None) -> Optional[int]:
+    def find_available_gpu(self, preferred_gpu: int | None = None, task_mode=None) -> int | None:
         """Find an available GPU for task assignment.
         
         Updates GPU memory usage before checking availability to ensure
         real-time memory information is used for scheduling decisions.
+        
+        Args:
+            preferred_gpu: Preferred GPU ID, or None for any GPU
+            task_mode: Task mode (exclusive/shared) to check compatibility
+        
+        Returns:
+            GPU ID if available, None otherwise
         """
         # Check if in severe error state (outside lock to avoid deadlock with _update_gpu_memory)
         if self.severe_error_active:
@@ -162,7 +293,7 @@ class GPUManager:
             
             with self.lock:
                 gpu = self.gpus.get(preferred_gpu)
-                if gpu and gpu.can_accept_task():
+                if gpu and gpu.can_accept_task(task_mode):
                     return preferred_gpu
             return None
         
@@ -174,10 +305,10 @@ class GPUManager:
         for gpu_id in gpu_ids:
             self._update_gpu_memory(gpu_id)
         
-        # Now check which GPUs can accept tasks
+        # Now check which GPUs can accept tasks with this mode
         with self.lock:
             for gpu_id, gpu in self.gpus.items():
-                if gpu.can_accept_task():
+                if gpu.can_accept_task(task_mode):
                     return gpu_id
         
         return None
@@ -205,7 +336,12 @@ class GPUManager:
             return True
     
     def trigger_severe_error(self, gpu_id: int, error_msg: str):
-        """Trigger severe error state, pausing all tasks."""
+        """Trigger severe error state, kill all running tasks and requeue them.
+        
+        Args:
+            gpu_id: GPU that encountered the error
+            error_msg: Error message
+        """
         with self.lock:
             self.severe_error_active = True
             self.severe_error_time = datetime.now()
@@ -214,8 +350,45 @@ class GPUManager:
                 self.gpus[gpu_id].status = GPUStatus.ERROR
                 self.gpus[gpu_id].error_message = error_msg
                 self.gpus[gpu_id].last_error_time = self.severe_error_time
+                
+                # Get all running tasks on this GPU
+                running_task_ids = list(self.gpus[gpu_id].running_tasks)
+            else:
+                running_task_ids = []
             
-            logger.error(f"SEVERE ERROR on GPU {gpu_id}: {error_msg}. All tasks paused.")
+            logger.error(f"SEVERE ERROR on GPU {gpu_id}: {error_msg}. "
+                        f"Killing {len(running_task_ids)} running tasks.")
+        
+        # Kill and requeue tasks (outside lock to avoid deadlock)
+        if self.task_queue and self.task_runner and running_task_ids:
+            killed_tasks = []
+            for task_id in running_task_ids:
+                task = self.task_queue.get_task(task_id)
+                if task:
+                    # Kill the task process
+                    if self.task_runner.kill_task(task_id):
+                        logger.info(f"Killed task {task_id[:8]} due to severe error")
+                        killed_tasks.append(task)
+                    else:
+                        logger.warning(f"Failed to kill task {task_id[:8]}")
+            
+            # Requeue killed tasks at front (reverse order to maintain original order)
+            for task in reversed(killed_tasks):
+                # Reset task state for requeue
+                task.start_time = None
+                task.end_time = None
+                task.exit_code = None
+                task.error_message = f"Requeued due to GPU {gpu_id} severe error"
+                self.task_queue.push_front(task)
+                logger.info(f"Requeued task {task.task_id[:8]} at front of queue")
+            
+            # Clear running tasks from GPU
+            with self.lock:
+                if gpu_id in self.gpus:
+                    self.gpus[gpu_id].running_tasks.clear()
+                    logger.info(f"Cleared {len(killed_tasks)} tasks from GPU {gpu_id}")
+        
+        logger.error(f"SEVERE ERROR handling complete. System paused for {config.error_pause_duration}s.")
     
     def clear_severe_error(self):
         """Clear severe error state and resume operations."""

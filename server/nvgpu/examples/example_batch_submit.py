@@ -24,24 +24,28 @@ def main():
             "name": "Functional Test 1",
             "script": "/workspace/server/nvgpu/test_scripts/simple_functional_test.py",
             "type": "functional",
+            "mode": "shared",  # Can run concurrently
             "args": []
         },
         {
             "name": "Memory Test",
             "script": "/workspace/server/nvgpu/test_scripts/memory_stress_test.py",
             "type": "functional",
+            "mode": "shared",  # Can run concurrently
             "args": ["--size", "5000", "--iterations", "5"]
         },
         {
             "name": "Performance Benchmark",
             "script": "/workspace/server/nvgpu/test_scripts/performance_benchmark.py",
             "type": "performance",
+            "mode": "exclusive",  # Needs exclusive GPU access for accurate results
             "args": ["--matmul-size", "2048", "--matmul-iters", "50"]
         },
         {
             "name": "Long Task",
             "script": "/workspace/server/nvgpu/test_scripts/long_running_task.py",
             "type": "functional",
+            "mode": "shared",  # Can run concurrently
             "args": ["--duration", "30", "--report-interval", "5"]
         }
     ]
@@ -49,10 +53,12 @@ def main():
     # Submit all tasks
     task_ids = []
     for task in tasks:
-        print(f"Submitting: {task['name']}")
+        # v2.5: use task_type with smart defaults
+        task_type = task.get("type", "functional")
+        print(f"Submitting: {task['name']} (type={task_type})")
         task_id = client.submit_task(
             script_path=task["script"],
-            task_type=task["type"],
+            task_type=task_type,  # v2.5: smart defaults
             args=task["args"]
         )
         task_ids.append((task["name"], task_id))

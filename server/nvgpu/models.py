@@ -1,35 +1,66 @@
 """Data models for NVGPU server."""
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any
 import uuid
 
-from config import GPUMode, GPUStatus, TaskType, TaskStatus
+from config import GPUMode, GPUStatus, TaskType, TaskMode, TaskStatus
 
 
 @dataclass
 class GPU:
     """GPU resource representation."""
     gpu_id: int
-    mode: GPUMode = GPUMode.SHARED
+    mode: GPUMode = GPUMode.SHARED  # Current mode (dynamic, task-driven)
     status: GPUStatus = GPUStatus.ONLINE
     memory_threshold: float = 0.75
     max_concurrent_tasks: int = 3  # Maximum concurrent tasks in shared mode
     current_memory_usage: float = 0.0
     running_tasks: list[str] = field(default_factory=list)
-    error_message: Optional[str] = None
-    last_error_time: Optional[datetime] = None
+    error_message: str | None = None
+    last_error_time: datetime | None = None
     
-    def can_accept_task(self) -> bool:
-        """Check if GPU can accept a new task."""
+    # Mode management (new)
+    manual_mode: GPUMode | None = None  # Manual mode override (if set)
+    mode_locked_by: str | None = None   # Task ID that locked the mode (exclusive tasks)
+    
+    def can_accept_task(self, task_mode: TaskMode | None = None) -> bool:
+        """Check if GPU can accept a new task.
+        
+        Args:
+            task_mode: Optional task mode to check compatibility.
+                      If None, checks based on current GPU mode.
+        
+        Returns:
+            True if GPU can accept the task, False otherwise.
+        """
         if self.status != GPUStatus.ONLINE:
             return False
         
-        if self.mode == GPUMode.EXCLUSIVE:
+        # If manual mode is set, it takes precedence
+        effective_mode = self.manual_mode if self.manual_mode else self.mode
+        
+        # If task requires exclusive access
+        if task_mode == TaskMode.EXCLUSIVE:
+            # Need GPU to be completely free
+            return len(self.running_tasks) == 0
+        
+        # If task can share
+        if task_mode == TaskMode.SHARED:
+            # Cannot share if GPU is in exclusive mode and has running tasks
+            # This applies to both manual exclusive mode and task-driven exclusive mode
+            if effective_mode == GPUMode.EXCLUSIVE and len(self.running_tasks) > 0:
+                return False
+            # Check task count and memory constraints
+            if len(self.running_tasks) >= self.max_concurrent_tasks:
+                return False
+            return self.current_memory_usage < self.memory_threshold
+        
+        # Backward compatibility: if no task_mode specified, check current mode
+        if effective_mode == GPUMode.EXCLUSIVE:
             return len(self.running_tasks) == 0
         
         # Shared mode: check both task count and memory threshold
-        # Task count check is important because tasks may not use GPU memory immediately
         if len(self.running_tasks) >= self.max_concurrent_tasks:
             return False
         
@@ -44,33 +75,35 @@ class GPU:
 class Task:
     """Task representation."""
     task_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    task_type: TaskType = TaskType.FUNCTIONAL
+    task_mode: TaskMode = TaskMode.SHARED  # Controls GPU behavior (exclusive/shared)
+    task_type: TaskType | None = None  # Business categorization (functional/performance/both)
+    task_label: str | None = None  # Specific identification tag (e.g., "xpiler_cuda/add_3_3_256/cuda_vs_triton")
     script_path: str = ""
     work_dir: str = "."
     args: list[str] = field(default_factory=list)
-    env: Optional[Dict[str, str]] = None
+    env: dict[str, str] | None = None
     
-    gpu_id: Optional[int] = None  # Specific GPU, or None for auto-assign
+    gpu_id: int | None = None  # Specific GPU, or None for auto-assign
     status: TaskStatus = TaskStatus.PENDING
     
     # Execution info
-    assigned_gpu: Optional[int] = None
+    assigned_gpu: int | None = None
     submit_time: datetime = field(default_factory=datetime.now)
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
     
     # Results
-    exit_code: Optional[int] = None
-    log_file: Optional[str] = None
-    error_message: Optional[str] = None
+    exit_code: int | None = None
+    log_file: str | None = None
+    error_message: str | None = None
     stdout_size: int = 0  # Size of stdout in bytes
     stderr_size: int = 0  # Size of stderr in bytes
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert task to dictionary."""
-        return {
+        result = {
             "task_id": self.task_id,
-            "task_type": self.task_type.value,
+            "task_mode": self.task_mode.value,
             "script_path": self.script_path,
             "work_dir": self.work_dir,
             "args": self.args,
@@ -86,4 +119,14 @@ class Task:
             "stdout_size": self.stdout_size,
             "stderr_size": self.stderr_size,
         }
+        
+        # Only include task_type if it's set
+        if self.task_type is not None:
+            result["task_type"] = self.task_type.value
+        
+        # Only include task_label if it's set
+        if self.task_label is not None:
+            result["task_label"] = self.task_label
+        
+        return result
 

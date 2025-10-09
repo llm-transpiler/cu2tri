@@ -4,7 +4,6 @@ import argparse
 import signal
 import sys
 from pathlib import Path
-from typing import Optional
 from datetime import datetime
 
 from config import config, GPUMode
@@ -32,9 +31,9 @@ logger = setup_logger("main", log_file=log_file, history_log_file=history_log_fi
 class NVGPUServer:
     """Main NVGPU server class."""
     
-    def __init__(self, gpu_config_file: Optional[str] = None, 
-                 log_file_path: Optional[str] = None, 
-                 history_log_file_path: Optional[str] = None):
+    def __init__(self, gpu_config_file: str | None = None, 
+                 log_file_path: str | None = None, 
+                 history_log_file_path: str | None = None):
         """Initialize server.
         
         Args:
@@ -93,6 +92,10 @@ class NVGPUServer:
         self.gpu_manager = GPUManager()
         self.task_queue = TaskQueue()
         self.task_runner = TaskRunner()
+        
+        # Set dependencies for advanced error handling
+        self.gpu_manager.set_dependencies(self.task_queue, self.task_runner)
+        
         self.scheduler = Scheduler(self.gpu_manager, self.task_queue, self.task_runner)
     
     def start(self):

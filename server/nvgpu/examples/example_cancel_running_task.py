@@ -35,13 +35,17 @@ def main():
     # Wait a moment to ensure it's queued/running
     time.sleep(0.5)
     
-    # Try normal cancel
-    if client.cancel_task(task_id, force=False):
+    # Try normal cancel (Note: scheduler may start task very quickly)
+    try:
+        client.cancel_task(task_id, force=False)
         print("  ✓ Task cancelled (normal)\n")
-    else:
-        print("  ✗ Normal cancel failed (task may be running)\n")
+    except RuntimeError as e:
+        print("  ✗ Normal cancel failed (task already running - scheduler is fast!)\n")
         # Clean up with force cancel
-        client.cancel_task(task_id, force=True)
+        try:
+            client.cancel_task(task_id, force=True)
+        except:
+            pass  # Task may have already finished
     
     # Test 2: Force cancel a running task
     print("Test 2: Force-cancelling a running task...")
@@ -60,7 +64,8 @@ def main():
     
     if result.status == "running":
         print("  Attempting force cancel...")
-        if client.cancel_task(task_id, force=True):
+        try:
+            client.cancel_task(task_id, force=True)
             print("  ✓ Running task force-cancelled successfully")
             
             # Verify cancellation
@@ -68,12 +73,15 @@ def main():
             result = client.get_task(task_id)
             print(f"  Final status: {result.status}")
             print(f"  Error message: {result.error_message}\n")
-        else:
-            print("  ✗ Force cancel failed\n")
+        except RuntimeError as e:
+            print(f"  ✗ Force cancel failed: {e}\n")
     else:
         print(f"  Task is not running (status: {result.status}), skipping\n")
         if result.status == "queued":
-            client.cancel_task(task_id, force=False)
+            try:
+                client.cancel_task(task_id, force=False)
+            except:
+                pass
     
     # Test 3: Try to force cancel a task that doesn't exist
     print("Test 3: Cancelling non-existent task...")
@@ -102,8 +110,11 @@ def main():
     print("  Cancelling all tasks...")
     cancelled_count = 0
     for task_id in task_ids:
-        if client.cancel_task(task_id, force=True):
+        try:
+            client.cancel_task(task_id, force=True)
             cancelled_count += 1
+        except RuntimeError:
+            pass  # Task may have already finished
     
     print(f"  ✓ Cancelled {cancelled_count}/{len(task_ids)} tasks\n")
     

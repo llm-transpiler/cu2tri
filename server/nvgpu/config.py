@@ -1,7 +1,6 @@
 """Configuration for NVGPU server."""
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class GPUMode(str, Enum):
@@ -11,9 +10,16 @@ class GPUMode(str, Enum):
 
 
 class TaskType(str, Enum):
-    """Task type."""
+    """Task type for business categorization."""
     FUNCTIONAL = "functional"  # Functional test
     PERFORMANCE = "performance"  # Performance test
+    BOTH = "both"  # Both functional and performance
+
+
+class TaskMode(str, Enum):
+    """Task execution mode (controls GPU behavior)."""
+    EXCLUSIVE = "exclusive"  # Task requires exclusive GPU access
+    SHARED = "shared"        # Task can share GPU with others
 
 
 class TaskStatus(str, Enum):
@@ -39,8 +45,8 @@ class ServerConfig:
     """Server configuration."""
     host: str = "0.0.0.0"
     port: int = 8080
-    log_file: Optional[str] = "logs/nvgpu_server.log"
-    log_level: str = "INFO"
+    log_file: str | None = "logs/nvgpu_server.log"
+    log_level: str = "DEBUG"
     
     # Default GPU settings
     default_gpu_mode: GPUMode = GPUMode.SHARED

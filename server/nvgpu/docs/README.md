@@ -1,254 +1,189 @@
-# NVGPU Server
+# NVGPU Server 文档中心
 
-一个专业的 GPU 任务调度服务器，用于管理和执行基于 Python 的 GPU 工作负载。
+**GPU 任务调度服务器完整文档**
 
-## 特性
+---
 
-- **GPU 管理**: 支持多个 GPU，每个 GPU 可独立配置
-- **两种 GPU 模式**:
-  - `exclusive`: 每次只能运行一个任务（独占访问）
-  - `shared`: 多个并发任务，双重控制：
-    - 最大并发任务数限制（默认：3）
-    - 显存阈值限制（默认：75%）
-- **任务类型**:
-  - `functional`: 功能验证和测试
-  - `performance`: 完整性能测试和基准测试
-- **严重错误处理**: GPU 错误时自动暂停并延迟处理
-- **任务调度**: 经典操作系统风格的 FIFO 调度，每个 GPU 有独立队列
-- **GPU 控制**: 通过 API 动态管理在线/离线状态
-- **显存监控**: 实时 GPU 显存使用率跟踪
-- **完整日志**: 所有组件的统一日志系统
+## 🚀 快速导航
 
-## 架构
+### 新手入门
+- **[快速入门](QUICKSTART.md)** ⭐⭐⭐ - 5分钟上手指南
 
-```
-全局任务队列 → 调度器 → GPU 队列 → 任务执行
-                  ↓
-             GPU 管理器（监控显存、状态）
-```
+### 核心文档
+- **[设计文档](DESIGN.md)** ⭐⭐⭐⭐ - 完整设计说明（强烈推荐）
+- **[变更说明](CHANGES.md)** ⭐⭐⭐ - 版本变更详情
+- **[API 参考手册](API_REFERENCE.md)** ⭐⭐⭐ - 完整的 API 文档
 
-## 安装
+### 配置与参考
+- **[GPU 配置指南](GPU_CONFIG_GUIDE.md)** - GPU 资源配置
+- **[工作目录指南](WORK_DIR_GUIDE.md)** - work_dir 功能
+- **[目录结构说明](DIRECTORY_STRUCTURE.md)** - 文件组织
 
-```bash
-cd /workspace/server/nvgpu
-pip install -r requirements.txt
-```
+### 其他
+- **[变更日志](CHANGELOG.md)** - 版本历史
+- **[待办事项](TODO.md)** - 开发计划
 
-## 快速开始
+---
 
-### 1. 启动服务器
+## 📦 核心特性
 
-```bash
-# 使用 GPU 配置文件启动（推荐）
-python main.py
-
-# 或手动指定 GPU
-python main.py --gpus 0 1 2 3
-
-# 使用自定义 GPU 配置文件
-python main.py --gpu-config /path/to/gpu_resource.yml
-
-# 使用自定义设置
-python main.py --gpus 0 1 --gpu-mode shared --memory-threshold 0.8 --port 8080
-```
-
-### 2. 提交任务
-
-```bash
-curl -X POST http://localhost:8080/tasks \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task_type": "functional",
-    "script_path": "/path/to/test_script.py",
-    "work_dir": "/path/to/work/dir",
-    "args": ["--arg1", "value1"],
-    "gpu_id": 0
-  }'
-```
-
-### 3. 检查任务状态
-
-```bash
-curl http://localhost:8080/tasks/{task_id}
-```
-
-## API 参考
-
-### GPU 管理
-
-- `GET /gpus` - 列出所有 GPU
-- `GET /gpus/{gpu_id}` - 获取 GPU 详情
-- `PUT /gpus/{gpu_id}/status` - 设置 GPU 状态（online/offline/maintenance）
-- `PUT /gpus/{gpu_id}/mode` - 设置 GPU 模式（exclusive/shared）
-- `PUT /gpus/{gpu_id}/memory_threshold` - 设置显存阈值
-- `PUT /gpus/{gpu_id}/max_concurrent_tasks` - 设置最大并发任务数
-- `POST /gpus/register` - 注册新 GPU
-- `POST /gpus/{gpu_id}/unregister` - 注销 GPU
-- `POST /gpus/{gpu_id}/error` - 触发严重错误（测试用）
-- `POST /gpus/clear_error` - 清除严重错误状态
-
-### 任务管理
-
-- `POST /tasks` - 提交新任务
-- `GET /tasks` - 列出所有任务（可选 `?status=pending`）
-- `GET /tasks/{task_id}` - 获取任务详情
-- `POST /tasks/{task_id}/cancel` - 取消待处理/排队的任务
-
-### 监控
-
-- `GET /stats` - 获取服务器统计信息
-- `GET /health` - 健康检查
-
-## 配置
-
-### GPU 配置 (gpu_resource.yml)
-
-定义可用的 GPU 及其映射：
-
-```yaml
-gpus:
-  - logical_id: 0
-    nvidia_smi_id: 0
-    cuda_visible_id: 0
-    name: "NVIDIA RTX 6000 Ada Generation"
-    enabled: true
-    default_mode: "shared"
-    memory_threshold: 0.75
-    max_concurrent_tasks: 3  # shared 模式下的最大并发任务数
-```
-
-详细配置指南请参阅 [GPU_CONFIG_GUIDE.md](GPU_CONFIG_GUIDE.md)。  
-并发任务控制详情请参阅 [MAX_CONCURRENT_TASKS.md](MAX_CONCURRENT_TASKS.md)。
-
-### 服务器配置
-
-编辑 `config.py` 或使用命令行参数：
+### 概念清晰分离
 
 ```python
-ServerConfig(
-    host="0.0.0.0",
-    port=8080,
-    default_gpu_mode=GPUMode.SHARED,
-    default_memory_threshold=0.75,
-    default_max_concurrent_tasks=3,  # shared 模式下的最大并发任务数
-    task_timeout=600,  # 秒
-    error_pause_duration=60,  # 1 分钟，自动恢复
-    scheduler_interval=1.0,  # 秒
-    gpu_monitor_interval=5.0,  # 秒
+client.submit_task(
+    "test.py",
+    task_mode="shared",      # GPU 行为控制（智能默认）
+    task_type="functional",  # 业务分类（可选）
+    task_label="xpiler_cuda/add_3_3_256/cuda_vs_triton"  # 具体标识（可选）
 )
 ```
 
-## 任务执行
+#### **task_mode** - GPU 行为控制
+- **用途:** 控制 GPU 如何执行任务
+- **取值:** `"exclusive"` 或 `"shared"`
+- **默认:** 智能默认（基于 `task_type`）
 
-任务作为 Python 子进程执行，具有以下特性：
-- 自动设置 `CUDA_VISIBLE_DEVICES`
-- 捕获标准输出/标准错误
-- 在 `logs/tasks/` 中生成日志文件
-- 超时保护
-- 自定义参数原样传递给脚本
+#### **task_type** - 业务分类
+- **用途:** 业务层面的分类，用于统计和筛选
+- **取值:** `"functional"`, `"performance"`, `"both"`
+- **默认:** `None`（可选）
 
-## 示例
+#### **task_label** - 具体标识
+- **用途:** 具体的测试标签，精确识别
+- **取值:** 任意字符串（建议层次结构）
+- **默认:** `None`（可选）
 
-### 更改 GPU 模式
+---
 
-```bash
-curl -X PUT http://localhost:8080/gpus/0/mode \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "exclusive"}'
+## 💡 快速示例
+
+### 最简单（90% 场景）
+```python
+client.submit_task("test.py")
 ```
 
-### 设置最大并发任务数
-
-```bash
-curl -X PUT http://localhost:8080/gpus/0/max_concurrent_tasks \
-  -H "Content-Type: application/json" \
-  -d '{"max_tasks": 6}'
+### 功能测试
+```python
+client.submit_task("test.py", task_type="functional")
 ```
 
-### 设置为离线维护
-
-```bash
-curl -X PUT http://localhost:8080/gpus/0/status \
-  -H "Content-Type: application/json" \
-  -d '{"status": "offline"}'
+### 性能测试（自动 exclusive）
+```python
+client.submit_task("benchmark.py", task_type="performance")
 ```
 
-### 提交性能测试
-
-```bash
-curl -X POST http://localhost:8080/tasks \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task_type": "performance",
-    "script_path": "/path/to/benchmark.py",
-    "work_dir": "/path/to/work",
-    "args": ["--iterations", "1000"]
-  }'
+### 完整标识
+```python
+client.submit_task(
+    "test.py",
+    task_type="functional",
+    task_label="xpiler_cuda/add_3_3_256/cuda_vs_triton"
+)
 ```
 
-### 查看统计信息
+---
 
-```bash
-curl http://localhost:8080/stats
+## 📊 智能默认值
+
+```
+task_type="functional"   → task_mode="shared"     ✓
+task_type="performance"  → task_mode="exclusive"  ✓
+task_type="both"         → task_mode="exclusive"  ✓ (包含性能测试)
+task_type=None           → task_mode="shared"     ✓
 ```
 
-## 日志
+---
 
-日志写入到：
-- 服务器日志：`logs/nvgpu_server.log`
-- 任务日志：`logs/tasks/{task_id}.log`
+## 🎯 设计优势
 
-日志格式：`timestamp | component | level | message`
+### 1. 概念清晰
+- **task_mode**: 技术层（GPU 如何执行）
+- **task_type**: 业务层（测试分类）
+- **task_label**: 标识层（精确识别）
 
-## 错误处理
+### 2. 灵活性强
+- 所有参数可选
+- 智能默认减少输入
+- 按需指定任何参数
 
-当检测到严重的 GPU 错误时：
-1. GPU 状态变为 `ERROR`
-2. 所有任务调度暂停
-3. 现有任务继续完成
-4. **60 秒后自动恢复**（可配置）
-5. 也可通过 `/gpus/clear_error` 端点手动清除
+### 3. 易用性好
+- 90% 场景 1 个参数
+- 5% 场景 2 个参数
+- 3% 场景 3 个参数
 
-## 最佳实践
+### 4. 可扩展
+- `task_type` 可添加新类型
+- `task_label` 支持任意字符串
+- 不破坏现有代码
 
-1. **共享 GPU 设置**：使用 `shared` 模式，75% 阈值以获得最佳吞吐量
-2. **独占 GPU 任务**：对内存密集型工作负载使用 `exclusive` 模式
-3. **监控**：定期检查 `/stats` 以发现队列积压
-4. **维护**：硬件维护前将 GPU 设置为 `offline`
-5. **错误恢复**：清除严重错误前先查看日志
+---
 
-## 相关文档
+## 🗂️ 文档结构
 
-### 深入理解系统设计
+```
+docs/
+├── README.md                   # 本文件 - 文档索引
+├── QUICKSTART.md              # 快速入门
+├── DESIGN.md                  # 设计文档 ⭐⭐⭐⭐
+├── CHANGES.md                 # 变更说明
+├── API_REFERENCE.md           # API 参考 ⭐⭐⭐
+├── GPU_CONFIG_GUIDE.md        # GPU 配置指南
+├── WORK_DIR_GUIDE.md          # 工作目录指南
+├── DIRECTORY_STRUCTURE.md     # 目录结构说明
+├── CHANGELOG.md               # 变更日志
+└── TODO.md                    # 待办事项
+```
 
-如果你对以下问题有疑惑，请阅读设计文档：
+---
 
-- **GPU模式是什么时候切换的？** 🤔
-- **为什么要区分exclusive和shared模式？** 🤔
-- **任务类型(functional/performance)有什么作用？** 🤔
-- **调度器如何决定任务分配？** 🤔
-- **模式切换时正在运行的任务会怎样？** 🤔
+## 📚 推荐阅读路径
 
-推荐阅读：
-- **[设计架构文档](DESIGN_ARCHITECTURE.md)** ⭐ - 完整的设计逻辑说明（English）
-- **[核心概念说明](DESIGN_CORE_CONCEPTS_ZH.md)** ⭐ - GPU模式与任务类型详解（中文）
+### 新手
+1. [快速入门](QUICKSTART.md) - 5分钟上手
+2. [设计文档](DESIGN.md) - 理解核心概念
+3. [API 参考](API_REFERENCE.md) - 查看详细 API
 
-### 其他文档
+### 进阶用户
+1. [GPU 配置指南](GPU_CONFIG_GUIDE.md) - 自定义配置
+2. [工作目录指南](WORK_DIR_GUIDE.md) - 高级功能
+3. [变更说明](CHANGES.md) - 版本变更
 
-- **[快速入门](QUICKSTART.md)** - 5分钟上手指南
-- **[GPU配置指南](GPU_CONFIG_GUIDE.md)** - 配置GPU资源
-- **[目录结构说明](DIRECTORY_STRUCTURE.md)** - 文件组织
-- **[work_dir使用指南](WORK_DIR_GUIDE.md)** - 工作目录功能
-- **[变更日志](CHANGELOG.md)** - 版本更新记录
+### 开发者
+1. [目录结构说明](DIRECTORY_STRUCTURE.md) - 代码组织
+2. [变更日志](CHANGELOG.md) - 版本历史
+3. [待办事项](TODO.md) - 开发计划
 
-### 示例代码
+---
 
-- **[examples/](../examples/)** - 各种使用场景的示例代码
-  - `example_mode_switching.py` ⭐ - GPU模式切换示例（推荐）
-  - `example_basic.py` - 基础用法
-  - `example_concurrent_tasks.py` - 并发任务
-  - 以及更多...
+## 🎓 示例代码
 
-## 许可证
+完整示例请参考：
+- `/workspace/server/nvgpu/examples/` - Python 示例
+- 各文档中的代码片段
 
-内部使用。
+---
+
+## 💬 获取帮助
+
+遇到问题？
+1. 查看 [快速入门](QUICKSTART.md)
+2. 阅读 [API 参考](API_REFERENCE_ZH.md)
+3. 检查 [变更日志](CHANGELOG.md)
+
+---
+
+## 🔄 版本历史
+
+- **v2.5** (2025-01) - 概念分离设计 + 智能默认值
+- **v2.0** (2024-12) - 任务驱动 GPU 模式
+- **v1.3** (2024-11) - 日志系统增强
+- **v1.2** (2024-11) - 并发控制优化
+- **v1.0** (2024-10) - 初始版本
+
+完整历史请参考 [变更日志](CHANGELOG.md)。
+
+---
+
+**最后更新:** 2025-01-15  
+**版本:** v2.5  
+**返回:** [主 README](../README.md)
