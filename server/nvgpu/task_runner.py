@@ -233,13 +233,25 @@ class TaskRunner:
                 f.write(f"GPU: {task.assigned_gpu}\n")
                 f.write(f"Command: {' '.join(cmd)}\n")
                 f.write(f"\n=== Timing ===\n")
-                f.write(f"Submit Time: {task.submit_time}\n")
-                f.write(f"Start Time: {task.start_time}\n")
-                f.write(f"End Time: {task.end_time}\n")
+                f.write(f"Submit Time:  {task.submit_time}\n")
+                if task.queued_time:
+                    f.write(f"Queued Time:  {task.queued_time}\n")
+                if task.start_time:
+                    f.write(f"Start Time:   {task.start_time}\n")
+                if task.end_time:
+                    f.write(f"End Time:     {task.end_time}\n")
                 
-                if task.start_time and task.end_time:
-                    duration = (task.end_time - task.start_time).total_seconds()
-                    f.write(f"Duration: {duration:.2f}s\n")
+                f.write(f"\n=== Timing Breakdown (milliseconds) ===\n")
+                if task.pending_time_ms is not None:
+                    f.write(f"Pending Time:     {task.pending_time_ms:>10.2f} ms  (submit → GPU assignment)\n")
+                if task.queue_time_ms is not None:
+                    f.write(f"Queue Time:       {task.queue_time_ms:>10.2f} ms  (GPU assignment → execution start)\n")
+                if task.waiting_time_ms is not None:
+                    f.write(f"Total Waiting:    {task.waiting_time_ms:>10.2f} ms  (submit → execution start)\n")
+                if task.execution_time_ms is not None:
+                    f.write(f"Execution Time:   {task.execution_time_ms:>10.2f} ms  (execution start → end)\n")
+                if task.total_time_ms is not None:
+                    f.write(f"Total Time:       {task.total_time_ms:>10.2f} ms  (submit → end)\n")
                 
                 f.write(f"\n=== Result ===\n")
                 if timeout:

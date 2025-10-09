@@ -287,4 +287,9 @@ root@ubuntu-ThinkStation-P520:/workspace# pgrep -f "python main.py"
 '''
 '''
 grep 的 -v 选项：这个选项的意思是 --invert-match，也就是反向查找。它会显示出所有不包含指定字符串的行。
+这个终端不能断。ctrl+d或者关掉这个进程也会消失
+'''
+
+'''
+cd /workspace/server/nvgpu && nohup python main.py > /tmp/nvgpu_server_timing_test.log 2>&1 & echo "Server PID: $!"
 '''

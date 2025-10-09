@@ -37,17 +37,17 @@ nvgpu/
 │   └── gpu_resource.yml     # GPU资源配置
 │
 ├── docs/                    # 文档
+│   ├── API_REFERENCE_ZH.md  # 中文API参考手册
+│   ├── API_REFERENCE.md     # 英文API参考手册
+│   ├── README.md            # 文档中心
 │   ├── QUICKSTART.md        # 快速入门指南
-│   ├── README.md            # 详细说明文档
-│   ├── GPU_CONFIG_GUIDE.md  # GPU配置指南
-│   ├── LOG_HANDLING.md      # 日志处理文档
-│   ├── TASK_CANCELLATION.md # 任务取消文档
-│   ├── MAX_CONCURRENT_TASKS.md  # 并发任务限制
+│   ├── DESIGN.md            # 完整设计文档
+│   ├── CHANGES.md           # 版本变更说明
 │   ├── CHANGELOG.md         # 变更日志
-│   ├── CHANGELOG_v1.2.md    # v1.2版本变更
-│   ├── UPDATE_NOTES.md      # 更新说明
-│   ├── UPDATES_v1.3.md      # v1.3版本更新
-│   └── PROJECT_SUMMARY.md   # 项目总结
+│   ├── GPU_CONFIG_GUIDE.md  # GPU配置指南
+│   ├── WORK_DIR_GUIDE.md    # 工作目录指南
+│   ├── DIRECTORY_STRUCTURE.md  # 目录结构说明
+│   └── TODO.md              # 待办事项
 │
 ├── scripts/                 # 工具脚本
 │   ├── test_api.sh          # API测试脚本
@@ -55,20 +55,39 @@ nvgpu/
 │   └── example_test_script.py  # 示例测试脚本
 │
 ├── examples/                # 客户端使用示例
-│   ├── example_basic.py
-│   ├── example_batch_submit.py
-│   ├── example_concurrent_tasks.py
-│   ├── example_custom_env.py
-│   ├── example_error_handling.py
-│   ├── example_gpu_management.py
-│   ├── example_log_handling.py
-│   └── example_cancel_running_task.py
+│   ├── README.md            # 示例说明文档
+│   ├── example_basic.py     # 基础使用示例
+│   ├── example_batch_submit.py  # 批量提交示例
+│   ├── example_concurrent_tasks.py  # 并发任务示例
+│   ├── example_custom_env.py  # 自定义环境变量示例
+│   ├── example_error_handling.py  # 错误处理示例
+│   ├── example_gpu_management.py  # GPU管理示例
+│   ├── example_log_handling.py  # 日志处理示例
+│   ├── example_mode_switching.py  # GPU模式切换示例
+│   ├── example_cancel_running_task.py  # 任务取消示例
+│   ├── example_task_parameters.py  # 任务参数示例（完整）
+│   ├── example_task_parameters_quick.py  # 任务参数示例（快速）
+│   └── README_TASK_PARAMETERS.md  # 任务参数说明
 │
 ├── test_scripts/            # 测试用脚本
 │   ├── simple_functional_test.py
 │   ├── failing_test.py
 │   ├── long_running_task.py
 │   └── gpu_memory_intensive.py
+│
+├── tests/                   # 单元测试（108个测试用例，100%通过）
+│   ├── README.md            # 测试套件说明
+│   ├── conftest.py          # Pytest fixtures
+│   ├── pytest.ini           # Pytest配置
+│   ├── requirements-test.txt  # 测试依赖
+│   ├── run_tests.sh         # 测试运行脚本
+│   ├── test_models.py       # 数据模型测试（15个）
+│   ├── test_task_queue.py   # 任务队列测试（24个）
+│   ├── test_gpu_manager.py  # GPU管理器测试（23个）
+│   ├── test_scheduler.py    # 调度器测试（12个）
+│   ├── test_client.py       # 客户端测试（17个）
+│   ├── test_integration.py  # 集成测试（17个）
+│   └── TEST_COVERAGE.md     # 测试覆盖率报告
 │
 └── logs/                    # 日志目录（运行时创建）
     ├── nvgpu_server.log     # 历史日志（追加）

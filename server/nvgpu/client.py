@@ -17,11 +17,18 @@ class TaskResult:
     log_file: str | None = None
     error_message: str | None = None
     submit_time: str | None = None
+    queued_time: str | None = None  # Time when assigned to GPU queue
     start_time: str | None = None
     end_time: str | None = None
     stdout_size: int = 0
     stderr_size: int = 0
     gpu_id: int | None = None
+    # Computed timing fields (in milliseconds, 2 decimal places)
+    pending_time_ms: float | None = None
+    queue_time_ms: float | None = None
+    waiting_time_ms: float | None = None
+    execution_time_ms: float | None = None
+    total_time_ms: float | None = None
 
 
 class NVGPUClient:
@@ -206,11 +213,17 @@ class NVGPUClient:
             log_file=data.get("log_file"),
             error_message=data.get("error_message"),
             submit_time=data.get("submit_time"),
+            queued_time=data.get("queued_time"),
             start_time=data.get("start_time"),
             end_time=data.get("end_time"),
             stdout_size=data.get("stdout_size", 0),
             stderr_size=data.get("stderr_size", 0),
             gpu_id=data.get("assigned_gpu"),
+            pending_time_ms=data.get("pending_time_ms"),
+            queue_time_ms=data.get("queue_time_ms"),
+            waiting_time_ms=data.get("waiting_time_ms"),
+            execution_time_ms=data.get("execution_time_ms"),
+            total_time_ms=data.get("total_time_ms"),
         )
     
     def wait_for_task(

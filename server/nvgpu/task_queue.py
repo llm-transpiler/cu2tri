@@ -77,6 +77,7 @@ class TaskQueue:
             
             task.status = TaskStatus.QUEUED
             task.assigned_gpu = gpu_id
+            task.queued_time = datetime.now()  # Record when task was assigned to GPU queue
             self.gpu_queues[gpu_id].append(task)
             
             logger.info(f"Task {task.task_id} queued for GPU {gpu_id}")

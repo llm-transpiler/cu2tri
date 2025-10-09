@@ -29,6 +29,26 @@ python examples/example_basic.py
 
 ---
 
+#### ⏱️ `example_task_timing.py` - 任务计时分析 ⭐ 新增
+分析任务的详细时间开销，了解性能瓶颈。
+```bash
+python examples/example_task_timing.py
+```
+**演示：**
+- 详细时间字段（pending, queue, waiting, execution, total）
+- 时间线可视化
+- 性能瓶颈分析
+- 执行效率计算
+
+**时间字段说明（毫秒，2位小数）：**
+- `pending_time_ms`: 提交→分配GPU
+- `queue_time_ms`: 分配GPU→开始执行
+- `waiting_time_ms`: 总等待时间
+- `execution_time_ms`: 实际执行时间
+- `total_time_ms`: 端到端总时间
+
+---
+
 #### 📦 `example_batch_submit.py` - 批量提交
 批量提交多个任务并监控进度。
 ```bash

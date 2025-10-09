@@ -89,6 +89,7 @@ class Task:
     # Execution info
     assigned_gpu: int | None = None
     submit_time: datetime = field(default_factory=datetime.now)
+    queued_time: datetime | None = None  # Time when assigned to GPU queue
     start_time: datetime | None = None
     end_time: datetime | None = None
     
@@ -98,6 +99,41 @@ class Task:
     error_message: str | None = None
     stdout_size: int = 0  # Size of stdout in bytes
     stderr_size: int = 0  # Size of stderr in bytes
+    
+    @property
+    def pending_time_ms(self) -> float | None:
+        """Time spent in PENDING state (submit to GPU assignment), in milliseconds with 2 decimal places."""
+        if self.queued_time:
+            return round((self.queued_time - self.submit_time).total_seconds() * 1000, 2)
+        return None
+    
+    @property
+    def queue_time_ms(self) -> float | None:
+        """Time spent in QUEUED state (GPU assignment to execution start), in milliseconds with 2 decimal places."""
+        if self.queued_time and self.start_time:
+            return round((self.start_time - self.queued_time).total_seconds() * 1000, 2)
+        return None
+    
+    @property
+    def waiting_time_ms(self) -> float | None:
+        """Total waiting time (submit to execution start), in milliseconds with 2 decimal places."""
+        if self.start_time:
+            return round((self.start_time - self.submit_time).total_seconds() * 1000, 2)
+        return None
+    
+    @property
+    def execution_time_ms(self) -> float | None:
+        """Execution time (start to end), in milliseconds with 2 decimal places."""
+        if self.start_time and self.end_time:
+            return round((self.end_time - self.start_time).total_seconds() * 1000, 2)
+        return None
+    
+    @property
+    def total_time_ms(self) -> float | None:
+        """Total time (submit to end), in milliseconds with 2 decimal places."""
+        if self.end_time:
+            return round((self.end_time - self.submit_time).total_seconds() * 1000, 2)
+        return None
     
     def to_dict(self) -> dict[str, Any]:
         """Convert task to dictionary."""
@@ -111,6 +147,7 @@ class Task:
             "assigned_gpu": self.assigned_gpu,
             "status": self.status.value,
             "submit_time": self.submit_time.isoformat() if self.submit_time else None,
+            "queued_time": self.queued_time.isoformat() if self.queued_time else None,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "end_time": self.end_time.isoformat() if self.end_time else None,
             "exit_code": self.exit_code,
@@ -127,6 +164,13 @@ class Task:
         # Only include task_label if it's set
         if self.task_label is not None:
             result["task_label"] = self.task_label
+        
+        # Add computed timing fields (in milliseconds)
+        result["pending_time_ms"] = self.pending_time_ms
+        result["queue_time_ms"] = self.queue_time_ms
+        result["waiting_time_ms"] = self.waiting_time_ms
+        result["execution_time_ms"] = self.execution_time_ms
+        result["total_time_ms"] = self.total_time_ms
         
         return result
 
