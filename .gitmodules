@@ -37,3 +37,6 @@
 [submodule "third_party/Liger-Kernel"]
 	path = third_party/Liger-Kernel
 	url = https://github.com/linkedin/Liger-Kernel.git
+[submodule "third_party/tvm"]
+	path = third_party/tvm
+	url = https://github.com/apache/tvm
