@@ -1,6 +1,11 @@
 from enum import Enum
 from logging import Logger
 from openai import OpenAI, AsyncOpenAI
+from utils.util import obj_to_dict as _completion_usage_to_dict
+import os
+import httpx
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 
 def openai_llm_call(client: OpenAI, api_params={}, logger: Logger = None):
@@ -20,12 +25,32 @@ def openai_llm_call(client: OpenAI, api_params={}, logger: Logger = None):
     return resp_content.strip()
 
 
+async def _fetch_openrouter_generation_info(gen_id: str, logger: Logger = None):
+    if not OPENROUTER_API_KEY or not gen_id:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://openrouter.ai/api/v1/generation",
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+                params={"id": gen_id},
+            )
+            resp.raise_for_status()
+            return resp.json().get("data")
+    except Exception:
+        if logger:
+            logger.debug("Failed to fetch OpenRouter generation info", exc_info=True)
+        return None
+
+
 async def async_openai_llm_call(async_client: AsyncOpenAI, api_params={}, logger: Logger = None):
-    """Async version of openai_llm_call. Returns tuple of (content, model_used)."""
+    """Async version of openai_llm_call. Returns tuple of (content, model_used, usage_dict, openrouter_info)."""
     is_stream = api_params.get('stream', False)
     completion = await async_client.chat.completions.create(**api_params)
     resp_content = ""
     model_used = None
+    usage_dict = None
+    gen_id = None
 
     if is_stream:
         # Handle streaming response
@@ -33,17 +58,36 @@ async def async_openai_llm_call(async_client: AsyncOpenAI, api_params={}, logger
             # Get model from first chunk
             if model_used is None and hasattr(chunk, 'model'):
                 model_used = chunk.model
+            if gen_id is None and hasattr(chunk, 'id'):
+                gen_id = chunk.id
             if chunk.choices and len(chunk.choices) > 0 and chunk.choices[0].delta.content is not None:
                 content = chunk.choices[0].delta.content
                 resp_content += content
+            if hasattr(chunk, 'usage') and chunk.usage is not None:
+                try:
+                    usage_dict = _completion_usage_to_dict(chunk.usage)
+                except Exception:
+                    if logger:
+                        logger.debug("Failed to convert streaming usage to dict", exc_info=True)
     else:
         # Handle non-streaming response
         if not completion.choices or len(completion.choices) == 0:
             raise ValueError("API returned empty choices list")
         resp_content = completion.choices[0].message.content
         model_used = completion.model if hasattr(completion, 'model') else None
+        gen_id = getattr(completion, 'id', None)
+        if hasattr(completion, 'usage') and completion.usage is not None:
+            try:
+                usage_dict = _completion_usage_to_dict(completion.usage)
+            except Exception:
+                if logger:
+                    logger.debug("Failed to convert usage to dict", exc_info=True)
 
-    return resp_content.strip(), model_used
+    openrouter_info = None
+    if gen_id:
+        openrouter_info = await _fetch_openrouter_generation_info(gen_id, logger)
+
+    return resp_content.strip(), model_used, usage_dict, openrouter_info
 
 
 class CallingIdentifier(Enum):
@@ -199,5 +243,3 @@ __all__ = [
     'make_openai_single_message', 'make_openai_message_system',
     'make_openai_message_user', 'make_openai_message_assistant',
 ]
-
-
