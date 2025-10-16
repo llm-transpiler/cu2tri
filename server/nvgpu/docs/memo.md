@@ -1,0 +1,3 @@
+GPUManager所有GPU共用一个，register_gpu中的GPU是只有gpu_id的，这个是GPUConfig的logical_id
+nvmlInit的时候获取的是nvidia-smi差不多的信息，不会管gpu的register相关动作
+manual_mode一般不轻易启用

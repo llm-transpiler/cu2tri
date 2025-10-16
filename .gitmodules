@@ -40,3 +40,6 @@
 [submodule "third_party/tvm"]
 	path = third_party/tvm
 	url = https://github.com/apache/tvm
+[submodule "third_party/quack"]
+	path = third_party/quack
+	url = https://github.com/Dao-AILab/quack.git

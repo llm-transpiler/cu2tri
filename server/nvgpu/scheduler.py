@@ -5,7 +5,6 @@ import time
 from gpu_manager import GPUManager
 from task_queue import TaskQueue
 from task_runner import TaskRunner
-from models import TaskStatus
 from config import config
 from logger import setup_logger
 

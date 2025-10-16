@@ -1,10 +1,20 @@
 """Unified logger configuration for NVGPU server."""
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
+from utils.timezone import get_timezone
 
-def setup_logger(name: str = "nvgpu", log_file: str = None, history_log_file: str = None, 
+
+class TimezoneFormatter(logging.Formatter):
+    """Logging formatter that respects configured timezone."""
+
+    def converter(self, timestamp: float):
+        return datetime.fromtimestamp(timestamp, get_timezone()).timetuple()
+
+
+def setup_logger(name: str = "nvgpu_server", log_file: str = None, history_log_file: str = None,
                  level: int = logging.INFO) -> logging.Logger:
     """Setup a unified logger with console and optional file output.
     
@@ -25,7 +35,7 @@ def setup_logger(name: str = "nvgpu", log_file: str = None, history_log_file: st
     logger.handlers.clear()
     
     # Create formatter with aligned log levels (8 chars wide, left-aligned)
-    formatter = logging.Formatter(
+    formatter = TimezoneFormatter(
         '%(asctime)s | %(name)-15s | %(levelname)-8s | %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )

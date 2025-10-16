@@ -4,7 +4,6 @@ import argparse
 import signal
 import sys
 from pathlib import Path
-from datetime import datetime
 
 from config import config, GPUMode
 from logger import setup_logger
@@ -14,6 +13,7 @@ from task_runner import TaskRunner
 from scheduler import Scheduler
 from api_server import init_app, app
 from gpu_config_loader import GPUConfigLoader
+from utils.timezone import format_timestamp, set_default_timezone
 import uvicorn
 
 # Define NVGPU root directory (main.py's parent directory)
@@ -22,7 +22,8 @@ NVGPU_ROOT = Path(__file__).parent.resolve()
 # Setup dual logging system:
 # 1. Timestamped log for current session
 # 2. History log (appended) for all sessions
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+set_default_timezone(config.timezone)
+timestamp = format_timestamp()
 log_file = str(NVGPU_ROOT / "logs" / f"nvgpu_server_{timestamp}.log")
 history_log_file = str(NVGPU_ROOT / "logs" / "nvgpu_server.log")
 logger = setup_logger("main", log_file=log_file, history_log_file=history_log_file)
@@ -45,16 +46,18 @@ class NVGPUServer:
         if log_file_path:
             self.log_file = log_file_path if Path(log_file_path).is_absolute() else str(NVGPU_ROOT / log_file_path)
         else:
-            self.log_file = str(NVGPU_ROOT / "logs" / f"nvgpu_server_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+            self.log_file = str(NVGPU_ROOT / "logs" / f"nvgpu_server_{format_timestamp()}.log")
         
         if history_log_file_path:
             self.history_log_file = history_log_file_path if Path(history_log_file_path).is_absolute() else str(NVGPU_ROOT / history_log_file_path)
         else:
             self.history_log_file = str(NVGPU_ROOT / "logs" / "nvgpu_server.log")
-        
+
+        self.logger = logger
+
         # Setup logging for all components
         import logging
-        log_level = getattr(logging, config.log_level.upper(), logging.INFO)
+        log_level = getattr(logging, config.log_level.upper(), logging.DEBUG)
         
         # Re-configure loggers for all components with dual logging
         import gpu_manager
@@ -117,7 +120,7 @@ class NVGPUServer:
                     max_concurrent_tasks=gpu_config.max_concurrent_tasks
                 )
                 logger.info(f"  Registered GPU {gpu_config.logical_id}: {gpu_config.name} "
-                           f"(max_tasks={gpu_config.max_concurrent_tasks})")
+                            f"(mode={mode}, max_tasks={gpu_config.max_concurrent_tasks})")
         
         # Start GPU monitoring
         self.gpu_manager.start_monitoring()
@@ -141,6 +144,7 @@ class NVGPUServer:
             "disable_existing_loggers": False,
             "formatters": {
                 "default": {
+                    "()": "server.nvgpu.logger.TimezoneFormatter",
                     "format": "%(asctime)s | %(name)-15s | %(levelname)-8s | %(message)s",
                     "datefmt": "%Y-%m-%d %H:%M:%S"
                 },
@@ -196,7 +200,7 @@ def main():
     parser.add_argument("--port", type=int, default=config.port, help="Server port")
     parser.add_argument("--log-file", default=None, help="Log file path (default: auto-generated with timestamp)")
     parser.add_argument("--log-level", default=config.log_level, help="Log level")
-    parser.add_argument("--gpu-config", default=str(NVGPU_ROOT / "configs" / "gpu_resource.yml"),
+    parser.add_argument("--gpu-config", default=str(NVGPU_ROOT / "configs" / "gpu_resources" / "P250_A6000.yml"),
                        help="GPU resource configuration file (YAML)")
     parser.add_argument("--gpus", type=int, nargs="+", 
                        help="GPU IDs to register at startup (overrides config file)")

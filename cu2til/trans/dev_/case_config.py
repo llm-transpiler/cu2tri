@@ -1,3 +1,7 @@
+from collections import defaultdict
+from pathlib import Path
+
+
 XPILER_ALL_CASES = {
     "add": [
         "add_1_15_64",
@@ -230,6 +234,163 @@ XPILER_ALL_CASES = {
         "sumpool_16_112_112_64_5_5_3_3"
     ]
 }
+
+XPILER_EXTRA_CASES = {
+    "batchnorm": [
+        "batchnorm_128_32_32_32",
+        "batchnorm_16_20_10_128",
+        "batchnorm_16_3_32_32",
+        "batchnorm_1_128_3_3",
+        "batchnorm_1_3_224_224",
+        "batchnorm_1_512_1_1",
+        "batchnorm_3_3_224_224",
+        "batchnorm_4_16_32_32",
+    ],
+    "concat": [
+        "concat_1_128_28_28",
+        "concat_1_256_14_14",
+        "concat_1_512_7_7",
+        "concat_1_64_112_56",
+        "concat_1_64_56_112",
+        "concat_1_64_56_56",
+        "concat_4_32_112_112",
+        "concat_8_768_1_1",
+    ],
+    "dense": [
+        "dense_16_1024_1024",
+        "dense_16_128_128",
+        "dense_16_256_256",
+        "dense_16_512_512",
+        "dense_16_64_64",
+        "dense_32_512_512",
+        "dense_64_768_768",
+        "dense_80_1024_1024",
+    ],
+    "gatemlp": [
+        "gatemlp_16_1024_1024",
+        "gatemlp_16_4096_4096",
+        "gatemlp_16_512_512",
+        "gatemlp_16_768_768",
+        "gatemlp_32_128_128",
+        "gatemlp_32_256_256",
+        "gatemlp_32_512_512",
+        "gatemlp_32_64_64",
+    ],
+    "gather": [
+        "gather_1000_2048_8",
+        "gather_100_32_16",
+        "gather_128_512_3",
+        "gather_2048_64_64",
+        "gather_32_128_32",
+        "gather_50_128_4",
+        "gather_512_64_5",
+        "gather_80_256_10",
+    ],
+    "instancenorm": [
+        "instancenorm_1_128_56_56",
+        "instancenorm_1_1_64_64",
+        "instancenorm_1_256_28_28",
+        "instancenorm_1_3_224_224",
+        "instancenorm_1_512_14_14",
+        "instancenorm_1_512_7_7",
+        "instancenorm_1_64_112_112",
+        "instancenorm_4_3_256_256",
+    ],
+    "max": [
+        "max_128",
+        "max_128_256",
+        "max_16_32",
+        "max_16_32_32",
+        "max_4_8",
+        "max_4_8_32",
+        "max_512_1024",
+        "max_64_128",
+    ],
+    "mean": [
+        "mean_16_128",
+        "mean_16_128_32",
+        "mean_1_64",
+        "mean_32_256",
+        "mean_4_1",
+        "mean_64_512",
+        "mean_8_32",
+        "mean_8_32_64",
+    ],
+    "min": [
+        "min_16_128",
+        "min_2_4_5_64",
+        "min_3_32_3_32",
+        "min_4_32",
+        "min_4_64_64",
+        "min_5_10_20",
+        "min_64",
+        "min_8_16_8",
+    ],
+    "scatter": [
+        "scatter_1_128_28_28",
+        "scatter_1_256_14_14",
+        "scatter_1_512_7_7",
+        "scatter_1_64_112_56",
+        "scatter_1_64_56_112",
+        "scatter_1_64_56_56",
+        "scatter_4_32_112_112",
+        "scatter_8_768_1_1",
+    ],
+    "sin": [
+        "sin_16_512",
+        "sin_1_3_224_224",
+        "sin_2_16_1024",
+        "sin_32_26",
+        "sin_32_64",
+        "sin_64_64_64",
+        "sin_7_1_6_7",
+        "sin_8_16_32_32",
+    ],
+    "sub": [
+        "sub_1_3_224_224",
+        "sub_1_512",
+        "sub_1_64",
+        "sub_2_16_1024",
+        "sub_32_15_64",
+        "sub_32_64",
+        "sub_64_64_64",
+        "sub_8_16_32_32",
+    ],
+    "sum": [
+        "sum_16_128",
+        "sum_16_128_128",
+        "sum_1_64",
+        "sum_32_256",
+        "sum_4_128",
+        "sum_64_512",
+        "sum_8_32",
+        "sum_8_64",
+    ],
+    "transpose": [
+        "transpose_1_3_224_224",
+        "transpose_24_32_48",
+        "transpose_24_36",
+        "transpose_2_32_4_64",
+        "transpose_33_40_5",
+        "transpose_36_16_48",
+        "transpose_36_24_16",
+        "transpose_42_36_55",
+    ],
+}
+
+
+def _merge_case_collections(base_cases, extra_cases):
+    merged = {}
+    for op, cases in base_cases.items():
+        merged_cases = list(dict.fromkeys(cases + extra_cases.get(op, [])))
+        merged[op] = merged_cases
+    for op, cases in extra_cases.items():
+        if op not in merged:
+            merged[op] = list(dict.fromkeys(cases))
+    return merged
+
+
+XPILER_EXTENDED_CASES = _merge_case_collections(XPILER_ALL_CASES, XPILER_EXTRA_CASES)
 LEETCUDA_DYNAMIC_ALL_CASES = {
     "add": [
         "add_f16x8_pack",
@@ -341,6 +502,26 @@ LEETCUDA_DYNAMIC_CASES_2 = {
         "sgemm_wmma_tf32_stage_dsmem"
     ]
 }
+
+def _build_xpiler_extended_cases() -> dict[str, list[str]]:
+    """Generate an operator -> cases mapping by scanning the xpiler case directory."""
+    cases_root = Path(__file__).resolve().parents[2] / "cases" / "xpiler"
+    grouped: defaultdict[str, list[str]] = defaultdict(list)
+
+    if not cases_root.exists():
+        return {}
+
+    for path in sorted(cases_root.iterdir()):
+        if not path.is_dir() or path.name.startswith("_"):
+            continue
+        op = path.name.split("_", 1)[0]
+        grouped[op].append(path.name)
+
+    return {op: sorted(names) for op, names in sorted(grouped.items())}
+
+
+XPILER_EXTENDED_CASES = _build_xpiler_extended_cases()
+
 
 LEETCUDA_DYNAMIC_CASES_1 = {
     "add": [

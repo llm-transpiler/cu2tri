@@ -47,6 +47,7 @@ class ServerConfig:
     port: int = 8080
     log_file: str | None = "logs/nvgpu_server.log"
     log_level: str = "DEBUG"
+    timezone: str = "Asia/Shanghai"
     
     # Default GPU settings
     default_gpu_mode: GPUMode = GPUMode.SHARED

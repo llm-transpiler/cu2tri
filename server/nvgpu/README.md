@@ -147,7 +147,21 @@ print(result.status)
 
 更多示例见 [examples/](examples/) 目录。
 
+## 主机侧计时
+
+- `task_runner.py` 集成了 `profiler.timer.HostTimer`，在 `process.wait` 阶段
+  记录宿主侧耗时，并将结果写入任务日志与 `Task.host_timing_ms` 字段。
+- 日志输出依旧沿用原有 logger，不影响现有时间戳格式。需要更细的
+  GPU/NPU 内核级 profiling 时，可在宿主计时结果的基础上再叠加其它
+  工具。
+
+## 时区设置
+
+- 服务器内部所有时间默认使用 **Asia/Shanghai (UTC+8)**，可通过
+  `config.timezone` 配置项切换到任意 IANA 时区（例如 `Europe/Berlin`）。
+- 日志、任务元数据、API 返回值的时间戳均会带上配置的时区信息，便于
+  与业务侧保持一致。
+
 ## 许可证
 
 [待定]
-

@@ -26,7 +26,7 @@ class GPUConfig:
 class GPUConfigLoader:
     """Load GPU configuration from YAML file."""
     
-    def __init__(self, config_file: str = "configs/gpu_resource.yml"):
+    def __init__(self, config_file: str):
         """Initialize loader.
         
         Args:
@@ -137,4 +137,3 @@ class GPUConfigLoader:
             True if auto-registration is enabled
         """
         return self.server_config.get('auto_register_gpus', True)
-

@@ -5,6 +5,7 @@ from typing import Any
 import uuid
 
 from config import GPUMode, GPUStatus, TaskType, TaskMode, TaskStatus
+from utils.timezone import now, ensure_timezone
 
 
 @dataclass
@@ -88,7 +89,7 @@ class Task:
     
     # Execution info
     assigned_gpu: int | None = None
-    submit_time: datetime = field(default_factory=datetime.now)
+    submit_time: datetime = field(default_factory=now)
     queued_time: datetime | None = None  # Time when assigned to GPU queue
     start_time: datetime | None = None
     end_time: datetime | None = None
@@ -99,6 +100,7 @@ class Task:
     error_message: str | None = None
     stdout_size: int = 0  # Size of stdout in bytes
     stderr_size: int = 0  # Size of stderr in bytes
+    host_timing_ms: dict[str, float] = field(default_factory=dict)
     
     @property
     def pending_time_ms(self) -> float | None:
@@ -137,6 +139,11 @@ class Task:
     
     def to_dict(self) -> dict[str, Any]:
         """Convert task to dictionary."""
+        submit_time = ensure_timezone(self.submit_time) if self.submit_time else None
+        queued_time = ensure_timezone(self.queued_time) if self.queued_time else None
+        start_time = ensure_timezone(self.start_time) if self.start_time else None
+        end_time = ensure_timezone(self.end_time) if self.end_time else None
+
         result = {
             "task_id": self.task_id,
             "task_mode": self.task_mode.value,
@@ -146,10 +153,10 @@ class Task:
             "gpu_id": self.gpu_id,
             "assigned_gpu": self.assigned_gpu,
             "status": self.status.value,
-            "submit_time": self.submit_time.isoformat() if self.submit_time else None,
-            "queued_time": self.queued_time.isoformat() if self.queued_time else None,
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "submit_time": submit_time.isoformat() if submit_time else None,
+            "queued_time": queued_time.isoformat() if queued_time else None,
+            "start_time": start_time.isoformat() if start_time else None,
+            "end_time": end_time.isoformat() if end_time else None,
             "exit_code": self.exit_code,
             "log_file": self.log_file,
             "error_message": self.error_message,
@@ -171,6 +178,7 @@ class Task:
         result["waiting_time_ms"] = self.waiting_time_ms
         result["execution_time_ms"] = self.execution_time_ms
         result["total_time_ms"] = self.total_time_ms
-        
-        return result
+        if self.host_timing_ms:
+            result["host_timing_ms"] = self.host_timing_ms
 
+        return result

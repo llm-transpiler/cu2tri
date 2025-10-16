@@ -1,10 +1,10 @@
 """Task queue management for NVGPU server."""
 import threading
 from collections import deque
-from datetime import datetime
 
 from models import Task, TaskStatus
 from logger import setup_logger
+from utils.timezone import now
 
 logger = setup_logger("task_queue")
 
@@ -77,7 +77,7 @@ class TaskQueue:
             
             task.status = TaskStatus.QUEUED
             task.assigned_gpu = gpu_id
-            task.queued_time = datetime.now()  # Record when task was assigned to GPU queue
+            task.queued_time = now()  # Record when task was assigned to GPU queue
             self.gpu_queues[gpu_id].append(task)
             
             logger.info(f"Task {task.task_id} queued for GPU {gpu_id}")
@@ -153,7 +153,7 @@ class TaskQueue:
                 if task_runner.kill_task(task_id):
                     task.status = TaskStatus.CANCELLED
                     task.error_message = "Cancelled by user (force)"
-                    task.end_time = datetime.now()
+                    task.end_time = now()
                     logger.info(f"Task {task_id} force cancelled")
                     return True
                 else:
@@ -178,4 +178,3 @@ class TaskQueue:
                 "gpu_queues": {gpu_id: len(queue) for gpu_id, queue in self.gpu_queues.items()}
             }
             return stats
-

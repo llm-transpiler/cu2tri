@@ -364,47 +364,46 @@ curl "http://localhost:8080/tasks?status=completed&task_type=performance"
 
 ### 获取任务日志
 
-获取任务的 stdout 或 stderr 日志。
+获取任务的 summary/stdout/stderr 日志。
 
-**端点:** `GET /tasks/{task_id}/logs/{log_type}`
-
-**路径参数:**
-- `log_type`: `stdout` 或 `stderr`
+**端点:** `GET /tasks/{task_id}/log`
 
 **查询参数:**
-- `offset`: 字节偏移量（默认: 0）
-- `limit`: 读取字节数（默认: 全部）
+- `log_type`: 日志类型，`summary`（默认）、`stdout`、`stderr`
+- `offset`: 起始字节偏移（默认: 0，必须 ≥ 0）
+- `limit`: 返回最大字节数（默认: 102400）
 
 **响应:**
 ```json
 {
+  "task_id": "550e8400-...",
   "log_type": "stdout",
+  "log_path": "/workspace/server/nvgpu/logs/tasks/550e8400-....stdout",
   "content": "日志内容...",
-  "size": 1024,
+  "total_size": 8192,
   "offset": 0,
-  "length": 1024
+  "size": 1024,
+  "truncated": true,
+  "has_more": true
 }
 ```
 
 **Python 客户端:**
 ```python
-# 获取全部 stdout
-stdout = client.get_task_log(task_id, "stdout")
-
-# 获取最后 1000 字节
-stdout = client.get_task_log(task_id, "stdout", offset=-1000)
-
-# 便捷方法
+# 获取全部 stdout（自动分块）
 full_log = client.get_full_task_log(task_id, "stdout")
+
+# 按偏移/长度获取片段
+chunk = client.get_task_log(task_id, "stderr", offset=0, limit=1024)
 ```
 
 **curl 命令:**
 ```bash
-# 获取 stdout
-curl http://localhost:8080/tasks/{task_id}/logs/stdout
+# 获取 stdout 片段
+curl "http://localhost:8080/tasks/{task_id}/log?log_type=stdout&offset=0&limit=1024"
 
-# 获取最后 1000 字节
-curl "http://localhost:8080/tasks/{task_id}/logs/stderr?offset=-1000"
+# 获取 summary（默认）
+curl "http://localhost:8080/tasks/{task_id}/log"
 ```
 
 ---
@@ -673,7 +672,7 @@ curl -X PUT http://localhost:8080/gpus/0/max_concurrent_tasks \
 
 **Python 客户端:**
 ```python
-if client.health():
+if client.health_check():
     print("Server is healthy")
 ```
 
@@ -684,33 +683,42 @@ curl http://localhost:8080/health
 
 ---
 
-### 获取服务器状态
+### 获取服务器统计
 
-获取服务器的详细状态信息。
+获取服务器队列与 GPU 的统计信息。
 
-**端点:** `GET /status`
+**端点:** `GET /stats`
 
 **响应:**
 ```json
 {
-  "severe_error_active": false,
-  "pending_tasks": 5,
-  "running_tasks": 3,
-  "completed_tasks": 120,
-  "total_gpus": 2,
-  "online_gpus": 2
+  "queue": {
+    "global_queue_size": 5,
+    "total_tasks": 128,
+    "pending": 5,
+    "queued": 2,
+    "running": 3,
+    "completed": 116,
+    "failed": 2,
+    "gpu_queues": {"0": 1, "1": 1}
+  },
+  "gpus": {
+    "total_gpus": 2,
+    "online_gpus": 2,
+    "severe_error_active": false
+  }
 }
 ```
 
 **Python 客户端:**
 ```python
-status = client.get_status()
-print(f"Pending: {status['pending_tasks']}, Running: {status['running_tasks']}")
+stats = client.get_stats()
+print(f"Pending: {stats['queue']['pending']}, Running: {stats['queue']['running']}")
 ```
 
 **curl 命令:**
 ```bash
-curl http://localhost:8080/status
+curl http://localhost:8080/stats
 ```
 
 ---
@@ -758,7 +766,7 @@ client.clear_severe_error()
 
 **curl 命令:**
 ```bash
-curl -X POST http://localhost:8080/clear_severe_error
+curl -X POST http://localhost:8080/gpus/clear_error
 ```
 
 ---
@@ -777,7 +785,7 @@ from server.nvgpu.client import NVGPUClient
 client = NVGPUClient("http://localhost:8080")
 
 # 健康检查
-if not client.health():
+if not client.health_check():
     raise RuntimeError("Server not available")
 ```
 
