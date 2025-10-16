@@ -7,6 +7,7 @@ from task_queue import TaskQueue
 from task_runner import TaskRunner
 from config import config
 from logger import setup_logger
+from utils.task_refs import format_task_ref
 
 logger = setup_logger("scheduler")
 
@@ -57,10 +58,10 @@ class Scheduler:
             
             # Mark task as running BEFORE creating thread to prevent race condition
             # This ensures subsequent checks in the same scheduling round see the updated state
-            self.gpu_manager.mark_task_running(gpu_id, task.task_id)
+            self.gpu_manager.mark_task_running(gpu_id, task)
             
             # Set GPU mode based on task requirements (task-driven mode switching)
-            self.gpu_manager.set_gpu_mode_for_task(gpu_id, task.task_id, task.task_mode)
+            self.gpu_manager.set_gpu_mode_for_task(gpu_id, task)
             
             # Execute task in a separate thread
             thread = threading.Thread(
@@ -92,7 +93,10 @@ class Scheduler:
                             stderr_content = stderr_path.read_text(encoding='utf-8', errors='replace')
                             if any(err in stderr_content.lower() 
                                   for err in ["cuda error", "gpu error", "out of memory"]):
-                                logger.warning(f"GPU error detected in task {task.task_id}")
+                                logger.warning(
+                                    "GPU error detected in task %s",
+                                    format_task_ref(task, short_id=True),
+                                )
                                 # Could trigger severe error here if needed
                                 # self.gpu_manager.trigger_severe_error(gpu_id, "GPU error in task")
                     except Exception as e:
@@ -102,7 +106,7 @@ class Scheduler:
             self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task.task_id)
             
             # Mark task as completed on GPU
-            self.gpu_manager.mark_task_completed(gpu_id, task.task_id)
+            self.gpu_manager.mark_task_completed(gpu_id, task)
     
     def _scheduler_loop(self):
         """Main scheduler loop."""
@@ -138,4 +142,3 @@ class Scheduler:
         if self.scheduler_thread:
             self.scheduler_thread.join(timeout=5)
         logger.info("Scheduler stopped")
-

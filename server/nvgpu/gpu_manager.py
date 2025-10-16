@@ -9,10 +9,11 @@ try:
 except ImportError:
     NVML_AVAILABLE = False
 
-from models import GPU, GPUStatus, GPUMode
+from models import GPU, GPUStatus, GPUMode, Task
 from config import config
 from logger import setup_logger
 from utils.timezone import now
+from utils.task_refs import format_task_ref
 
 logger = setup_logger("gpu_manager")
 
@@ -164,14 +165,14 @@ class GPUManager:
         """Return number of devices detected via NVML."""
         return self.nvml_device_count
 
-    def set_gpu_mode_for_task(self, gpu_id: int, task_id: str, task_mode) -> bool:
+    def set_gpu_mode_for_task(self, gpu_id: int, task: Task) -> bool:
         """Set GPU mode based on task requirements.
 
         This is called when a task starts running.
 
         Args:
             gpu_id: GPU ID
-            task_id: Task ID
+            task: Task instance
             task_mode: Task mode (exclusive/shared)
 
         Returns:
@@ -187,22 +188,32 @@ class GPUManager:
 
             # If manual mode is set, respect it (don't change)
             if gpu.manual_mode:
-                logger.debug(f"GPU {gpu_id} has manual mode {gpu.manual_mode.value}, "
-                             f"not changing for task {task_id[:8]}")
+                logger.debug(
+                    "GPU %s has manual mode %s, not changing for task %s",
+                    gpu_id,
+                    gpu.manual_mode.value,
+                    format_task_ref(task),
+                )
                 return True
 
             # Set mode based on task requirement
-            if task_mode == TaskMode.EXCLUSIVE:
+            if task.task_mode == TaskMode.EXCLUSIVE:
                 gpu.mode = GPUMode.EXCLUSIVE
-                gpu.mode_locked_by = task_id
+                gpu.mode_locked_by = task.task_id
                 logger.info(
-                    f"GPU {gpu_id} mode set to EXCLUSIVE for task {task_id[:8]}")
+                    "GPU %s mode set to EXCLUSIVE for task %s",
+                    gpu_id,
+                    format_task_ref(task),
+                )
             else:  # SHARED
                 # Only change to shared if not locked by another task
                 if not gpu.mode_locked_by:
                     gpu.mode = GPUMode.SHARED
                     logger.debug(
-                        f"GPU {gpu_id} mode set to SHARED for task {task_id[:8]}")
+                        "GPU %s mode set to SHARED for task %s",
+                        gpu_id,
+                        format_task_ref(task),
+                    )
 
             return True
 
@@ -230,7 +241,10 @@ class GPUManager:
             if gpu.mode_locked_by == task_id:
                 gpu.mode_locked_by = None
                 logger.debug(
-                    f"GPU {gpu_id} mode unlocked by task {task_id[:8]}")
+                    "GPU %s mode unlocked by task %s",
+                    gpu_id,
+                    format_task_ref(task_id),
+                )
 
                 # Restore to manual mode if set, otherwise default to shared
                 if gpu.manual_mode:
@@ -332,26 +346,26 @@ class GPUManager:
 
         return None
 
-    def mark_task_running(self, gpu_id: int, task_id: str) -> bool:
+    def mark_task_running(self, gpu_id: int, task: Task) -> bool:
         """Mark a task as running on a GPU."""
         with self.lock:
             if gpu_id not in self.gpus:
                 return False
 
-            self.gpus[gpu_id].running_tasks.append(task_id)
-            logger.debug(f"Task {task_id} marked running on GPU {gpu_id}")
+            self.gpus[gpu_id].running_tasks.append(task.task_id)
+            logger.debug(f"Task {format_task_ref(task)} running on GPU {gpu_id}")
             return True
 
-    def mark_task_completed(self, gpu_id: int, task_id: str) -> bool:
+    def mark_task_completed(self, gpu_id: int, task: Task) -> bool:
         """Mark a task as completed on a GPU."""
         with self.lock:
             if gpu_id not in self.gpus:
                 return False
 
             gpu = self.gpus[gpu_id]
-            if task_id in gpu.running_tasks:
-                gpu.running_tasks.remove(task_id)
-                logger.debug(f"Task {task_id} completed on GPU {gpu_id}")
+            if task.task_id in gpu.running_tasks:
+                gpu.running_tasks.remove(task.task_id)
+                logger.debug(f"Task {format_task_ref(task)} completed on GPU {gpu_id}")
             return True
 
     def trigger_severe_error(self, gpu_id: int, error_msg: str):
@@ -387,11 +401,15 @@ class GPUManager:
                     # Kill the task process
                     if self.task_runner.kill_task(task_id):
                         logger.info(
-                            f"Killed task {task_id[:8]} due to severe error")
+                            "Killed task %s due to severe error",
+                            format_task_ref(task),
+                        )
                         killed_tasks.append(task)
                     else:
                         logger.warning(
-                            f"Failed to kill task {task_id[:8]}")
+                            "Failed to kill task %s",
+                            format_task_ref(task),
+                        )
 
             # Requeue killed tasks at front (reverse order to maintain original order)
             for task in reversed(killed_tasks):
@@ -402,7 +420,9 @@ class GPUManager:
                 task.error_message = f"Requeued due to GPU {gpu_id} severe error"
                 self.task_queue.push_front(task)
                 logger.info(
-                    f"Requeued task {task.task_id[:8]} at front of queue")
+                    "Requeued task %s at front of queue",
+                    format_task_ref(task),
+                )
 
             # Clear running tasks from GPU
             with self.lock:

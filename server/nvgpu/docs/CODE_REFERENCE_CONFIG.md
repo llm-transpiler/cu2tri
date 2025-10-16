@@ -147,7 +147,7 @@ if task.task_mode == TaskMode.EXCLUSIVE:
     # 需要 GPU 完全空闲
     if gpu.can_accept_task(TaskMode.EXCLUSIVE):
         # 设置 GPU 为独占模式
-        gpu_manager.set_gpu_mode_for_task(gpu_id, task_id, TaskMode.EXCLUSIVE)
+        gpu_manager.set_gpu_mode_for_task(gpu_id, task, TaskMode.EXCLUSIVE)
 ```
 
 **使用场景**:
@@ -588,4 +588,3 @@ def run_task(task: Task, gpu_id: int):
 ---
 
 **下一步**: 阅读 [数据模型详解](CODE_REFERENCE_MODELS.md) 了解如何使用这些枚举定义数据结构。
-

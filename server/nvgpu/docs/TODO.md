@@ -54,15 +54,15 @@ def trigger_severe_error(self, gpu_id: int, error_msg: str):
 ```python
 # scheduler.py Line 66-99
 def _execute_task(self, task, gpu_id: int):
-    self.gpu_manager.mark_task_running(gpu_id, task.task_id)
+    self.gpu_manager.mark_task_running(gpu_id, task)
     # Set GPU mode based on task requirements
-    self.gpu_manager.set_gpu_mode_for_task(gpu_id, task.task_id, task.task_mode)
+    self.gpu_manager.set_gpu_mode_for_task(gpu_id, task, task.task_mode)
     try:
         success = self.task_runner.run_task(task, gpu_id)
     finally:
         # Restore GPU mode after task completes
         self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task.task_id)
-        self.gpu_manager.mark_task_completed(gpu_id, task.task_id)
+        self.gpu_manager.mark_task_completed(gpu_id, task)
 ```
 
 **手动模式接口保留:**

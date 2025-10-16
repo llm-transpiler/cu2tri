@@ -260,7 +260,7 @@ def find_available_gpu(self, preferred_gpu=None, task_mode=None) -> int | None:
 
 ---
 
-#### `set_gpu_mode_for_task(gpu_id, task_id, task_mode) -> bool`
+#### `set_gpu_mode_for_task(gpu_id, task, task_mode) -> bool`
 
 **作用**: 根据任务需求设置 GPU 模式（任务驱动模式切换）
 
@@ -283,7 +283,7 @@ def find_available_gpu(self, preferred_gpu=None, task_mode=None) -> int | None:
 **逻辑详解**:
 
 ```python
-def set_gpu_mode_for_task(self, gpu_id, task_id, task_mode):
+def set_gpu_mode_for_task(self, gpu_id, task, task_mode):
     with self.lock:
         gpu = self.gpus[gpu_id]
         
@@ -562,7 +562,7 @@ def queue_task_for_gpu(self, task: Task, gpu_id: int):
         self.gpu_queues[gpu_id].append(task)
         
         # 4. 记录日志
-        logger.info(f"Task {task.task_id} queued for GPU {gpu_id}")
+    logger.info(f"Task {format_task_ref(task)} queued for GPU {gpu_id}")
 ```
 
 **状态转换**: `PENDING → QUEUED`
@@ -1040,10 +1040,10 @@ def _schedule_round(self):
             continue
         
         # 2.3 标记任务为运行（关键：在主线程中）
-        self.gpu_manager.mark_task_running(gpu_id, task.task_id)
+        self.gpu_manager.mark_task_running(gpu_id, task)
         
         # 2.4 设置 GPU 模式（关键：在主线程中）
-        self.gpu_manager.set_gpu_mode_for_task(gpu_id, task.task_id, task.task_mode)
+        self.gpu_manager.set_gpu_mode_for_task(gpu_id, task, task.task_mode)
         
         # 2.5 创建执行线程
         thread = threading.Thread(
@@ -1127,9 +1127,9 @@ def _execute_task(self, task, gpu_id: int):
     finally:
         # 3. 恢复 GPU 模式（总是执行）
         self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task.task_id)
-        
+
         # 4. 标记任务完成（总是执行）
-        self.gpu_manager.mark_task_completed(gpu_id, task.task_id)
+        self.gpu_manager.mark_task_completed(gpu_id, task)
 ```
 
 **关键点**:
@@ -1387,4 +1387,3 @@ client.cancel_task(task_id, force=True)
 ---
 
 **维护者**: 修改代码后请同步更新此文档
-

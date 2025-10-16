@@ -27,6 +27,7 @@ class TaskResult:
     pending_time_ms: float | None = None
     queue_time_ms: float | None = None
     waiting_time_ms: float | None = None
+    running_time_ms: float | None = None
     execution_time_ms: float | None = None
     total_time_ms: float | None = None
 
@@ -222,6 +223,7 @@ class NVGPUClient:
             pending_time_ms=data.get("pending_time_ms"),
             queue_time_ms=data.get("queue_time_ms"),
             waiting_time_ms=data.get("waiting_time_ms"),
+            running_time_ms=data.get("running_time_ms", data.get("execution_time_ms")),
             execution_time_ms=data.get("execution_time_ms"),
             total_time_ms=data.get("total_time_ms"),
         )
@@ -554,4 +556,3 @@ class NVGPUClient:
             offset += result["size"]
         
         return "".join(content_parts)
-

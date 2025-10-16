@@ -5,6 +5,7 @@ from collections import deque
 from models import Task, TaskStatus
 from logger import setup_logger
 from utils.timezone import now
+from utils.task_refs import format_task_ref
 
 logger = setup_logger("task_queue")
 
@@ -30,11 +31,15 @@ class TaskQueue:
             task.status = TaskStatus.PENDING
             self.tasks[task.task_id] = task
             self.global_queue.append(task)
+            # Start lifecycle timers
+            task.timer.start("total")
+            task.timer.start("waiting")
+            task.timer.start("pending")
             
         # Log with type and label if set
         type_info = f", type={task.task_type.value}" if task.task_type else ""
         label_info = f", label={task.task_label}" if task.task_label else ""
-        logger.info(f"Task {task.task_id} submitted: mode={task.task_mode.value}{type_info}{label_info}, "
+        logger.info(f"Task {format_task_ref(task)} submitted: mode={task.task_mode.value}{type_info}{label_info}, "
                    f"script={task.script_path}, gpu={task.gpu_id}")
         return task.task_id
     
@@ -48,7 +53,8 @@ class TaskQueue:
             task.status = TaskStatus.PENDING
             task.assigned_gpu = None  # Clear assignment
             self.global_queue.appendleft(task)
-            logger.info(f"Task {task.task_id} requeued at front (priority)")
+            task.timer.start("pending")
+            logger.info(f"Task {format_task_ref(task)} requeued at front (priority)")
     
     def get_task(self, task_id: str) -> Task | None:
         """Get task by ID."""
@@ -78,9 +84,15 @@ class TaskQueue:
             task.status = TaskStatus.QUEUED
             task.assigned_gpu = gpu_id
             task.queued_time = now()  # Record when task was assigned to GPU queue
+            
+            # Stop pending timer, start queue timer
+            pending_duration = task.timer.stop("pending")
+            if pending_duration is not None:
+                task.phase_timing_ms["pending"] = pending_duration
+            task.timer.start("queue")
             self.gpu_queues[gpu_id].append(task)
             
-            logger.info(f"Task {task.task_id} queued for GPU {gpu_id}")
+            logger.info(f"Task {format_task_ref(task)} queued for GPU {gpu_id}")
     
     def pop_gpu_task(self, gpu_id: int) -> Task | None:
         """Pop a task from GPU-specific queue."""
@@ -107,6 +119,8 @@ class TaskQueue:
                 logger.warning(f"Cannot cancel task {task_id} with status {task.status.value}")
                 return False
             
+            self._finalize_timing_on_cancel(task)
+            
             # Remove from global queue
             try:
                 self.global_queue.remove(task)
@@ -123,7 +137,7 @@ class TaskQueue:
                         pass
             
             task.status = TaskStatus.CANCELLED
-            logger.info(f"Task {task_id} cancelled")
+            logger.info(f"Task {format_task_ref(task)} cancelled")
             return True
     
     def force_cancel_task(self, task_id: str, task_runner) -> bool:
@@ -154,7 +168,7 @@ class TaskQueue:
                     task.status = TaskStatus.CANCELLED
                     task.error_message = "Cancelled by user (force)"
                     task.end_time = now()
-                    logger.info(f"Task {task_id} force cancelled")
+                    logger.info(f"Task {format_task_ref(task)} force cancelled")
                     return True
                 else:
                     logger.error(f"Failed to kill running task {task_id}")
@@ -178,3 +192,20 @@ class TaskQueue:
                 "gpu_queues": {gpu_id: len(queue) for gpu_id, queue in self.gpu_queues.items()}
             }
             return stats
+
+    def _finalize_timing_on_cancel(self, task: Task) -> None:
+        """Stop relevant timers when a task is cancelled."""
+        if task.status == TaskStatus.PENDING:
+            pending_duration = task.timer.stop("pending")
+            if pending_duration is not None:
+                task.phase_timing_ms["pending"] = pending_duration
+        if task.status == TaskStatus.QUEUED:
+            queue_duration = task.timer.stop("queue")
+            if queue_duration is not None:
+                task.phase_timing_ms["queue"] = queue_duration
+        waiting_duration = task.timer.stop("waiting")
+        if waiting_duration is not None:
+            task.phase_timing_ms["waiting"] = waiting_duration
+        total_duration = task.timer.stop("total")
+        if total_duration is not None:
+            task.phase_timing_ms["total"] = total_duration

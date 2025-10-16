@@ -8,7 +8,7 @@ New timing fields (all in milliseconds with 2 decimal places):
 - pending_time_ms: Time spent waiting for GPU assignment
 - queue_time_ms: Time spent in GPU queue waiting for execution
 - waiting_time_ms: Total waiting time (pending + queue)
-- execution_time_ms: Actual execution time
+- running_time_ms: Actual execution time (alias: execution_time_ms)
 - total_time_ms: Total time from submit to completion
 
 Timeline:
@@ -17,7 +17,7 @@ Timeline:
       |<-pending->|   |      |
       |      |<-queue->|      |
       |<--waiting-->|        |
-      |              |<-exec->|
+      |              |<-run->|
       |<-----total----------->|
 """
 
@@ -60,17 +60,18 @@ def print_timing_breakdown(task_id: str, result):
             pct = (result.waiting_time_ms / result.total_time_ms * 100) if result.total_time_ms > 0 else 0
             print(f"  │  Total Waiting              │ {result.waiting_time_ms:>10.2f}   │ {pct:>6.2f}%  │")
         
-        if result.execution_time_ms is not None:
-            pct = (result.execution_time_ms / result.total_time_ms * 100) if result.total_time_ms > 0 else 0
-            print(f"  │  Execution (actual runtime) │ {result.execution_time_ms:>10.2f}   │ {pct:>6.2f}%  │")
+        running_ms = result.running_time_ms or result.execution_time_ms
+        if running_ms is not None:
+            pct = (running_ms / result.total_time_ms * 100) if result.total_time_ms > 0 else 0
+            print(f"  │  Running (actual runtime)   │ {running_ms:>10.2f}   │ {pct:>6.2f}%  │")
         
         print(f"  ├─────────────────────────────┼──────────────┼──────────┤")
         print(f"  │  TOTAL TIME                 │ {result.total_time_ms:>10.2f}   │ 100.00%  │")
         print(f"  └─────────────────────────────┴──────────────┴──────────┘")
         
         # Performance insights
-        if result.waiting_time_ms and result.execution_time_ms:
-            wait_ratio = result.waiting_time_ms / result.execution_time_ms
+        if result.waiting_time_ms and running_ms:
+            wait_ratio = result.waiting_time_ms / running_ms
             print(f"\n📊 Performance Insights:")
             print(f"  • Wait-to-Execution Ratio: {wait_ratio:.2f}x")
             if wait_ratio > 2:
@@ -129,8 +130,9 @@ def main():
     total_waiting = 0
     for task_id in task_ids:
         result = client.get_task(task_id)
-        if result.execution_time_ms:
-            total_execution += result.execution_time_ms
+        running_ms = result.running_time_ms or result.execution_time_ms
+        if running_ms:
+            total_execution += running_ms
         if result.waiting_time_ms:
             total_waiting += result.waiting_time_ms
     
@@ -147,4 +149,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

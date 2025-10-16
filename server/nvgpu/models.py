@@ -6,6 +6,7 @@ import uuid
 
 from config import GPUMode, GPUStatus, TaskType, TaskMode, TaskStatus
 from utils.timezone import now, ensure_timezone
+from task_timer import TaskTimer
 
 
 @dataclass
@@ -101,40 +102,65 @@ class Task:
     stdout_size: int = 0  # Size of stdout in bytes
     stderr_size: int = 0  # Size of stderr in bytes
     host_timing_ms: dict[str, float] = field(default_factory=dict)
+    phase_timing_ms: dict[str, float] = field(default_factory=dict)
+    timer: TaskTimer = field(default_factory=TaskTimer, repr=False, compare=False)
     
     @property
     def pending_time_ms(self) -> float | None:
         """Time spent in PENDING state (submit to GPU assignment), in milliseconds with 2 decimal places."""
+        duration = self.phase_timing_ms.get("pending")
+        if duration is not None:
+            return round(duration, 3)
         if self.queued_time:
-            return round((self.queued_time - self.submit_time).total_seconds() * 1000, 2)
+            return round((self.queued_time - self.submit_time).total_seconds() * 1000, 3)
         return None
     
     @property
     def queue_time_ms(self) -> float | None:
         """Time spent in QUEUED state (GPU assignment to execution start), in milliseconds with 2 decimal places."""
+        duration = self.phase_timing_ms.get("queue")
+        if duration is not None:
+            return round(duration, 3)
         if self.queued_time and self.start_time:
-            return round((self.start_time - self.queued_time).total_seconds() * 1000, 2)
+            return round((self.start_time - self.queued_time).total_seconds() * 1000, 3)
         return None
     
     @property
     def waiting_time_ms(self) -> float | None:
         """Total waiting time (submit to execution start), in milliseconds with 2 decimal places."""
+        duration = self.phase_timing_ms.get("waiting")
+        if duration is not None:
+            return round(duration, 3)
         if self.start_time:
-            return round((self.start_time - self.submit_time).total_seconds() * 1000, 2)
+            return round((self.start_time - self.submit_time).total_seconds() * 1000, 3)
+        return None
+    
+    @property
+    def running_time_ms(self) -> float | None:
+        """Running time (start to end), in milliseconds with 2 decimal places."""
+        duration = self.phase_timing_ms.get("running")
+        if duration is not None:
+            return round(duration, 3)
+        duration = self.phase_timing_ms.get("execution")
+        if duration is not None:
+            return round(duration, 3)
+        if self.start_time and self.end_time:
+            return round((self.end_time - self.start_time).total_seconds() * 1000, 3)
         return None
     
     @property
     def execution_time_ms(self) -> float | None:
-        """Execution time (start to end), in milliseconds with 2 decimal places."""
-        if self.start_time and self.end_time:
-            return round((self.end_time - self.start_time).total_seconds() * 1000, 2)
-        return None
+        """Backward compatible alias for running_time_ms."""
+        return self.running_time_ms
     
     @property
     def total_time_ms(self) -> float | None:
         """Total time (submit to end), in milliseconds with 2 decimal places."""
+        duration = self.phase_timing_ms.get("total")
+        if duration is not None:
+            return round(duration, 3)
         if self.end_time:
-            return round((self.end_time - self.submit_time).total_seconds() * 1000, 2)
+            return round((self.end_time - self.submit_time).total_seconds() * 1000, 3)
         return None
     
     def to_dict(self) -> dict[str, Any]:
@@ -176,6 +202,7 @@ class Task:
         result["pending_time_ms"] = self.pending_time_ms
         result["queue_time_ms"] = self.queue_time_ms
         result["waiting_time_ms"] = self.waiting_time_ms
+        result["running_time_ms"] = self.running_time_ms
         result["execution_time_ms"] = self.execution_time_ms
         result["total_time_ms"] = self.total_time_ms
         if self.host_timing_ms:

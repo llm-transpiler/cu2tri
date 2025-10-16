@@ -60,7 +60,7 @@ def set_gpu_mode(self, gpu_id, mode, manual=True):
 
 2. **尊重手动模式** (`gpu_manager.py`)
 ```python
-def set_gpu_mode_for_task(self, gpu_id, task_id, task_mode):
+def set_gpu_mode_for_task(self, gpu_id, task, task_mode):
     if gpu.manual_mode:
         # 不改变模式，尊重管理员设置
         logger.debug(f"GPU {gpu_id} has manual mode, not changing")
@@ -451,7 +451,7 @@ def queue_task_for_gpu(self, task: Task, gpu_id: int):
         task.queued_time = datetime.now()  # ✅ 记录分配时间
         
         self.gpu_queues[gpu_id].append(task)
-        logger.info(f"Task {task.task_id} queued for GPU {gpu_id}")
+        logger.info(f"Task {format_task_ref(task)} queued for GPU {gpu_id}")
 ```
 
 **在 `models.py` 的 `to_dict()` 中导出计算字段**:
@@ -666,4 +666,3 @@ submit_time          queued_time    start_time    end_time
 **作者**: NVGPU Server Team  
 **审阅**: 待审阅  
 **状态**: 草案
-

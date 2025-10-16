@@ -23,9 +23,10 @@ def main():
     # Submit a simple functional test
     print("\nSubmitting functional test...")
     task_id = client.submit_task(
+        task_label="example_basic",
         script_path="/workspace/server/nvgpu/test_scripts/simple_functional_test.py",
-        # task_type="functional"  # Automatically uses shared mode
-        task_mode='shared'
+        task_mode='shared',
+        task_type="functional"  # Automatically uses shared mode
     )
     print(f"Task submitted: {task_id}")
     
