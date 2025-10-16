@@ -314,7 +314,7 @@ class TaskQueue:
     
     def submit_task(self, task):
         priority = 0 if task.task_mode == TaskMode.EXCLUSIVE else 1
-        self.global_queue.put((priority, task.submit_time, task))
+        self.global_queue.put((priority, task.submit_timestamp, task))
 ```
 
 **优点**:
@@ -332,13 +332,13 @@ class TaskQueue:
 ```python
 @dataclass
 class Task:
-    submit_time: datetime
+    submit_timestamp: datetime
     waiting_priority: int = 0  # 等待越久，优先级越高
     
 def _schedule_round(self):
     # 更新等待优先级
     for task in self.task_queue.list_tasks(TaskStatus.PENDING):
-        wait_time = (datetime.now() - task.submit_time).total_seconds()
+        wait_time = (datetime.now() - task.submit_timestamp).total_seconds()
         if wait_time > 60 and task.task_mode == TaskMode.EXCLUSIVE:
             task.waiting_priority += 1
     
@@ -371,14 +371,14 @@ def _schedule_round(self):
 ```python
 @dataclass
 class Task:
-    submit_time: datetime       # 提交时间
-    start_time: datetime | None # 开始执行时间
-    end_time: datetime | None   # 结束时间
+    submit_timestamp: datetime       # 提交时间
+    start_timestamp: datetime | None # 开始执行时间
+    end_timestamp: datetime | None   # 结束时间
 ```
 
 **当前可计算**:
-- ✅ 总耗时 (Total Time): `end_time - submit_time`
-- ✅ 执行时间 (Execution Time): `end_time - start_time`
+- ✅ 总耗时 (Total Time): `end_timestamp - submit_timestamp`
+- ✅ 执行时间 (Running Time): `end_timestamp - start_timestamp`
 
 **缺少**:
 - ❌ 等待时间 (Waiting Time): 从提交到开始执行
@@ -392,53 +392,53 @@ class Task:
 @dataclass
 class Task:
     # 现有字段
-    submit_time: datetime = field(default_factory=datetime.now)
-    start_time: datetime | None = None
-    end_time: datetime | None = None
+    submit_timestamp: datetime = field(default_factory=datetime.now)
+    start_timestamp: datetime | None = None
+    end_timestamp: datetime | None = None
     
     # 新增字段
-    queued_time: datetime | None = None    # 分配到 GPU 的时间
+    queued_timestamp: datetime | None = None    # 分配到 GPU 的时间
     
     # 计算属性（不存储，动态计算）
     @property
     def waiting_time_ms(self) -> int | None:
         """等待时间（提交到开始执行），毫秒"""
-        if self.start_time:
-            return int((self.start_time - self.submit_time).total_seconds() * 1000)
+        if self.start_timestamp:
+            return int((self.start_timestamp - self.submit_timestamp).total_seconds() * 1000)
         return None
     
     @property
     def pending_time_ms(self) -> int | None:
         """PENDING 阶段时间（提交到分配 GPU），毫秒"""
-        if self.queued_time:
-            return int((self.queued_time - self.submit_time).total_seconds() * 1000)
+        if self.queued_timestamp:
+            return int((self.queued_timestamp - self.submit_timestamp).total_seconds() * 1000)
         return None
     
     @property
     def queue_time_ms(self) -> int | None:
         """QUEUED 阶段时间（分配 GPU 到开始执行），毫秒"""
-        if self.queued_time and self.start_time:
-            return int((self.start_time - self.queued_time).total_seconds() * 1000)
+        if self.queued_timestamp and self.start_timestamp:
+            return int((self.start_timestamp - self.queued_timestamp).total_seconds() * 1000)
         return None
     
     @property
-    def execution_time_ms(self) -> int | None:
+    def running_time_ms(self) -> int | None:
         """执行时间（开始到结束），毫秒"""
-        if self.start_time and self.end_time:
-            return int((self.end_time - self.start_time).total_seconds() * 1000)
+        if self.start_timestamp and self.end_timestamp:
+            return int((self.end_timestamp - self.start_timestamp).total_seconds() * 1000)
         return None
     
     @property
     def total_time_ms(self) -> int | None:
         """总时间（提交到结束），毫秒"""
-        if self.end_time:
-            return int((self.end_time - self.submit_time).total_seconds() * 1000)
+        if self.end_timestamp:
+            return int((self.end_timestamp - self.submit_timestamp).total_seconds() * 1000)
         return None
 ```
 
 #### 3.2 更新代码
 
-**在 `task_queue.py` 中记录 `queued_time`**:
+**在 `task_queue.py` 中记录 `queued_timestamp`**:
 
 ```python
 def queue_task_for_gpu(self, task: Task, gpu_id: int):
@@ -448,7 +448,7 @@ def queue_task_for_gpu(self, task: Task, gpu_id: int):
         
         task.status = TaskStatus.QUEUED
         task.assigned_gpu = gpu_id
-        task.queued_time = datetime.now()  # ✅ 记录分配时间
+        task.queued_timestamp = datetime.now()  # ✅ 记录分配时间
         
         self.gpu_queues[gpu_id].append(task)
         logger.info(f"Task {format_task_ref(task)} queued for GPU {gpu_id}")
@@ -460,16 +460,16 @@ def queue_task_for_gpu(self, task: Task, gpu_id: int):
 def to_dict(self) -> dict[str, Any]:
     result = {
         # ... 现有字段
-        "submit_time": self.submit_time.isoformat() if self.submit_time else None,
-        "queued_time": self.queued_time.isoformat() if self.queued_time else None,
-        "start_time": self.start_time.isoformat() if self.start_time else None,
-        "end_time": self.end_time.isoformat() if self.end_time else None,
+        "submit_timestamp": self.submit_timestamp.isoformat() if self.submit_timestamp else None,
+        "queued_timestamp": self.queued_timestamp.isoformat() if self.queued_timestamp else None,
+        "start_timestamp": self.start_timestamp.isoformat() if self.start_timestamp else None,
+        "end_timestamp": self.end_timestamp.isoformat() if self.end_timestamp else None,
         
         # 新增：计算字段
         "waiting_time_ms": self.waiting_time_ms,
         "pending_time_ms": self.pending_time_ms,
         "queue_time_ms": self.queue_time_ms,
-        "execution_time_ms": self.execution_time_ms,
+        "running_time_ms": self.running_time_ms,
         "total_time_ms": self.total_time_ms,
     }
     return result
@@ -487,11 +487,11 @@ class TaskResult:
     # ... 现有字段
     
     # 新增时间字段
-    queued_time: str | None = None
+    queued_timestamp: str | None = None
     waiting_time_ms: int | None = None
     pending_time_ms: int | None = None
     queue_time_ms: int | None = None
-    execution_time_ms: int | None = None
+    running_time_ms: int | None = None
     total_time_ms: int | None = None
 ```
 
@@ -503,11 +503,11 @@ def get_task(self, task_id: str) -> TaskResult:
     data = response.json()
     return TaskResult(
         # ... 现有字段
-        queued_time=data.get("queued_time"),
+        queued_timestamp=data.get("queued_timestamp"),
         waiting_time_ms=data.get("waiting_time_ms"),
         pending_time_ms=data.get("pending_time_ms"),
         queue_time_ms=data.get("queue_time_ms"),
-        execution_time_ms=data.get("execution_time_ms"),
+        running_time_ms=data.get("running_time_ms"),
         total_time_ms=data.get("total_time_ms"),
     )
 ```
@@ -521,10 +521,10 @@ def _write_log_file(self, task, ...):
     with open(task.log_file, 'w') as f:
         # ...
         f.write(f"\n=== Timing (Milliseconds) ===\n")
-        f.write(f"Submit Time:      {task.submit_time}\n")
-        f.write(f"Queued Time:      {task.queued_time}\n")
-        f.write(f"Start Time:       {task.start_time}\n")
-        f.write(f"End Time:         {task.end_time}\n")
+        f.write(f"Submit Time:      {task.submit_timestamp}\n")
+        f.write(f"Queued Time:      {task.queued_timestamp}\n")
+        f.write(f"Start Time:       {task.start_timestamp}\n")
+        f.write(f"End Time:         {task.end_timestamp}\n")
         f.write(f"\n")
         if task.pending_time_ms:
             f.write(f"Pending Duration:   {task.pending_time_ms} ms\n")
@@ -532,8 +532,8 @@ def _write_log_file(self, task, ...):
             f.write(f"Queue Duration:     {task.queue_time_ms} ms\n")
         if task.waiting_time_ms:
             f.write(f"Total Waiting:      {task.waiting_time_ms} ms\n")
-        if task.execution_time_ms:
-            f.write(f"Execution:          {task.execution_time_ms} ms\n")
+        if task.running_time_ms:
+            f.write(f"Execution:          {task.running_time_ms} ms\n")
         if task.total_time_ms:
             f.write(f"Total Time:         {task.total_time_ms} ms\n")
 ```
@@ -549,7 +549,7 @@ print(f"Task {task_id} completed:")
 print(f"  Pending time:   {result.pending_time_ms} ms")
 print(f"  Queue time:     {result.queue_time_ms} ms")
 print(f"  Waiting time:   {result.waiting_time_ms} ms")
-print(f"  Execution time: {result.execution_time_ms} ms")
+print(f"  Running time: {result.running_time_ms} ms")
 print(f"  Total time:     {result.total_time_ms} ms")
 
 # 输出示例:
@@ -557,7 +557,7 @@ print(f"  Total time:     {result.total_time_ms} ms")
 #   Pending time:   1250 ms   (等待 GPU 分配)
 #   Queue time:     3400 ms   (在 GPU 队列中等待)
 #   Waiting time:   4650 ms   (总等待 = pending + queue)
-#   Execution time: 12500 ms  (实际执行)
+#   Running time: 12500 ms  (实际执行)
 #   Total time:     17150 ms  (端到端)
 ```
 
@@ -566,7 +566,7 @@ print(f"  Total time:     {result.total_time_ms} ms")
 ```
 时间线视图:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-submit_time          queued_time    start_time    end_time
+submit_timestamp          queued_timestamp    start_timestamp    end_timestamp
     |                    |              |            |
     |<-- pending_time -->|              |            |
     |                    |<- queue_time>|            |
@@ -610,8 +610,8 @@ submit_time          queued_time    start_time    end_time
 
 #### 第一阶段：任务计时增强
 
-1. 修改 `models.py`: 添加 `queued_time` 字段和计算属性
-2. 修改 `task_queue.py`: 记录 `queued_time`
+1. 修改 `models.py`: 添加 `queued_timestamp` 字段和计算属性
+2. 修改 `task_queue.py`: 记录 `queued_timestamp`
 3. 修改 `task_runner.py`: 日志输出时间信息
 4. 修改 `client.py`: 添加时间字段支持
 5. 编写测试用例

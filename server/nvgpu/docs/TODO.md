@@ -10,7 +10,7 @@
 - 当触发严重错误时，系统会：
   1. 获取所有正在运行的任务ID
   2. 调用 `task_runner.kill_task()` 强制终止每个任务（SIGTERM → SIGKILL）
-  3. 重置任务状态（start_time、end_time、exit_code等）
+  3. 重置任务状态（start_timestamp、end_timestamp、exit_code等）
   4. 使用 `task_queue.push_front()` 将任务重新插入队列最前方（逆序以保持原顺序）
   5. 清空GPU的running_tasks列表
   6. 系统暂停60秒后自动恢复
@@ -26,8 +26,8 @@ def trigger_severe_error(self, gpu_id: int, error_msg: str):
     
     # Requeue at front (reverse order to maintain original order)
     for task in reversed(killed_tasks):
-        task.start_time = None
-        task.end_time = None
+        task.start_timestamp = None
+        task.end_timestamp = None
         task.exit_code = None
         self.task_queue.push_front(task)
 ```

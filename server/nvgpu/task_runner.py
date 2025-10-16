@@ -10,7 +10,7 @@ from models import Task, TaskStatus
 from config import config
 from logger import setup_logger
 from profiler.timer import HostTimer, TimerSample, create_host_timer
-from utils.timezone import now
+from utils.timezone import now_timestamp
 from utils.task_refs import format_task_ref
 
 logger = setup_logger("task_runner")
@@ -22,8 +22,8 @@ NVGPU_ROOT = Path(__file__).parent.resolve()
 gpu_config_loader = None
 
 
-def _build_task_host_timer(task: Task) -> tuple[HostTimer, list[TimerSample]]:
-    """Create a host-side timer for task runner operations."""
+def _create_task_timer(task: Task) -> tuple[HostTimer, list[TimerSample]]:
+    """Create a task-scoped timer for task runner operations."""
 
     captured: list[TimerSample] = []
 
@@ -34,7 +34,7 @@ def _build_task_host_timer(task: Task) -> tuple[HostTimer, list[TimerSample]]:
         if task:
             prefix = f"task={format_task_ref(task)} "
         logger.debug(
-            "%stimer_label=%s duration_ms=%12.3fms status=%s",
+            "%stimer_label=%s, duration_ms=%12.3fms, status=%s",
             prefix,
             sample.label,
             sample.duration_ms,
@@ -64,21 +64,21 @@ class TaskRunner:
             # Update task status
             task.status = TaskStatus.RUNNING
             task.assigned_gpu = gpu_id
-            task.start_time = now()
-            task_ref = format_task_ref(task)
+            task.start_timestamp = now_timestamp()
+            task_ref_str = format_task_ref(task)
             
             # Stop queue/wait timers and record durations
             queue_duration = task.timer.stop("queue")
             if queue_duration is not None:
-                task.phase_timing_ms["queue"] = queue_duration
+                task.phase_duration_ms["queue"] = queue_duration
             waiting_duration = task.timer.stop("waiting")
             if waiting_duration is not None:
-                task.phase_timing_ms["waiting"] = waiting_duration
+                task.phase_duration_ms["waiting"] = waiting_duration
             
             # Get absolute path of script
             script_abs_path = os.path.abspath(task.script_path)
             
-            logger.info(f"Starting task {task_ref} on GPU {gpu_id}")
+            logger.info(f"Starting task {task_ref_str} on GPU {gpu_id}")
             logger.info(f"  Script: {script_abs_path}")
             
             # Prepare environment
@@ -109,10 +109,10 @@ class TaskRunner:
             # Prepare command
             cmd = [sys.executable, script_abs_path] + task.args
             
-            logger.debug(f"Task {task_ref} command: {' '.join(cmd)}")
+            logger.debug(f"TASK {task_ref_str} command: {' '.join(cmd)}")
             task_work_dir = os.path.abspath(task.work_dir)
-            logger.debug(f"Task {task_ref} work_dir: {task_work_dir}")
-            logger.debug(f"Task {task_ref} CUDA_VISIBLE_DEVICES: {cuda_id}")
+            logger.debug(f"TASK {task_ref_str} work_dir: {task_work_dir}")
+            logger.debug(f"TASK {task_ref_str} CUDA_VISIBLE_DEVICES: {cuda_id}")
             
             # Open files for stdout and stderr
             stdout_file = open(stdout_path, 'w', buffering=1)  # Line buffered
@@ -135,20 +135,20 @@ class TaskRunner:
             with self.lock:
                 self.running_processes[task.task_id] = process
             
-            timer, samples = _build_task_host_timer(task)
+            timer, samples = _create_task_timer(task)
             try:
                 # Wait for completion with timeout
-                with timer.time("task_runner.wait"):
+                with timer.time("task_runner.process_run"):
                     exit_code = process.wait(timeout=config.task_timeout)
             except subprocess.TimeoutExpired:
                 # Kill the process on timeout
-                logger.warning(f"Task {task_ref} timed out, terminating...")
+                logger.warning(f"TASK {task_ref_str} timed out, terminating...")
                 process.kill()
                 process.wait()  # Wait for process to be killed
                 raise
             finally:
                 if samples:
-                    task.host_timing_ms["process_wait_ms"] = samples[-1].duration_ms
+                    task.execution_duration_ms = samples[-1].duration_ms
                 # Unregister process
                 with self.lock:
                     self.running_processes.pop(task.task_id, None)
@@ -164,12 +164,12 @@ class TaskRunner:
             
             # Save results
             task.exit_code = exit_code
-            task.end_time = now()
+            task.end_timestamp = now_timestamp()
             
             # Determine success and set final status BEFORE writing log
             if exit_code == 0:
                 task.status = TaskStatus.COMPLETED
-                logger.info(f"Task {task_ref} completed successfully (exit_code=0)")
+                logger.info(f"TASK {task_ref_str} completed successfully (exit_code=0)")
             elif exit_code < 0:
                 # Negative exit code indicates signal termination (e.g., SIGSEGV = -11)
                 signal_name = self._get_signal_name(abs(exit_code))
@@ -177,13 +177,13 @@ class TaskRunner:
                 if task.status != TaskStatus.CANCELLED:
                     task.status = TaskStatus.FAILED
                     task.error_message = f"Process terminated by signal {signal_name} ({exit_code})"
-                logger.error(f"Task {task_ref} terminated by signal {signal_name} ({exit_code})")
+                logger.error(f"TASK {task_ref_str} terminated by signal {signal_name} ({exit_code})")
             else:
                 # Don't override CANCELLED status
                 if task.status != TaskStatus.CANCELLED:
                     task.status = TaskStatus.FAILED
                     task.error_message = f"Exit code {exit_code}"
-                logger.warning(f"Task {task_ref} failed with exit code {exit_code}")
+                logger.warning(f"TASK {task_ref_str} failed with exit code {exit_code}")
             
             # Write summary log file AFTER status is finalized
             self._write_log_file(task, script_abs_path, cmd, stdout_path, stderr_path)
@@ -193,8 +193,8 @@ class TaskRunner:
         except subprocess.TimeoutExpired as e:
             task.status = TaskStatus.FAILED
             task.error_message = f"Timeout after {config.task_timeout} seconds"
-            task.end_time = now()
-            logger.error(f"Task {task_ref} timed out after {config.task_timeout}s")
+            task.end_timestamp = now_timestamp()
+            logger.error(f"TASK {task_ref_str} timed out after {config.task_timeout}s")
             
             # Close files if still open
             if stdout_file:
@@ -217,8 +217,8 @@ class TaskRunner:
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error_message = str(e)
-            task.end_time = now()
-            logger.error(f"Task {task_ref} failed with exception: {e}")
+            task.end_timestamp = now_timestamp()
+            logger.error(f"TASK {task_ref_str} failed with exception: {e}")
             
             # Close files if still open
             if stdout_file:
@@ -241,10 +241,10 @@ class TaskRunner:
             if running_timer_started:
                 running_duration = task.timer.stop("running")
                 if running_duration is not None:
-                    task.phase_timing_ms["running"] = running_duration
+                    task.phase_duration_ms["running"] = running_duration
             total_duration = task.timer.stop("total")
             if total_duration is not None:
-                task.phase_timing_ms["total"] = total_duration
+                task.phase_duration_ms["total"] = total_duration
     
     def _get_signal_name(self, signum: int) -> str:
         """Get signal name from signal number."""
@@ -285,29 +285,29 @@ class TaskRunner:
                 f.write(f"GPU: {task.assigned_gpu}\n")
                 f.write(f"Command: {' '.join(cmd)}\n")
                 f.write(f"\n=== Timing ===\n")
-                f.write(f"Submit Time:  {task.submit_time}\n")
-                if task.queued_time:
-                    f.write(f"Queued Time:  {task.queued_time}\n")
-                if task.start_time:
-                    f.write(f"Start Time:   {task.start_time}\n")
-                if task.end_time:
-                    f.write(f"End Time:     {task.end_time}\n")
+                f.write(f"Submit Timestamp:  {task.submit_timestamp}\n")
+                if task.queued_timestamp:
+                    f.write(f"Queued Timestamp:  {task.queued_timestamp}\n")
+                if task.start_timestamp:
+                    f.write(f"Start Timestamp:   {task.start_timestamp}\n")
+                if task.end_timestamp:
+                    f.write(f"End Timestamp:     {task.end_timestamp}\n")
                 
-                f.write(f"\n=== Timing Breakdown (milliseconds) ===\n")
-                if task.pending_time_ms is not None:
-                    f.write(f"Pending Time:     {task.pending_time_ms:>10.2f} ms  (submit → GPU assignment)\n")
-                if task.queue_time_ms is not None:
-                    f.write(f"Queue Time:       {task.queue_time_ms:>10.2f} ms  (GPU assignment → execution start)\n")
-                if task.waiting_time_ms is not None:
-                    f.write(f"Total Waiting:    {task.waiting_time_ms:>10.2f} ms  (submit → execution start)\n")
-                if task.running_time_ms is not None:
-                    f.write(f"Running Time:     {task.running_time_ms:>10.2f} ms  (execution start → end)\n")
-                if task.total_time_ms is not None:
-                    f.write(f"Total Time:       {task.total_time_ms:>10.2f} ms  (submit → end)\n")
+                f.write(f"\n=== Timing Breakdown (ms) ===\n")
+                if task.pending_duration_ms is not None:
+                    f.write(f"Pending Duration:     {task.pending_duration_ms:>10.2f} ms  (submit -> GPU assignment)\n")
+                if task.queue_duration_ms is not None:
+                    f.write(f"Queue Duration:       {task.queue_duration_ms:>10.2f} ms  (GPU assignment -> execution start)\n")
+                if task.waiting_duration_ms is not None:
+                    f.write(f"Waiting Duration:     {task.waiting_duration_ms:>10.2f} ms  (submit -> execution start)\n")
+                if task.running_duration_ms is not None:
+                    f.write(f"Running Duration:     {task.running_duration_ms:>10.2f} ms  (execution start -> end)\n")
+                if task.total_duration_ms is not None:
+                    f.write(f"Total Duration:       {task.total_duration_ms:>10.2f} ms  (submit -> end)\n")
 
-                if task.host_timing_ms:
-                    f.write(f"\n=== Host Timer (milliseconds) ===\n")
-                    for key, value in task.host_timing_ms.items():
+                if task.execution_duration_ms:
+                    f.write(f"\n=== Execution Duration (ms) ===\n")
+                    for key, value in task.execution_duration_ms.items():
                         f.write(f"{key}: {value:>10.2f} ms\n")
 
                 f.write(f"\n=== Result ===\n")
@@ -362,7 +362,7 @@ class TaskRunner:
                     f.write(f"\n=== STDERR ===\n(empty)\n")
                 
                 f.write("\n=== END OF LOG ===\n")
-            logger.debug(f"Task {task_ref} log written to {task.log_file}")
+            logger.debug(f"TASK {task_ref} log written to {task.log_file}")
         except Exception as e:
             logger.error(f"Failed to write log file for task {task_ref}: {e}")
     
@@ -400,13 +400,13 @@ class TaskRunner:
                 # Wait up to 5 seconds for graceful shutdown
                 try:
                     process.wait(timeout=5)
-                    logger.info(f"Task {task_id} terminated gracefully")
+                    logger.info(f"TASK {task_id} terminated gracefully")
                 except subprocess.TimeoutExpired:
                     # Force kill if termination didn't work
-                    logger.warning(f"Task {task_id} did not terminate, sending SIGKILL...")
+                    logger.warning(f"TASK {task_id} did not terminate, sending SIGKILL...")
                     process.kill()
                     process.wait()
-                    logger.info(f"Task {task_id} killed forcefully")
+                    logger.info(f"TASK {task_id} killed forcefully")
                 
                 return True
             except Exception as e:

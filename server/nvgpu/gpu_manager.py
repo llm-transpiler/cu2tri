@@ -1,7 +1,6 @@
 """GPU manager for monitoring and managing GPU resources."""
 import threading
 import time
-from datetime import timedelta
 
 try:
     import pynvml
@@ -12,8 +11,9 @@ except ImportError:
 from models import GPU, GPUStatus, GPUMode, Task
 from config import config
 from logger import setup_logger
-from utils.timezone import now
+from utils.timezone import now_timestamp
 from utils.task_refs import format_task_ref
+from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
 
 logger = setup_logger("gpu_manager")
 
@@ -34,7 +34,8 @@ class GPUManager:
 
         # Severe error handling
         self.severe_error_active = False
-        self.severe_error_time = None
+        self.severe_error_timestamp = None  # wall clock (datetime) for logging
+        self.severe_error_monotonic_ns: int | None = None  # monotonic clock for elapsed checks
 
         # Dependencies (set after initialization)
         self.task_queue = None
@@ -165,7 +166,12 @@ class GPUManager:
         """Return number of devices detected via NVML."""
         return self.nvml_device_count
 
-    def set_gpu_mode_for_task(self, gpu_id: int, task: Task) -> bool:
+    def set_gpu_mode_for_task(
+        self,
+        gpu_id: int,
+        task: Task,
+        task_mode_override: GPUMode | None = None,
+    ) -> bool:
         """Set GPU mode based on task requirements.
 
         This is called when a task starts running.
@@ -197,7 +203,8 @@ class GPUManager:
                 return True
 
             # Set mode based on task requirement
-            if task.task_mode == TaskMode.EXCLUSIVE:
+            effective_task_mode = task_mode_override or task.task_mode
+            if effective_task_mode == TaskMode.EXCLUSIVE:
                 gpu.mode = GPUMode.EXCLUSIVE
                 gpu.mode_locked_by = task.task_id
                 logger.info(
@@ -217,14 +224,14 @@ class GPUManager:
 
             return True
 
-    def restore_gpu_mode_after_task(self, gpu_id: int, task_id: str) -> bool:
+    def restore_gpu_mode_after_task(self, gpu_id: int, task: Task) -> bool:
         """Restore GPU mode after a task completes.
 
         This is called when a task finishes running.
 
         Args:
             gpu_id: GPU ID
-            task_id: Task ID that just finished
+            task: Task instance that just finished
 
         Returns:
             True if successful, False otherwise
@@ -238,12 +245,12 @@ class GPUManager:
             gpu = self.gpus[gpu_id]
 
             # If this task locked the mode, unlock it
-            if gpu.mode_locked_by == task_id:
+            if gpu.mode_locked_by == task.task_id:
                 gpu.mode_locked_by = None
                 logger.debug(
-                    "GPU %s mode unlocked by task %s",
+                    "GPU %s mode unlocked by TASK %s",
                     gpu_id,
-                    format_task_ref(task_id),
+                    format_task_ref(task),
                 )
 
                 # Restore to manual mode if set, otherwise default to shared
@@ -365,7 +372,7 @@ class GPUManager:
             gpu = self.gpus[gpu_id]
             if task.task_id in gpu.running_tasks:
                 gpu.running_tasks.remove(task.task_id)
-                logger.debug(f"Task {format_task_ref(task)} completed on GPU {gpu_id}")
+                logger.debug(f"TASK {format_task_ref(task)} completed on GPU {gpu_id}")
             return True
 
     def trigger_severe_error(self, gpu_id: int, error_msg: str):
@@ -377,12 +384,13 @@ class GPUManager:
         """
         with self.lock:
             self.severe_error_active = True
-            self.severe_error_time = now()
+            self.severe_error_timestamp = now_timestamp()
+            self.severe_error_monotonic_ns = monotonic_timestamp_ns()
 
             if gpu_id in self.gpus:
                 self.gpus[gpu_id].status = GPUStatus.ERROR
                 self.gpus[gpu_id].error_message = error_msg
-                self.gpus[gpu_id].last_error_time = self.severe_error_time
+                self.gpus[gpu_id].last_error_timestamp = self.severe_error_timestamp
 
                 # Get all running tasks on this GPU
                 running_task_ids = list(self.gpus[gpu_id].running_tasks)
@@ -399,28 +407,28 @@ class GPUManager:
                 task = self.task_queue.get_task(task_id)
                 if task:
                     # Kill the task process
-                    if self.task_runner.kill_task(task_id):
+                    if self.task_runner.kill_task(task):
                         logger.info(
-                            "Killed task %s due to severe error",
+                            "Killed TASK %s due to severe error",
                             format_task_ref(task),
                         )
                         killed_tasks.append(task)
                     else:
                         logger.warning(
-                            "Failed to kill task %s",
+                            "Failed to kill TASK %s",
                             format_task_ref(task),
                         )
 
             # Requeue killed tasks at front (reverse order to maintain original order)
             for task in reversed(killed_tasks):
                 # Reset task state for requeue
-                task.start_time = None
-                task.end_time = None
+                task.start_timestamp = None
+                task.end_timestamp = None
                 task.exit_code = None
                 task.error_message = f"Requeued due to GPU {gpu_id} severe error"
                 self.task_queue.push_front(task)
                 logger.info(
-                    "Requeued task %s at front of queue",
+                    "Requeued TASK %s at front of queue",
                     format_task_ref(task),
                 )
 
@@ -438,7 +446,8 @@ class GPUManager:
         """Clear severe error state and resume operations."""
         with self.lock:
             self.severe_error_active = False
-            self.severe_error_time = None
+            self.severe_error_timestamp = None
+            self.severe_error_monotonic_ns = None
             logger.info("Severe error state cleared, resuming operations")
 
     def _update_gpu_memory(self, gpu_id: int):
@@ -477,10 +486,9 @@ class GPUManager:
                     self._update_gpu_memory(gpu_id)
 
                 # Check if severe error timeout has passed - auto-resume after pause duration
-                if self.severe_error_active and self.severe_error_time:
-                    elapsed = (now() -
-                               self.severe_error_time).total_seconds()
-                    if elapsed > config.error_pause_duration:
+                if self.severe_error_active and self.severe_error_monotonic_ns is not None:
+                    elapsed_ms = monotonic_elapsed_ms(self.severe_error_monotonic_ns)
+                    if elapsed_ms > config.error_pause_duration * 1000:
                         logger.info(
                             f"Severe error pause duration ({config.error_pause_duration}s) elapsed, auto-resuming")
                         self.clear_severe_error()

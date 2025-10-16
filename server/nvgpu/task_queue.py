@@ -4,7 +4,7 @@ from collections import deque
 
 from models import Task, TaskStatus
 from logger import setup_logger
-from utils.timezone import now
+from utils.timezone import now_timestamp
 from utils.task_refs import format_task_ref
 
 logger = setup_logger("task_queue")
@@ -39,7 +39,7 @@ class TaskQueue:
         # Log with type and label if set
         type_info = f", type={task.task_type.value}" if task.task_type else ""
         label_info = f", label={task.task_label}" if task.task_label else ""
-        logger.info(f"Task {format_task_ref(task)} submitted: mode={task.task_mode.value}{type_info}{label_info}, "
+        logger.info(f"TASK {format_task_ref(task)} submitted: mode={task.task_mode.value}{type_info}{label_info}, "
                    f"script={task.script_path}, gpu={task.gpu_id}")
         return task.task_id
     
@@ -52,9 +52,12 @@ class TaskQueue:
         with self.lock:
             task.status = TaskStatus.PENDING
             task.assigned_gpu = None  # Clear assignment
+            task.queued_timestamp = None
+            task.start_timestamp = None
+            task.end_timestamp = None
             self.global_queue.appendleft(task)
             task.timer.start("pending")
-            logger.info(f"Task {format_task_ref(task)} requeued at front (priority)")
+            logger.info(f"TASK {format_task_ref(task)} requeued at front (priority)")
     
     def get_task(self, task_id: str) -> Task | None:
         """Get task by ID."""
@@ -83,16 +86,16 @@ class TaskQueue:
             
             task.status = TaskStatus.QUEUED
             task.assigned_gpu = gpu_id
-            task.queued_time = now()  # Record when task was assigned to GPU queue
+            task.queued_timestamp = now_timestamp()  # Record when task was assigned to GPU queue
             
             # Stop pending timer, start queue timer
             pending_duration = task.timer.stop("pending")
             if pending_duration is not None:
-                task.phase_timing_ms["pending"] = pending_duration
+                task.phase_duration_ms["pending"] = pending_duration
             task.timer.start("queue")
             self.gpu_queues[gpu_id].append(task)
             
-            logger.info(f"Task {format_task_ref(task)} queued for GPU {gpu_id}")
+            logger.info(f"TASK {format_task_ref(task)} queued for GPU {gpu_id}")
     
     def pop_gpu_task(self, gpu_id: int) -> Task | None:
         """Pop a task from GPU-specific queue."""
@@ -116,7 +119,7 @@ class TaskQueue:
                 return False
             
             if task.status not in [TaskStatus.PENDING, TaskStatus.QUEUED]:
-                logger.warning(f"Cannot cancel task {task_id} with status {task.status.value}")
+                logger.error(f"Cannot cancel TASK {format_task_ref(task)} with status {task.status.value}")
                 return False
             
             self._finalize_timing_on_cancel(task)
@@ -137,7 +140,7 @@ class TaskQueue:
                         pass
             
             task.status = TaskStatus.CANCELLED
-            logger.info(f"Task {format_task_ref(task)} cancelled")
+            logger.info(f"TASK {format_task_ref(task)} cancelled successfully")
             return True
     
     def force_cancel_task(self, task_id: str, task_runner) -> bool:
@@ -152,30 +155,30 @@ class TaskQueue:
         """
         with self.lock:
             if task_id not in self.tasks:
-                logger.warning(f"Cannot force cancel task {task_id}: not found")
+                logger.error(f"Cannot force cancel TASK {task_id}: not found")
                 return False
             
             task = self.tasks[task_id]
-            
+            task_ref_str = format_task_ref(task)
             # For pending or queued tasks, use regular cancel
             if task.status in [TaskStatus.PENDING, TaskStatus.QUEUED]:
                 return self.cancel_task(task_id)
             
             # For running tasks, kill the process
             if task.status == TaskStatus.RUNNING:
-                logger.info(f"Force cancelling running task {task_id}")
+                logger.info(f"Force cancelling running TASK {task_ref_str}")
                 if task_runner.kill_task(task_id):
                     task.status = TaskStatus.CANCELLED
                     task.error_message = "Cancelled by user (force)"
-                    task.end_time = now()
-                    logger.info(f"Task {format_task_ref(task)} force cancelled")
+                    task.end_timestamp = now_timestamp()
+                    logger.info(f"TASK {task_ref_str} force cancelled")
                     return True
                 else:
-                    logger.error(f"Failed to kill running task {task_id}")
+                    logger.error(f"Failed to kill running TASK {task_ref_str}")
                     return False
             
             # Already finished tasks cannot be cancelled
-            logger.warning(f"Cannot cancel task {task_id} with status {task.status.value}")
+            logger.warning(f"Cannot cancel TASK {task_ref_str} with status {task.status.value}")
             return False
     
     def get_statistics(self) -> dict:
@@ -198,14 +201,14 @@ class TaskQueue:
         if task.status == TaskStatus.PENDING:
             pending_duration = task.timer.stop("pending")
             if pending_duration is not None:
-                task.phase_timing_ms["pending"] = pending_duration
+                task.phase_duration_ms["pending"] = pending_duration
         if task.status == TaskStatus.QUEUED:
             queue_duration = task.timer.stop("queue")
             if queue_duration is not None:
-                task.phase_timing_ms["queue"] = queue_duration
+                task.phase_duration_ms["queue"] = queue_duration
         waiting_duration = task.timer.stop("waiting")
         if waiting_duration is not None:
-            task.phase_timing_ms["waiting"] = waiting_duration
+            task.phase_duration_ms["waiting"] = waiting_duration
         total_duration = task.timer.stop("total")
         if total_duration is not None:
-            task.phase_timing_ms["total"] = total_duration
+            task.phase_duration_ms["total"] = total_duration

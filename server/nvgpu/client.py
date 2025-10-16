@@ -4,6 +4,8 @@ import time
 from typing import Any
 from dataclasses import dataclass
 
+from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
+
 
 @dataclass
 class TaskResult:
@@ -16,10 +18,10 @@ class TaskResult:
     exit_code: int | None = None
     log_file: str | None = None
     error_message: str | None = None
-    submit_time: str | None = None
-    queued_time: str | None = None  # Time when assigned to GPU queue
-    start_time: str | None = None
-    end_time: str | None = None
+    submit_timestamp: str | None = None
+    queued_timestamp: str | None = None  # Time when assigned to GPU queue
+    start_timestamp: str | None = None
+    end_timestamp: str | None = None
     stdout_size: int = 0
     stderr_size: int = 0
     gpu_id: int | None = None
@@ -28,7 +30,6 @@ class TaskResult:
     queue_time_ms: float | None = None
     waiting_time_ms: float | None = None
     running_time_ms: float | None = None
-    execution_time_ms: float | None = None
     total_time_ms: float | None = None
 
 
@@ -213,18 +214,17 @@ class NVGPUClient:
             exit_code=data.get("exit_code"),
             log_file=data.get("log_file"),
             error_message=data.get("error_message"),
-            submit_time=data.get("submit_time"),
-            queued_time=data.get("queued_time"),
-            start_time=data.get("start_time"),
-            end_time=data.get("end_time"),
+            submit_timestamp=data.get("submit_timestamp"),
+            queued_timestamp=data.get("queued_timestamp"),
+            start_timestamp=data.get("start_timestamp"),
+            end_timestamp=data.get("end_timestamp"),
             stdout_size=data.get("stdout_size", 0),
             stderr_size=data.get("stderr_size", 0),
             gpu_id=data.get("assigned_gpu"),
             pending_time_ms=data.get("pending_time_ms"),
             queue_time_ms=data.get("queue_time_ms"),
             waiting_time_ms=data.get("waiting_time_ms"),
-            running_time_ms=data.get("running_time_ms", data.get("execution_time_ms")),
-            execution_time_ms=data.get("execution_time_ms"),
+            running_time_ms=data.get("running_time_ms"),
             total_time_ms=data.get("total_time_ms"),
         )
     
@@ -248,7 +248,7 @@ class NVGPUClient:
             TimeoutError: If timeout is reached
             RuntimeError: If task fails
         """
-        start_time = time.time()
+        start_ns = monotonic_timestamp_ns()
         
         while True:
             result = self.get_task(task_id)
@@ -256,7 +256,7 @@ class NVGPUClient:
             if result.status in ["completed", "failed", "cancelled"]:
                 return result
             
-            if timeout and (time.time() - start_time) > timeout:
+            if timeout and monotonic_elapsed_ms(start_ns) > timeout * 1000:
                 raise TimeoutError(f"Task {task_id} did not complete within {timeout}s")
             
             time.sleep(poll_interval)

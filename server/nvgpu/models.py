@@ -5,7 +5,7 @@ from typing import Any
 import uuid
 
 from config import GPUMode, GPUStatus, TaskType, TaskMode, TaskStatus
-from utils.timezone import now, ensure_timezone
+from utils.timezone import now_timestamp, ensure_timezone
 from task_timer import TaskTimer
 
 
@@ -20,7 +20,7 @@ class GPU:
     current_memory_usage: float = 0.0
     running_tasks: list[str] = field(default_factory=list)
     error_message: str | None = None
-    last_error_time: datetime | None = None
+    last_error_timestamp: datetime | None = None
     
     # Mode management (new)
     manual_mode: GPUMode | None = None  # Manual mode override (if set)
@@ -90,10 +90,10 @@ class Task:
     
     # Execution info
     assigned_gpu: int | None = None
-    submit_time: datetime = field(default_factory=now)
-    queued_time: datetime | None = None  # Time when assigned to GPU queue
-    start_time: datetime | None = None
-    end_time: datetime | None = None
+    submit_timestamp: datetime = field(default_factory=now_timestamp)
+    queued_timestamp: datetime | None = None  # Time when assigned to GPU queue
+    start_timestamp: datetime | None = None
+    end_timestamp: datetime | None = None
     
     # Results
     exit_code: int | None = None
@@ -101,74 +101,87 @@ class Task:
     error_message: str | None = None
     stdout_size: int = 0  # Size of stdout in bytes
     stderr_size: int = 0  # Size of stderr in bytes
-    host_timing_ms: dict[str, float] = field(default_factory=dict)
-    phase_timing_ms: dict[str, float] = field(default_factory=dict)
+    execution_duration_ms: dict[str, float] = field(default_factory=dict)
+    phase_duration_ms: dict[str, float] = field(default_factory=dict)
     timer: TaskTimer = field(default_factory=TaskTimer, repr=False, compare=False)
     
     @property
-    def pending_time_ms(self) -> float | None:
+    def pending_duration_ms(self) -> float | None:
         """Time spent in PENDING state (submit to GPU assignment), in milliseconds with 2 decimal places."""
-        duration = self.phase_timing_ms.get("pending")
+        duration = self.phase_duration_ms.get("pending")
         if duration is not None:
             return round(duration, 3)
-        if self.queued_time:
-            return round((self.queued_time - self.submit_time).total_seconds() * 1000, 3)
+        if self.queued_timestamp:
+            return round(
+                (self.queued_timestamp - self.submit_timestamp).total_seconds() * 1000,
+                3,
+            )
         return None
     
     @property
-    def queue_time_ms(self) -> float | None:
+    def queue_duration_ms(self) -> float | None:
         """Time spent in QUEUED state (GPU assignment to execution start), in milliseconds with 2 decimal places."""
-        duration = self.phase_timing_ms.get("queue")
+        duration = self.phase_duration_ms.get("queue")
         if duration is not None:
             return round(duration, 3)
-        if self.queued_time and self.start_time:
-            return round((self.start_time - self.queued_time).total_seconds() * 1000, 3)
+        if self.queued_timestamp and self.start_timestamp:
+            return round(
+                (self.start_timestamp - self.queued_timestamp).total_seconds() * 1000,
+                3,
+            )
         return None
     
     @property
-    def waiting_time_ms(self) -> float | None:
+    def waiting_duration_ms(self) -> float | None:
         """Total waiting time (submit to execution start), in milliseconds with 2 decimal places."""
-        duration = self.phase_timing_ms.get("waiting")
+        duration = self.phase_duration_ms.get("waiting")
         if duration is not None:
             return round(duration, 3)
-        if self.start_time:
-            return round((self.start_time - self.submit_time).total_seconds() * 1000, 3)
+        if self.start_timestamp:
+            return round(
+                (self.start_timestamp - self.submit_timestamp).total_seconds() * 1000,
+                3,
+            )
         return None
     
     @property
-    def running_time_ms(self) -> float | None:
+    def running_duration_ms(self) -> float | None:
         """Running time (start to end), in milliseconds with 2 decimal places."""
-        duration = self.phase_timing_ms.get("running")
+        duration = self.phase_duration_ms.get("running")
         if duration is not None:
             return round(duration, 3)
-        duration = self.phase_timing_ms.get("execution")
-        if duration is not None:
-            return round(duration, 3)
-        if self.start_time and self.end_time:
-            return round((self.end_time - self.start_time).total_seconds() * 1000, 3)
+        if self.start_timestamp and self.end_timestamp:
+            return round(
+                (self.end_timestamp - self.start_timestamp).total_seconds() * 1000, 3
+            )
         return None
     
     @property
-    def execution_time_ms(self) -> float | None:
-        """Backward compatible alias for running_time_ms."""
-        return self.running_time_ms
-    
-    @property
-    def total_time_ms(self) -> float | None:
+    def total_duration_ms(self) -> float | None:
         """Total time (submit to end), in milliseconds with 2 decimal places."""
-        duration = self.phase_timing_ms.get("total")
+        duration = self.phase_duration_ms.get("total")
         if duration is not None:
             return round(duration, 3)
-        if self.end_time:
-            return round((self.end_time - self.submit_time).total_seconds() * 1000, 3)
+        if self.end_timestamp:
+            return round(
+                (self.end_timestamp - self.submit_timestamp).total_seconds() * 1000, 3
+            )
         return None
     
     def to_dict(self) -> dict[str, Any]:
         """Convert task to dictionary."""
-        submit_time = ensure_timezone(self.submit_time) if self.submit_time else None
-        queued_time = ensure_timezone(self.queued_time) if self.queued_time else None
-        start_time = ensure_timezone(self.start_time) if self.start_time else None
-        end_time = ensure_timezone(self.end_time) if self.end_time else None
+        submit_timestamp = (
+            ensure_timezone(self.submit_timestamp) if self.submit_timestamp else None
+        )
+        queued_timestamp = (
+            ensure_timezone(self.queued_timestamp) if self.queued_timestamp else None
+        )
+        start_timestamp = (
+            ensure_timezone(self.start_timestamp) if self.start_timestamp else None
+        )
+        end_timestamp = (
+            ensure_timezone(self.end_timestamp) if self.end_timestamp else None
+        )
 
         result = {
             "task_id": self.task_id,
@@ -179,10 +192,16 @@ class Task:
             "gpu_id": self.gpu_id,
             "assigned_gpu": self.assigned_gpu,
             "status": self.status.value,
-            "submit_time": submit_time.isoformat() if submit_time else None,
-            "queued_time": queued_time.isoformat() if queued_time else None,
-            "start_time": start_time.isoformat() if start_time else None,
-            "end_time": end_time.isoformat() if end_time else None,
+            "submit_timestamp": submit_timestamp.isoformat()
+            if submit_timestamp
+            else None,
+            "queued_timestamp": queued_timestamp.isoformat()
+            if queued_timestamp
+            else None,
+            "start_timestamp": start_timestamp.isoformat()
+            if start_timestamp
+            else None,
+            "end_timestamp": end_timestamp.isoformat() if end_timestamp else None,
             "exit_code": self.exit_code,
             "log_file": self.log_file,
             "error_message": self.error_message,
@@ -199,13 +218,11 @@ class Task:
             result["task_label"] = self.task_label
         
         # Add computed timing fields (in milliseconds)
-        result["pending_time_ms"] = self.pending_time_ms
-        result["queue_time_ms"] = self.queue_time_ms
-        result["waiting_time_ms"] = self.waiting_time_ms
-        result["running_time_ms"] = self.running_time_ms
-        result["execution_time_ms"] = self.execution_time_ms
-        result["total_time_ms"] = self.total_time_ms
-        if self.host_timing_ms:
-            result["host_timing_ms"] = self.host_timing_ms
+        result["pending_duration_ms"] = self.pending_duration_ms
+        result["queue_duration_ms"] = self.queue_duration_ms
+        result["waiting_duration_ms"] = self.waiting_duration_ms
+        result["running_duration_ms"] = self.running_duration_ms
+        result["total_duration_ms"] = self.total_duration_ms
+        result["execution_duration_ms"] = self.execution_duration_ms
 
         return result

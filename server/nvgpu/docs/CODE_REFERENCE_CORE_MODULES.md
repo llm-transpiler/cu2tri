@@ -445,8 +445,8 @@ def trigger_severe_error(self, gpu_id, error_msg):
         # Step 2: 重新排队（逆序，保持原顺序）
         for task in reversed(killed_tasks):
             # 重置任务状态
-            task.start_time = None
-            task.end_time = None
+            task.start_timestamp = None
+            task.end_timestamp = None
             task.exit_code = None
             task.error_message = f"Requeued due to GPU {gpu_id} severe error"
             
@@ -648,7 +648,7 @@ def cancel_task(self, task_id: str) -> bool:
 - 对于 RUNNING: 
   - 调用 `task_runner.kill_task` 终止进程
   - 设置状态为 CANCELLED
-  - 设置 `error_message` 和 `end_time`
+  - 设置 `error_message` 和 `end_timestamp`
 - 记录日志
 
 **返回**:
@@ -678,7 +678,7 @@ def force_cancel_task(self, task_id: str, task_runner) -> bool:
                 # 更新任务状态
                 task.status = TaskStatus.CANCELLED
                 task.error_message = "Cancelled by user (force)"
-                task.end_time = datetime.now()
+                task.end_timestamp = datetime.now()
                 logger.info(f"Task {task_id} force cancelled")
                 return True
             else:
@@ -715,7 +715,7 @@ def force_cancel_task(self, task_id: str, task_runner) -> bool:
 
 **副作用**:
 - 更新任务状态: QUEUED → RUNNING → COMPLETED/FAILED/CANCELLED
-- 设置 `task.assigned_gpu`, `start_time`, `end_time`, `exit_code`
+- 设置 `task.assigned_gpu`, `start_timestamp`, `end_timestamp`, `exit_code`
 - 创建 stdout/stderr 文件
 - 创建日志文件
 - 注册/注销运行进程
@@ -738,7 +738,7 @@ def run_task(self, task: Task, gpu_id: int) -> bool:
         # 1.1 更新任务状态
         task.status = TaskStatus.RUNNING
         task.assigned_gpu = gpu_id
-        task.start_time = datetime.now()
+        task.start_timestamp = datetime.now()
         
         # 1.2 准备脚本路径
         script_abs_path = os.path.abspath(task.script_path)
@@ -819,7 +819,7 @@ def run_task(self, task: Task, gpu_id: int) -> bool:
         
         # 3.2 保存退出码和结束时间
         task.exit_code = exit_code
-        task.end_time = datetime.now()
+        task.end_timestamp = datetime.now()
         
         # 3.3 确定最终状态
         if exit_code == 0:
@@ -849,7 +849,7 @@ def run_task(self, task: Task, gpu_id: int) -> bool:
         # 超时异常处理
         task.status = TaskStatus.FAILED
         task.error_message = f"Timeout after {config.task_timeout} seconds"
-        task.end_time = datetime.now()
+        task.end_timestamp = datetime.now()
         
         # 关闭文件
         if stdout_file:
@@ -873,7 +873,7 @@ def run_task(self, task: Task, gpu_id: int) -> bool:
         # 其他异常处理
         task.status = TaskStatus.FAILED
         task.error_message = str(e)
-        task.end_time = datetime.now()
+        task.end_timestamp = datetime.now()
         logger.error(f"Task {task.task_id} failed with exception: {e}")
         
         # 关闭文件
@@ -1248,7 +1248,7 @@ def submit_task(self, script_path, ...) -> str:
 **代码逻辑**:
 ```python
 def wait_for_task(self, task_id, timeout=None, poll_interval=2.0) -> TaskResult:
-    start_time = time.time()
+    start_timestamp = time.time()
     
     while True:
         # 1. 获取任务状态
@@ -1259,7 +1259,7 @@ def wait_for_task(self, task_id, timeout=None, poll_interval=2.0) -> TaskResult:
             return result
         
         # 3. 检查超时
-        if timeout and (time.time() - start_time) > timeout:
+        if timeout and (time.time() - start_timestamp) > timeout:
             raise TimeoutError(f"Task {task_id} did not complete within {timeout}s")
         
         # 4. 等待下次轮询

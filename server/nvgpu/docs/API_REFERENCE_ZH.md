@@ -144,7 +144,7 @@ http://localhost:8080
     "task_label": "xpiler_cuda/add_3_3_256",
     "script_path": "/path/to/script.py",
     "status": "pending",
-    "submit_time": "2025-01-15T10:30:00.123456",
+    "submit_timestamp": "2025-01-15T10:30:00.123456",
     ...
   }
 }
@@ -231,15 +231,15 @@ curl -X POST http://localhost:8080/tasks \
   "script_path": "/path/to/script.py",
   "status": "completed",
   "assigned_gpu": 0,
-  "submit_time": "2025-01-15T10:30:00.000",
-  "queued_time": "2025-01-15T10:30:01.250",
-  "start_time": "2025-01-15T10:30:04.650",
-  "end_time": "2025-01-15T10:30:17.150",
+  "submit_timestamp": "2025-01-15T10:30:00.000",
+  "queued_timestamp": "2025-01-15T10:30:01.250",
+  "start_timestamp": "2025-01-15T10:30:04.650",
+  "end_timestamp": "2025-01-15T10:30:17.150",
   "exit_code": 0,
   "pending_time_ms": 1250.50,
   "queue_time_ms": 3400.25,
   "waiting_time_ms": 4650.75,
-  "execution_time_ms": 12500.00,
+  "running_time_ms": 12500.00,
   "total_time_ms": 17150.25
 }
 ```
@@ -248,14 +248,14 @@ curl -X POST http://localhost:8080/tasks \
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `submit_time` | ISO时间 | 任务提交时间 |
-| `queued_time` | ISO时间 | 分配到GPU队列的时间 |
-| `start_time` | ISO时间 | 开始执行时间 |
-| `end_time` | ISO时间 | 结束时间 |
+| `submit_timestamp` | ISO时间 | 任务提交时间 |
+| `queued_timestamp` | ISO时间 | 分配到GPU队列的时间 |
+| `start_timestamp` | ISO时间 | 开始执行时间 |
+| `end_timestamp` | ISO时间 | 结束时间 |
 | `pending_time_ms` | 浮点数 | PENDING 阶段时间（提交→分配GPU） |
 | `queue_time_ms` | 浮点数 | QUEUED 阶段时间（分配GPU→开始执行） |
 | `waiting_time_ms` | 浮点数 | 总等待时间（提交→开始执行） |
-| `execution_time_ms` | 浮点数 | 执行时间（开始→结束） |
+| `running_time_ms` | 浮点数 | 执行时间（开始→结束） |
 | `total_time_ms` | 浮点数 | 总时间（提交→结束） |
 
 **时间线关系:**
@@ -287,7 +287,7 @@ print(f"\n任务计时（毫秒）:")
 print(f"  Pending时间:   {result.pending_time_ms:.2f} ms")
 print(f"  Queue时间:     {result.queue_time_ms:.2f} ms")
 print(f"  等待时间:      {result.waiting_time_ms:.2f} ms")
-print(f "  执行时间:      {result.execution_time_ms:.2f} ms")
+print(f "  执行时间:      {result.running_time_ms:.2f} ms")
 print(f"  总时间:        {result.total_time_ms:.2f} ms")
 ```
 
@@ -941,7 +941,7 @@ while True:
 # 检查结果
 print(f"\nTask {result.status}")
 print(f"Exit code: {result.exit_code}")
-print(f"Execution time: {result.execution_time_ms}ms")
+print(f"Running time: {result.running_time_ms}ms")
 
 if result.exit_code == 0:
     print("✓ Test PASSED")

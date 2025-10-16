@@ -84,6 +84,7 @@ class Scheduler:
             
             # Check for GPU errors based on task result
             if not success or task.exit_code != 0:
+                logger.error(f"TASK {format_task_ref(task)} failed with exit code {task.exit_code}")
                 # Check stderr for GPU-related errors (if file is small enough)
                 if task.log_file and task.stderr_size > 0 and task.stderr_size < 1024 * 1024:  # < 1MB
                     try:
@@ -93,17 +94,17 @@ class Scheduler:
                             stderr_content = stderr_path.read_text(encoding='utf-8', errors='replace')
                             if any(err in stderr_content.lower() 
                                   for err in ["cuda error", "gpu error", "out of memory"]):
-                                logger.warning(
-                                    "GPU error detected in task %s",
+                                logger.error(
+                                    "GPU error detected in TASK %s",
                                     format_task_ref(task, short_id=True),
                                 )
                                 # Could trigger severe error here if needed
-                                # self.gpu_manager.trigger_severe_error(gpu_id, "GPU error in task")
+                                self.gpu_manager.trigger_severe_error(gpu_id, "GPU error in TASK " + format_task_ref(task))
                     except Exception as e:
                         logger.debug(f"Could not check stderr for GPU errors: {e}")
         finally:
             # Restore GPU mode after task completes
-            self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task.task_id)
+            self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task)
             
             # Mark task as completed on GPU
             self.gpu_manager.mark_task_completed(gpu_id, task)
@@ -114,7 +115,7 @@ class Scheduler:
             try:
                 # Skip scheduling if severe error is active
                 if self.gpu_manager.severe_error_active:
-                    logger.debug("Severe error active, skipping scheduling")
+                    logger.warning("Severe error active, skipping scheduling")
                     time.sleep(config.scheduler_interval)
                     continue
                 

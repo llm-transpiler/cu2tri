@@ -35,7 +35,7 @@ python examples/example_basic.py
 python examples/example_task_timing.py
 ```
 **演示：**
-- 详细时间字段（pending, queue, waiting, execution, total）
+- 详细时间字段（pending, queue, waiting, running, total）
 - 时间线可视化
 - 性能瓶颈分析
 - 执行效率计算
@@ -44,7 +44,7 @@ python examples/example_task_timing.py
 - `pending_time_ms`: 提交→分配GPU
 - `queue_time_ms`: 分配GPU→开始执行
 - `waiting_time_ms`: 总等待时间
-- `execution_time_ms`: 实际执行时间
+- `running_time_ms`: 实际执行时间
 - `total_time_ms`: 端到端总时间
 
 ---

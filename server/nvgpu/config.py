@@ -62,7 +62,5 @@ class ServerConfig:
     scheduler_interval: float = 1.0  # Check every 1 second
     gpu_monitor_interval: float = 5.0  # Monitor GPU every 5 seconds
 
-
 # Global server configuration instance
 config = ServerConfig()
-

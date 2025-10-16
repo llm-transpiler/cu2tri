@@ -326,7 +326,8 @@ class ServerConfig:
     port: int = 8080
     log_file: str | None = "logs/nvgpu_server.log"
     log_level: str = "DEBUG"
-    
+    timezone: str = "Asia/Shanghai"
+
     # Default GPU settings
     default_gpu_mode: GPUMode = GPUMode.SHARED
     default_memory_threshold: float = 0.75  # 75% memory usage threshold
@@ -339,6 +340,7 @@ class ServerConfig:
     # Scheduler settings
     scheduler_interval: float = 1.0  # Check every 1 second
     gpu_monitor_interval: float = 5.0  # Monitor GPU every 5 seconds
+
 ```
 
 **用途**: 集中管理服务器的所有配置参数
@@ -443,6 +445,12 @@ gpu_monitor_interval: float = 5.0
 - **默认值**: 5.0 秒
 - **影响**: GPU 内存使用情况的更新频率
 - **注意**: `find_available_gpu()` 会主动更新，不完全依赖此值
+
+#### 5. 计时器设置
+
+- 持续时间统一由 `profiler.timer` 使用 `time.perf_counter_ns()` 采集
+- 顺序/超时判断通过 `profiler.timer` 提供的 `monotonic_timestamp_ns()` 等辅助函数完成
+- 不再需要运行时切换默认时钟，两个时钟源并行存在，按场景取用
 
 ---
 

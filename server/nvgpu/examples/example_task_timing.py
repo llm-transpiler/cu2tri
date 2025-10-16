@@ -8,7 +8,7 @@ New timing fields (all in milliseconds with 2 decimal places):
 - pending_time_ms: Time spent waiting for GPU assignment
 - queue_time_ms: Time spent in GPU queue waiting for execution
 - waiting_time_ms: Total waiting time (pending + queue)
-- running_time_ms: Actual execution time (alias: execution_time_ms)
+- running_time_ms: Actual execution duration
 - total_time_ms: Total time from submit to completion
 
 Timeline:
@@ -25,7 +25,6 @@ import sys
 sys.path.insert(0, '/workspace/server/nvgpu')
 
 from client import NVGPUClient
-import time
 
 
 def print_timing_breakdown(task_id: str, result):
@@ -35,12 +34,12 @@ def print_timing_breakdown(task_id: str, result):
     print(f"Status: {result.status} (exit_code={result.exit_code})")
     print(f"{'='*70}")
     
-    if result.queued_time:
+    if result.queued_timestamp:
         print(f"\n📅 Timestamps:")
-        print(f"  Submit Time:  {result.submit_time}")
-        print(f"  Queued Time:  {result.queued_time}")
-        print(f"  Start Time:   {result.start_time}")
-        print(f"  End Time:     {result.end_time}")
+        print(f"  Submit Timestamp:  {result.submit_timestamp}")
+        print(f"  Queued Timestamp:  {result.queued_timestamp}")
+        print(f"  Start Timestamp:   {result.start_timestamp}")
+        print(f"  End Timestamp:     {result.end_timestamp}")
     
     if result.total_time_ms is not None:
         print(f"\n⏱️  Timing Breakdown (milliseconds):")
@@ -60,7 +59,7 @@ def print_timing_breakdown(task_id: str, result):
             pct = (result.waiting_time_ms / result.total_time_ms * 100) if result.total_time_ms > 0 else 0
             print(f"  │  Total Waiting              │ {result.waiting_time_ms:>10.2f}   │ {pct:>6.2f}%  │")
         
-        running_ms = result.running_time_ms or result.execution_time_ms
+        running_ms = result.running_time_ms
         if running_ms is not None:
             pct = (running_ms / result.total_time_ms * 100) if result.total_time_ms > 0 else 0
             print(f"  │  Running (actual runtime)   │ {running_ms:>10.2f}   │ {pct:>6.2f}%  │")
@@ -130,7 +129,7 @@ def main():
     total_waiting = 0
     for task_id in task_ids:
         result = client.get_task(task_id)
-        running_ms = result.running_time_ms or result.execution_time_ms
+        running_ms = result.running_time_ms
         if running_ms:
             total_execution += running_ms
         if result.waiting_time_ms:

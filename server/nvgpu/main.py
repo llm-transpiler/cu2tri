@@ -14,6 +14,10 @@ from scheduler import Scheduler
 from api_server import init_app, app
 from gpu_config_loader import GPUConfigLoader
 from utils.timezone import format_timestamp, set_default_timezone
+from profiler.timer import (
+    monotonic_timestamp_ns,
+    perf_counter_timestamp_ns,
+)
 import uvicorn
 
 # Define NVGPU root directory (main.py's parent directory)
@@ -27,6 +31,12 @@ timestamp = format_timestamp()
 log_file = str(NVGPU_ROOT / "logs" / f"nvgpu_server_{timestamp}.log")
 history_log_file = str(NVGPU_ROOT / "logs" / "nvgpu_server.log")
 logger = setup_logger("main", log_file=log_file, history_log_file=history_log_file)
+
+logger.info(
+    "Timer setup: perf_counter_ns for durations (sample=%d), monotonic_ns for ordering (sample=%d)",
+    perf_counter_timestamp_ns(),
+    monotonic_timestamp_ns(),
+)
 
 
 class NVGPUServer:

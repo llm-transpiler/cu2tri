@@ -154,6 +154,9 @@ print(result.status)
 - 日志输出依旧沿用原有 logger，不影响现有时间戳格式。需要更细的
   GPU/NPU 内核级 profiling 时，可在宿主计时结果的基础上再叠加其它
   工具。
+- 持续时间统一使用 `time.perf_counter_ns` 记录；`profiler.timer` 提供的
+  `monotonic_timestamp_ns` / `monotonic_elapsed_ms` 用于顺序判断、超时检测，
+  两套时钟并行使用，无需运行时切换。
 
 ## 时区设置
 

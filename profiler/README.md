@@ -1,9 +1,9 @@
 # 单调时间辅助工具
 
-`profiler/timer.py` 提供了一套基于 `time.monotonic()` 的轻量级计时工具，方便在现有代码中快速插入稳定的性能测量，而无需引入复杂的分析框架。
+`profiler/timer.py` 提供了一套基于 `time.perf_counter_ns()` 的轻量级计时工具，方便在现有代码中快速插入稳定的性能测量；同时暴露 `time.monotonic_ns()` 相关辅助函数，用于顺序判断、超时检测。
 
 ## 设计目标
-- **使用单调时钟：** `time.monotonic()` 不会受 NTP 或手动校时影响，时长计算稳定可靠。仍可同时保留 `datetime.now()` 等绝对时间，用于日志或业务记录。
+- **区分耗时与顺序：** 持续时间使用 `time.perf_counter_ns()` 采集，高分辨率且适合度量性能；需要判断先后关系或超时时，调用提供的 `monotonic_timestamp_ns()` / `monotonic_elapsed_ms()`。
 - **轻量易插拔：** API 只有上下文管理器、装饰器和一次性测量三个入口，插入代码改动极小。
 - **可自定义 Reporter：** 所有测量结果都会包装成 `TimerSample` 并交给 reporter 回调。默认 reporter 输出一行摘要；也可替换为日志、指标或其他收集器。
 - **运行时开关：** 可随时启用/禁用，便于在性能验证结束后关闭额外开销，但保留代码入口。
@@ -37,6 +37,11 @@ with timer.time("graph_build"):
 - `HostTimer`：继承自 `Timer`，语义上限定为宿主/CPU 侧计时，方便在 Host / Device 混用场景中做类型区分。
 - `TimerSample`：不可变数据结构，包含 `label`、`start`、`end`、`duration`、`duration_ms` 和 `error`。
 - `create_timer()` / `create_host_timer()`：便捷工厂函数，分别返回 `Timer` 与 `HostTimer`。
+
+## 辅助时钟函数
+- `perf_counter_timestamp_ns()` / `perf_counter_timestamp_ms()`：直接读取高分辨率性能计数器。
+- `monotonic_timestamp_ns()` / `monotonic_timestamp_ms()`：获取单调递增时钟，用于顺序判断。
+- `monotonic_elapsed_ms(start_ns)`：基于单调时钟计算相对耗时（毫秒）。
 
 ## 快速上手
 ```python
@@ -99,8 +104,8 @@ timer = create_host_timer(reporter=reporter)
 - `TimerSample.error` 会记录对应的异常对象，方便 reporter 标记失败。
 
 ## 实现说明
-- `_TimerContext` 是内部上下文管理器，用于记录开始和结束的单调时间；`_NullContext` 则是禁用时的空实现。
-- 模块没有全局状态或异步钩子，适合在同步或多线程场景中直接使用。`time.monotonic()` 是进程范围的，线程安全，无需额外锁。
+- `_TimerContext` 是内部上下文管理器，用于记录开始和结束的性能计数器值；`_NullContext` 则是禁用时的空实现。
+- 模块没有全局状态或异步钩子，适合在同步或多线程场景中直接使用。`time.perf_counter_ns()` 与 `time.monotonic_ns()` 都是进程范围的，线程安全，无需额外锁。
 
 ## 进阶用法建议
 - 使用有意义的 label，如 `"load_batch"`、`"preprocess"`、`"inference"`、`"postprocess"`，便于后续分析。

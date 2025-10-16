@@ -57,10 +57,10 @@ class TestExampleBasic(unittest.TestCase):
             # Submitted line includes id and script
             self.assertRegex(
                 new_tail,
-                re.compile(rf"Task {re.escape(task_id)} submitted: .*simple_functional_test\.py", re.S),
+                re.compile(rf"TASK {re.escape(task_id)} submitted: .*simple_functional_test\.py", re.S),
             )
             # Completed line includes id and completed on GPU
             self.assertRegex(
                 new_tail,
-                re.compile(rf"Task {re.escape(task_id)} completed on GPU", re.S),
+                re.compile(rf"TASK {re.escape(task_id)} completed on GPU", re.S),
             )

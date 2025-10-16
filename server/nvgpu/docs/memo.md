@@ -1,3 +1,21 @@
 GPUManager所有GPU共用一个，register_gpu中的GPU是只有gpu_id的，这个是GPUConfig的logical_id
 nvmlInit的时候获取的是nvidia-smi差不多的信息，不会管gpu的register相关动作
 manual_mode一般不轻易启用
+每个Task一个timer, 每个timer通常有pending、queue、waiting、total等字段
+一个任务会首先进入TaskQueue的gloabl_queue队列，开始计算total、wating、pending启动
+pending是指（每次，放回应该是重新开始计）从global_queue离开，进到一个具体的物理GPU的queue中去的过程
+TaskQueue.cancel_task方法支队PENDING和QUEUED的task有效
+TaskQueue.force_cancel_task对所有任务都有效，PENDING和QUEUED会fallback回cancel_task
+
+pop_pending_task是从global_queue中取出队首
+GPUManager.find_available_gpu是给任务分配GPU的地方，如果没指定GPU就直接有啥分啥了（按照key遍历），没有任何策略
+如果没找到一个任务有哪个GPU能完成就放到队首（感觉这里是不是不太合理）
+schedule一定会先执行完所有能分配的任务才会去运行
+遍历每个GPU（每个GPU每次只寻找一个能启动的任务），看它的task队列，弹出队首，没有任务就遍历下一个GPU
+查看GPU当前是否支持这个任务的mode类型，如果不支持则放回gpu的gpu_queues的队首，然后继续下一个GPU
+如果支持，也就是说当前GPU准备运行刚取出的队首任务了，首先标记这个task running，并且设置gpu的mode
+然后就启动一个线程运行这个GPU任务了，启动参数是task和gpu_id（注意这里是logical_id）
+
+
+结束后默认恢复为shared这个mode
+标记任务完成

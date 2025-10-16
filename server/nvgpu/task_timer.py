@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Dict, Optional
 
 from profiler.timer import HostTimer, TimerSample, create_host_timer
 
@@ -17,8 +16,8 @@ class TaskTimer:
 
     def __init__(self, task_id: str | None = None) -> None:
         self._samples: list[TimerSample] = []
-        self._durations_ms: Dict[str, float] = {}
-        self._active_contexts: Dict[str, _ManagedContext] = {}
+        self._durations_ms: dict[str, float] = {}
+        self._active_contexts: dict[str, _ManagedContext] = {}
         self._timer: HostTimer = create_host_timer(
             reporter=self._capture_sample,
             enabled=True,
@@ -40,7 +39,7 @@ class TaskTimer:
         ctx.enter()
         self._active_contexts[label] = ctx
 
-    def stop(self, label: str) -> Optional[float]:
+    def stop(self, label: str) -> float | None:
         """Stop timing segment and return duration in milliseconds."""
         ctx = self._active_contexts.pop(label, None)
         if not ctx:
@@ -48,11 +47,11 @@ class TaskTimer:
         ctx.exit()
         return self._durations_ms.get(label)
 
-    def get_duration_ms(self, label: str) -> Optional[float]:
+    def get_duration_ms(self, label: str) -> float | None:
         """Get measured duration in milliseconds."""
         return self._durations_ms.get(label)
 
-    def as_dict(self) -> Dict[str, float]:
+    def as_dict(self) -> dict[str, float]:
         """Return a copy of collected durations."""
         return dict(self._durations_ms)
 

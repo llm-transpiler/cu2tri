@@ -170,12 +170,12 @@ curl -X POST http://localhost:8080/tasks \
   "script_path": "/path/to/script.py",
   "status": "completed",
   "assigned_gpu": 0,
-  "submit_time": "2025-01-15T10:30:00.123456",
-  "start_time": "2025-01-15T10:30:01.234567",
-  "end_time": "2025-01-15T10:30:05.345678",
+  "submit_timestamp": "2025-01-15T10:30:00.123456",
+  "start_timestamp": "2025-01-15T10:30:01.234567",
+  "end_timestamp": "2025-01-15T10:30:05.345678",
   "exit_code": 0,
   "total_time_ms": 5111,
-  "execution_time_ms": 4111
+  "running_time_ms": 4111
 }
 ```
 

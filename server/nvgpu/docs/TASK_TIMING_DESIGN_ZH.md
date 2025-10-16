@@ -6,7 +6,7 @@
 
 在改造之前，控制面仅通过以下方式衡量耗时：
 
-- `Task.submit_time / queued_time / start_time / end_time` 等字段记录 datetime，用于在日志或 API 中展示事件时间点；
+- `Task.submit_timestamp / queued_timestamp / start_timestamp / end_timestamp` 等字段记录 datetime，用于在日志或 API 中展示事件时间点；
 - 各阶段耗时通过 datetime 相减得出，缺少更细粒度的采样能力；
 - `task_runner.py` 使用 `HostTimer` 仅监控 `process.wait`，未覆盖排队、启动等前置阶段。
 
@@ -37,7 +37,7 @@
 - `pending`：处于全局待处理队列的时间；
 - `queue`：被分配到指定 GPU 队列后的排队时间；
 - `running`：子进程生命周期（执行开始 → 结束/终止）的时间；
-- 历史上曾使用 `execution` 标签，代码仍保留兼容逻辑以应对迁移期产生的数据；
+- 历史上曾使用 `execution` 标签，现已统一收敛为 `running`；
 - 其余标签可在未来扩展，例如 Scheduler 内部阶段或 GPU 管理事件。
 
 ## 3. 生命周期采集流程
@@ -49,13 +49,13 @@
 
 ### 3.2 任务入 GPU 队列 (`TaskQueue.queue_task_for_gpu`)
 
-1. 记录 `queued_time` datetime；
+1. 记录 `queued_timestamp` datetime；
 2. 停止 `pending` 计时并写入 `phase_timing_ms["pending"]`；
 3. 随即开启 `queue` 计时，统计在 GPU 专属队列中的排队耗时。
 
 ### 3.3 任务开始执行 (`TaskRunner.run_task`)
 
-1. 切换状态为 `RUNNING`、设置 `start_time`；
+1. 切换状态为 `RUNNING`、设置 `start_timestamp`；
 2. 停止 `queue` 与 `waiting` 计时，并更新对应 `phase_timing_ms`；
 3. 启动 `running` 计时，在子进程生命周期内累计耗时；
 4. `process.wait` 仍然使用原有 `HostTimer` 采样写入 `task.host_timing_ms`，与新设计互补。
