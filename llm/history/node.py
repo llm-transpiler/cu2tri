@@ -2,7 +2,7 @@
 """
 对话节点模块，定义对话树中的节点类
 """
-from typing import List, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..providers.base import Message
@@ -13,7 +13,7 @@ class MessageNode:
         self.id = message_obj.id
         self.message = message_obj
         self.parent = parent
-        self.children: List['MessageNode'] = []
+        self.children: list['MessageNode'] = []
         self.tree = None
         
         # 如果指定了父节点，建立双向关系
@@ -39,14 +39,14 @@ class MessageNode:
             child.parent = None
         self.children = []
     
-    def get_all_children(self) -> List['MessageNode']:
+    def get_all_children(self) -> list['MessageNode']:
         all_children = []
         for child in self.children:
             all_children.extend(child.get_all_children())
             all_children.append(child)
         return all_children
 
-    def get_children(self) -> List['MessageNode']:
+    def get_children(self) -> list['MessageNode']:
         return self.children
     
     def get_parent(self) -> Optional['MessageNode']:
