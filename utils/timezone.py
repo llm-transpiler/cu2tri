@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import lru_cache
 from zoneinfo import ZoneInfo
+from typing import Any
 
 # Default timezone can be overridden at runtime via ``set_default_timezone``.
 DEFAULT_TZ_NAME = "Asia/Shanghai"
@@ -53,3 +54,54 @@ def format_timestamp(
     """Format datetime using the specified/default timezone."""
     target = ensure_timezone(dt, tz_name) if dt else now_timestamp(tz_name)
     return target.strftime(fmt)
+
+
+def parse_timestamp(value: Any) -> datetime | None:
+    """Parse a datetime-like value and normalize it to the default timezone.
+
+    Accepts aware/naive ``datetime`` objects or ISO-8601 strings (with optional ``Z`` suffix).
+    Returns ``None`` if the value cannot be parsed.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return ensure_timezone(value)
+    if isinstance(value, str):
+        try:
+            return ensure_timezone(datetime.fromisoformat(value.replace("Z", "+00:00")))
+        except ValueError:
+            return None
+    return None
+
+
+def normalize_timestamp_iso(value: Any) -> str | None:
+    """Return an ISO-8601 string for ``value`` after timezone normalization.
+
+    Falls back to the original string if parsing fails; otherwise returns ``None``.
+    """
+    parsed = parse_timestamp(value)
+    if parsed is not None:
+        return parsed.isoformat()
+    if isinstance(value, str):
+        return value
+    return None
+
+'''
+>>> from utils.timezone import now_timestamp
+>>> now_timestamp()
+datetime.datetime(2025, 10, 17, 8, 24, 22, 223626, tzinfo=zoneinfo.ZoneInfo(key='Asia/Shanghai'))
+>>> from datetime import datetime
+>>> datetime.now()
+datetime.datetime(2025, 10, 17, 0, 24, 58, 200549)
+>>> datetime.now().isoformat()
+'2025-10-17T00:25:20.139185'
+>>> now_timestamp().isoformat()
+'2025-10-17T08:25:24.448158+08:00'
+>>> now_timestamp().strftime('%Y%m%d_%H%M%S')
+'20251017_082537'
+>>> datetime.now().strftime('%Y%m%d_%H%M%S')
+'20251017_002543'
+>>> from utils.timezone import format_timestamp
+>>> format_timestamp()
+'20251017_082715'
+'''

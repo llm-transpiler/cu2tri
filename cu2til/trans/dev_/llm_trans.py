@@ -5,18 +5,30 @@ import sys
 import json
 import subprocess
 import argparse
-import time
 import re
 import httpx
 import asyncio
 from pathlib import Path
 from datetime import datetime
-from case_config import XPILER_ALL_CASES, LEETCUDA_DYNAMIC_ALL_CASES, LEETCUDA_DYNAMIC_CASES_2
+from case_config import (
+    XPILER_ALL_CASES,
+    XPILER_EXTENDED_CASES,
+    LEETCUDA_DYNAMIC_ALL_CASES,
+    LEETCUDA_DYNAMIC_CASES_2,
+)
 from openai import OpenAI, AsyncOpenAI
 from cu2til.prompt.cuda2triton import simple_initial_prompt, feedback_prompt
 import dotenv
 from llm.client.openai_compat import get_api_param_openai_default
 from llm.client.openai_compat import openai_llm_call, async_openai_llm_call, CallingIdentifier, get_api_params_method, make_openai_message_system, make_openai_message_user, make_openai_message_assistant
+from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
+from utils.timezone import (
+    ensure_timezone,
+    format_timestamp,
+    normalize_timestamp_iso,
+    now_timestamp,
+    parse_timestamp,
+)
 
 # Import NVGPU client
 sys.path.insert(0, '/workspace/server/nvgpu')
@@ -44,7 +56,7 @@ def parse_args():
                        help='Test only the first case from each case type')
     parser.add_argument('--no-perf', action='store_true', default=True,
                        help='Skip performance testing (add --no-perf to check_triton.py)')
-    parser.add_argument('--testset', choices=['xpiler', 'leetcuda_dynamic', 'leetcuda_dynamic_2', 'hard'], 
+    parser.add_argument('--testset', choices=['xpiler', 'xpiler_extended', 'leetcuda_dynamic', 'leetcuda_dynamic_2', 'hard'], 
                        default='xpiler', help='Test set to use (default: xpiler)')
     parser.add_argument('--retry-wait', type=int, default=60,
                        help='Wait time in seconds when encountering API overload errors (default: 60)')
@@ -62,7 +74,7 @@ def parse_args():
     parser.add_argument('--nvgpu-task-type', choices=['functional', 'performance'],
                        default='functional', help='Task type for NVGPU (default: functional)')
     # Async concurrency options
-    parser.add_argument('--concurrency', type=int, default=10,
+    parser.add_argument('--concurrency', type=int, default=1,
                        help='Maximum number of concurrent tasks (default: 10)')
     return parser.parse_args()
 
@@ -84,8 +96,8 @@ async_client = None
 if run_model == "qwen":
     # model_name = "Qwen/Qwen3-Next-80B-A3B-Thinking-FP8"
     # model_name = "qwen3-coder-480b-a35b-instruct"
-    # model_name = "qwen/qwen3-max"
-    model_name = "qwen3-vl-235b-a22b-thinking"
+    model_name = "qwen/qwen3-max"
+    # model_name = "qwen3-vl-235b-a22b-thinking"
     # client = OpenAI(
     #     base_url="https://openrouter.ai/api/v1",
     #     api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -123,18 +135,21 @@ elif run_model == "glm":
     )
     get_api_param = get_api_params_method(CallingIdentifier.OPENAI_OFFICIAL)
 elif run_model == "gpt":
-    model_name = "openai/gpt-oss-120b"
+    model_name = "openai/gpt-oss-20b"
     # model_name = "openai/gpt-4o"
     # model_name = "openai/gpt-5-codex"
-    model_name = "openai/gpt-5-mini"
+    # model_name = "openai/gpt-5-mini"
     # client = OpenAI(
-    #     # base_url='http://10.156.112.253:8000/v1',  # 5880x4
+    #     base_url='http://10.156.112.253:8003/v1',  # 5880x4
     #     # base_url="http://10.208.130.44:8000/v1", # sigma44:a800x8
-    #     base_url="http://127.0.0.1:8002/v1", # docker-h20 8001, 6,7
+    #     # base_url="http://127.0.0.1:8002/v1", # docker-h20 8001, 6,7
+    #     # base_url="http://127.0.0.1:8010/v1", # docker-h20 8010, all
     #     api_key="EMPTY"
     # )
     # async_client = AsyncOpenAI(
-    #     base_url="http://127.0.0.1:8002/v1",
+    #     base_url="http://127.0.0.1:8003/v1",
+    #     # base_url="http://127.0.0.1:8002/v1",
+    #     # base_url="http://127.0.0.1:8010/v1",
     #     api_key="EMPTY"
     # )
     client = OpenAI(
@@ -295,9 +310,12 @@ def is_retryable_error(error_message):
 DIR_CUDA_ = Path("cuda_")
 DIR_TORCH_ = Path("torch_")
 DIR_TRITON_ = Path("triton_")
-TESTSET_ROOT_DIR = Path(f"/workspace/cu2til/cases/{args.testset}")
+if args.testset.startswith("xpiler"):
+    TESTSET_ROOT_DIR = Path("/workspace/cu2til/cases/xpiler")
+else:
+    TESTSET_ROOT_DIR = Path(f"/workspace/cu2til/cases/{args.testset}")
 TEMPERATURE = 0.35
-TIMESTAMP = datetime.now().strftime('%Y%m%d_%H%M%S')
+TIMESTAMP = format_timestamp()
 MAX_ROUNDS = 5
 CONSOLE_OUTPUT = args.console and not args.no_console  # Whether to output to console
 CHECK_SUFFIX = "_dynamic"
@@ -310,6 +328,8 @@ elif args.testset == "leetcuda_dynamic_2":
     ALL_CASES = LEETCUDA_DYNAMIC_CASES_2
 elif args.testset == "xpiler":
     ALL_CASES = XPILER_ALL_CASES
+elif args.testset == "xpiler_extended":
+    ALL_CASES = XPILER_EXTENDED_CASES
 elif args.testset == "hard":
     ALL_CASES = {"fa": ["fa_cute"]}
 
@@ -409,16 +429,54 @@ AVAILABLE_CASES = get_available_cases()
 # Global JSONL log file for real-time statistics
 JSONL_LOG_FILE = WORK_DIR / f"{model_name_clean}_{args.testset}.jsonl"
 JSONL_LOCK = asyncio.Lock()
+RETRY_LOG_LOCK = asyncio.Lock()
 
 
-async def write_jsonl_log(log_entry):
+async def write_jsonl_log(log_entry, log_file, jsonl_lock):
     """Write a log entry to JSONL file in real-time with async lock."""
-    async with JSONL_LOCK:
+    async with jsonl_lock:
         try:
-            with open(JSONL_LOG_FILE, 'a', encoding='utf-8') as f:
+            with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
         except Exception as e:
             logger.warning(f"Failed to write JSONL log: {e}")
+
+
+async def log_retry_event(
+    test_work_dir,
+    *,
+    event_type,
+    stage,
+    case_type,
+    case_name,
+    pass_id,
+    round_id,
+    retry_index,
+    extra=None,
+):
+    """Persist detailed retry events for later auditing."""
+    retry_log_dir = test_work_dir / "logs"
+    retry_log_dir.mkdir(parents=True, exist_ok=True)
+    retry_log_file = retry_log_dir / "retry_events.jsonl"
+    record = {
+        "_type": "retry_event",
+        "event": event_type,
+        "stage": stage,
+        "case_type": case_type,
+        "case_name": case_name,
+        "pass_id": pass_id,
+        "round_id": round_id,
+        "retry_index": retry_index,
+        "timestamp": ensure_timezone(now_timestamp()).isoformat(),
+    }
+    if extra:
+        record.update(extra)
+    async with RETRY_LOG_LOCK:
+        try:
+            with open(retry_log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        except Exception as exc:
+            logger.warning(f"Failed to persist retry event: {exc}")
 
 
 def extract_thinking_content(full_response):
@@ -440,7 +498,7 @@ def extract_thinking_content(full_response):
     return None
 
 
-async def save_llm_conversation(test_work_dir, pass_id, round_id, attempt_id, messages, full_response, model_used=None):
+async def save_llm_conversation(test_work_dir, pass_id, round_id, retry_index, messages, full_response, model_used=None):
     """
     Save LLM conversation to JSONL format with structured metadata.
     Supports pass@n, multiple rounds, and retries.
@@ -451,7 +509,7 @@ async def save_llm_conversation(test_work_dir, pass_id, round_id, attempt_id, me
     {
         "pass": 1,           # Pass number (for pass@n support)
         "round": 1,          # Round number (1=initial, 2+=feedback rounds)
-        "attempt": 0,        # Retry attempt (0=initial, 1+=retries)
+        "retry_index": 0,    # Retry attempt index (0=initial, 1+=retries)
         "timestamp": "...",  # ISO timestamp
         "interaction_type": "request/response",
         "role": "user/assistant/system",
@@ -468,7 +526,7 @@ async def save_llm_conversation(test_work_dir, pass_id, round_id, attempt_id, me
     conversation_file = conversations_dir / "all_conversations.jsonl"
     
     try:
-        timestamp = datetime.now().isoformat()
+        timestamp = ensure_timezone(now_timestamp()).isoformat()
         
         with open(conversation_file, 'a', encoding='utf-8') as f:
             # Write request messages (user/system prompts)
@@ -476,9 +534,9 @@ async def save_llm_conversation(test_work_dir, pass_id, round_id, attempt_id, me
                 entry = {
                     "pass": pass_id,
                     "round": round_id,
-                    "attempt": attempt_id,
+                    "retry_index": retry_index,
                     "timestamp": timestamp,
-                    "interaction_type": "request",
+                    "interaction_type": "request", # TODO: 多轮不对
                     "role": msg.get("role", "unknown"),
                     "content": msg.get("content", "")
                 }
@@ -491,7 +549,7 @@ async def save_llm_conversation(test_work_dir, pass_id, round_id, attempt_id, me
             response_entry = {
                 "pass": pass_id,
                 "round": round_id,
-                "attempt": attempt_id,
+                "retry_index": retry_index,
                 "timestamp": timestamp,
                 "interaction_type": "response",
                 "role": "assistant",
@@ -521,7 +579,8 @@ async def save_llm_conversation(test_work_dir, pass_id, round_id, attempt_id, me
 async def run_single_case_translation(case_type, case_name):
     """Run translation for a single case with detailed timing statistics."""
     # Start timing for end-to-end duration
-    case_start_time = time.time()
+    case_start_wall = now_timestamp()
+    case_start_ns = monotonic_timestamp_ns()
     
     logger.info(f"{'='*60}")
     logger.info(f"🎯 Testing case type: {case_type}")
@@ -536,11 +595,13 @@ async def run_single_case_translation(case_type, case_name):
     timing_stats = {
         "case_type": case_type,
         "case_name": case_name,
-        "start_time": datetime.fromtimestamp(case_start_time).isoformat(),
+        "start_time": ensure_timezone(case_start_wall).isoformat(),
         "llm_rounds": [],
         "test_rounds": [],
-        "total_llm_time": 0,
-        "total_test_time": 0,
+        "total_llm_time_ms": 0.0,
+        "llm_retry_time_ms": 0.0,
+        "llm_retry_wait_time_ms": 0.0,
+        "total_test_time_ms": 0.0,
     }
 
     # Copy necessary files
@@ -579,108 +640,264 @@ async def run_single_case_translation(case_type, case_name):
     # Get API parameters based on model type and call LLM with retry logic
     retry_count = 0
     resp_content = None
-    pass_id = 1  # Currently pass@1, will support pass@n in future
+    pass_id = 1  # Currently pass@1, future work: support parallel attempts (pass@k)
     round_id = 1  # Initial generation is round 1
-    
-    # Time initial LLM call (Round 1)
-    llm_round_start = time.time()
-    
+
     actual_model_used = None  # Track actual model used
-    
+    round_entry = {
+        "round": round_id,
+        "attempts": [],
+        "retry_limit": args.max_retries,
+    }
+    round_retry_call_ms = 0.0
+    round_retry_wait_ms = 0.0
+    round_start_wall = None
+    initial_stage = "initial_llm_generation"
+
     while retry_count <= args.max_retries:
+        attempt_index = retry_count
+        attempt_start_ns = monotonic_timestamp_ns()
+        attempt_wall_start = now_timestamp()
+        if round_start_wall is None:
+            round_start_wall = attempt_wall_start
+
+        usage_dict = None
+        generation_info = None
+        attempt_wall_end = None
+
+        await log_retry_event(
+            test_work_dir,
+            event_type="attempt_start",
+            stage=initial_stage,
+            case_type=case_type,
+            case_name=case_name,
+            pass_id=pass_id,
+            round_id=round_id,
+            retry_index=attempt_index,
+            extra={
+                "model": model_name,
+                "attempt_started_at": ensure_timezone(attempt_wall_start).isoformat(),
+            },
+        )
+
         try:
             api_params = get_api_param(conversation_history, model_name)
-            resp_content, actual_model_used = await async_openai_llm_call(async_client, api_params)
-            
+            resp_content, actual_model_used, usage_dict, generation_info = await async_openai_llm_call(
+                async_client, api_params, logger=logger
+            )
+
             # If API doesn't return model info, use the requested model_name
             if not actual_model_used:
                 actual_model_used = model_name
-            
+
             # Log model used (especially useful for openrouter/auto)
             if actual_model_used != model_name:
                 logger.info(f"🤖 Model used: {actual_model_used} (requested: {model_name})")
             else:
                 logger.debug(f"🤖 Model used: {actual_model_used}")
-            
-            # Save conversation (including retries)
+
             await save_llm_conversation(
                 test_work_dir=test_work_dir,
                 pass_id=pass_id,
                 round_id=round_id,
-                attempt_id=retry_count,
+                retry_index=attempt_index,
                 messages=conversation_history,
                 full_response=resp_content,
-                model_used=actual_model_used
+                model_used=actual_model_used,
             )
-            
-            # Check if we got valid code (not just the original response due to missing code block)
+
+            if generation_info and generation_info.get("native_tokens_reasoning") is not None:
+                usage_dict = usage_dict or {}
+                usage_dict["reasoning_tokens"] = generation_info.get("native_tokens_reasoning")
+
             triton_code = get_last_code_block(resp_content)
+            attempt_wall_end = now_timestamp()
+            attempt_duration_ms = monotonic_elapsed_ms(attempt_start_ns)
+
+            attempt_entry = {
+                "retry_index": attempt_index,
+                "start_time": ensure_timezone(attempt_wall_start).isoformat(),
+                "end_time": ensure_timezone(attempt_wall_end).isoformat(),
+                "duration_ms": round(attempt_duration_ms, 3),
+                "model_used": actual_model_used,
+                "success": False,
+            }
+            if usage_dict:
+                attempt_entry["usage"] = usage_dict
+            if generation_info:
+                attempt_entry["generation_info"] = generation_info
+
             if triton_code == resp_content:
-                # This means get_last_code_block couldn't find a code block and returned the full response
-                # This should be retried, not counted as a failed attempt
+                attempt_entry["reason"] = "missing_code_block"
+                round_entry["attempts"].append(attempt_entry)
+                await log_retry_event(
+                    test_work_dir,
+                    event_type="attempt_finish",
+                    stage=initial_stage,
+                    case_type=case_type,
+                    case_name=case_name,
+                    pass_id=pass_id,
+                    round_id=round_id,
+                    retry_index=attempt_index,
+                    extra=attempt_entry,
+                )
+                if timing_stats is not None:
+                    timing_stats["llm_retry_time_ms"] += attempt_duration_ms
+                round_retry_call_ms += attempt_duration_ms
+
                 if retry_count < args.max_retries:
                     retry_count += 1
                     wait_time = args.retry_wait // 2  # Shorter wait for format issues
                     logger.warning(f"🔄 No code block found in response (retry {retry_count}/{args.max_retries})")
-                    logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
-                    
-                    # Wait with countdown
-                    for remaining in range(wait_time, 0, -1):
-                        if remaining % 5 == 0 or remaining <= 3:
-                            logger.debug(f"⏱️  Retrying in {remaining} seconds...")
-                        await asyncio.sleep(1)
-                    
-                    logger.info(f"🔄 Retrying API call for better code format...")
+                    if wait_time > 0:
+                        logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                        wait_start_ns = monotonic_timestamp_ns()
+                        for remaining in range(wait_time, 0, -1):
+                            if remaining % 5 == 0 or remaining <= 3:
+                                logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                            await asyncio.sleep(1)
+                        waited_ms = monotonic_elapsed_ms(wait_start_ns)
+                        if timing_stats is not None:
+                            timing_stats["llm_retry_wait_time_ms"] += waited_ms
+                        round_retry_wait_ms += waited_ms
+                        await log_retry_event(
+                            test_work_dir,
+                            event_type="retry_wait",
+                            stage=initial_stage,
+                            case_type=case_type,
+                            case_name=case_name,
+                            pass_id=pass_id,
+                            round_id=round_id,
+                            retry_index=retry_count,
+                            extra={
+                                "reason": "missing_code_block",
+                                "wait_seconds": wait_time,
+                                "wait_ms": round(waited_ms, 3),
+                            },
+                        )
+                    logger.info("🔄 Retrying API call for better code format...")
                     continue
-                else:
-                    logger.error(f"❌ Max retries exceeded - no valid code block found")
-                    return False, None
-            
+
+                logger.error("❌ Max retries exceeded - no valid code block found")
+                await log_retry_event(
+                    test_work_dir,
+                    event_type="attempt_finish",
+                    stage=initial_stage,
+                    case_type=case_type,
+                    case_name=case_name,
+                    pass_id=pass_id,
+                    round_id=round_id,
+                    retry_index=attempt_index,
+                    extra=attempt_entry,
+                )
+                return False, None
+
+            # Valid code produced
+            attempt_entry["success"] = True
+            round_entry["attempts"].append(attempt_entry)
+            await log_retry_event(
+                test_work_dir,
+                event_type="attempt_finish",
+                stage=initial_stage,
+                case_type=case_type,
+                case_name=case_name,
+                pass_id=pass_id,
+                round_id=round_id,
+                retry_index=attempt_index,
+                extra=attempt_entry,
+            )
+            round_entry["start_time"] = ensure_timezone(round_start_wall).isoformat()
+            round_entry["end_time"] = ensure_timezone(attempt_wall_end).isoformat()
+            round_entry["effective_duration_ms"] = round(attempt_duration_ms, 3)
+            round_entry["retry_duration_ms"] = round(round_retry_call_ms, 3)
+            round_entry["retry_wait_ms"] = round(round_retry_wait_ms, 3)
+            round_entry["retries"] = attempt_index
+            round_entry["model_used"] = actual_model_used
+
+            if generation_info:
+                round_entry["generation_info"] = generation_info
+
+            if timing_stats is not None:
+                timing_stats["total_llm_time_ms"] += attempt_duration_ms
+
             if retry_count > 0:
-                logger.info(f"✅ Successfully generated code after {retry_count} retries")
-            logger.debug(f"Successfully generated initial Triton code")
-            
-            # Record LLM round timing
-            llm_round_end = time.time()
-            llm_round_duration = llm_round_end - llm_round_start
-            timing_stats["llm_rounds"].append({
-                "round": 1,
-                "start_time": datetime.fromtimestamp(llm_round_start).isoformat(),
-                "end_time": datetime.fromtimestamp(llm_round_end).isoformat(),
-                "duration_sec": round(llm_round_duration, 3),
-                "retries": retry_count
-            })
-            timing_stats["total_llm_time"] += llm_round_duration
+                logger.info(f"🔄 Successfully generated code after {retry_count} retries")
+            logger.debug("🔄 Successfully generated initial Triton code")
             break
-            
+
         except Exception as e:
+            attempt_wall_end = now_timestamp()
+            attempt_duration_ms = monotonic_elapsed_ms(attempt_start_ns)
             error_msg = str(e)
-            
-            # Check if this is a retryable error
+            attempt_entry = {
+                "retry_index": attempt_index,
+                "start_time": ensure_timezone(attempt_wall_start).isoformat(),
+                "end_time": ensure_timezone(attempt_wall_end).isoformat(),
+                "duration_ms": round(attempt_duration_ms, 3),
+                "success": False,
+                "error": error_msg,
+            }
+            round_entry["attempts"].append(attempt_entry)
+            await log_retry_event(
+                test_work_dir,
+                event_type="attempt_finish",
+                stage=initial_stage,
+                case_type=case_type,
+                case_name=case_name,
+                pass_id=pass_id,
+                round_id=round_id,
+                retry_index=attempt_index,
+                extra=attempt_entry,
+            )
+            if timing_stats is not None:
+                timing_stats["llm_retry_time_ms"] += attempt_duration_ms
+            round_retry_call_ms += attempt_duration_ms
+
             if is_retryable_error(error_msg) and retry_count < args.max_retries:
                 retry_count += 1
                 wait_time = args.retry_wait
                 logger.warning(f"🔄 API overload detected (retry {retry_count}/{args.max_retries}): {error_msg}")
-                logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
-                
-                # Wait with countdown (only show every 10 seconds to avoid spam)
-                for remaining in range(wait_time, 0, -1):
-                    if remaining % 10 == 0 or remaining <= 5:
-                        logger.debug(f"⏱️  Retrying in {remaining} seconds...")
-                    await asyncio.sleep(1)
-                
-                logger.info(f"🔄 Retrying API call (attempt {retry_count + 1})...")
-                continue
-            else:
-                # Non-retryable error or max retries exceeded
-                if retry_count >= args.max_retries:
-                    logger.error(f"❌ Max retries ({args.max_retries}) exceeded for initial generation")
-                logger.error(f"Failed to generate initial Triton code: {error_msg}")
-                return False, None
-    
+                if wait_time > 0:
+                    logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                    wait_start_ns = monotonic_timestamp_ns()
+                    for remaining in range(wait_time, 0, -1):
+                        if remaining % 10 == 0 or remaining <= 5:
+                            logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                        await asyncio.sleep(1)
+                    waited_ms = monotonic_elapsed_ms(wait_start_ns)
+                    if timing_stats is not None:
+                        timing_stats["llm_retry_wait_time_ms"] += waited_ms
+                    round_retry_wait_ms += waited_ms
+                    await log_retry_event(
+                        test_work_dir,
+                        event_type="retry_wait",
+                        stage=initial_stage,
+                        case_type=case_type,
+                        case_name=case_name,
+                        pass_id=pass_id,
+                        round_id=round_id,
+                        retry_index=retry_count,
+                        extra={
+                            "reason": "retryable_error",
+                            "error": error_msg,
+                            "wait_seconds": wait_time,
+                            "wait_ms": round(waited_ms, 3),
+                        },
+                    )
+                    logger.info(f"🔄 Retrying API call (attempt {retry_count + 1})...")
+                    continue
+
+            if retry_count >= args.max_retries:
+                logger.error(f"❌ Max retries ({args.max_retries}) exceeded for initial generation")
+            logger.error(f"Failed to generate initial Triton code: {error_msg}", exc_info=True)
+            return False, None
+
     if resp_content is None:
-        logger.error(f"Failed to generate initial Triton code after all retries")
+        logger.error("Failed to generate initial Triton code after all retries")
         return False, None
+
+    round_entry["status"] = "success"
+    timing_stats["llm_rounds"].append(round_entry)
     
     # 将LLM的回复添加到对话历史中
     conversation_history.append(make_openai_message_assistant(resp_content))
@@ -700,22 +917,34 @@ async def run_single_case_translation(case_type, case_name):
     # 开始自动化测试和修复流程
     logger.info(f"Starting automated testing and fixing process...")
 
-    success, rounds = await run_testing_loop(conversation_history, test_work_dir, timing_stats, pass_id=pass_id)
+    success, rounds = await run_testing_loop(
+        conversation_history,
+        test_work_dir,
+        timing_stats,
+        pass_id=pass_id,
+        case_type=case_type,
+        case_name=case_name,
+    )
     
     # Calculate end-to-end timing
-    case_end_time = time.time()
-    case_wall_duration = case_end_time - case_start_time
-    
-    # Calculate effective processing time (LLM + Test execution, excluding GPU wait)
-    effective_processing_time = timing_stats["total_llm_time"] + timing_stats["total_test_time"]
-    
-    # Finalize timing stats
-    timing_stats["end_time"] = datetime.fromtimestamp(case_end_time).isoformat()
-    timing_stats["wall_clock_duration_sec"] = round(case_wall_duration, 3)  # Total wall-clock time
-    timing_stats["effective_duration_sec"] = round(effective_processing_time, 3)  # LLM + Test only
-    timing_stats["total_llm_time_sec"] = round(timing_stats["total_llm_time"], 3)
-    timing_stats["total_test_time_sec"] = round(timing_stats["total_test_time"], 3)
-    timing_stats["overhead_sec"] = round(case_wall_duration - effective_processing_time, 3)  # Other overhead
+    case_end_wall = now_timestamp()
+    case_wall_duration_ms = monotonic_elapsed_ms(case_start_ns)
+
+    # Calculate effective processing time (LLM effective + Test execution)
+    effective_processing_time_ms = timing_stats["total_llm_time_ms"] + timing_stats["total_test_time_ms"]
+    total_retry_overhead_ms = timing_stats["llm_retry_time_ms"] + timing_stats["llm_retry_wait_time_ms"]
+    other_overhead_ms = max(case_wall_duration_ms - (effective_processing_time_ms + total_retry_overhead_ms), 0.0)
+
+    # Finalize timing stats (store rounded milliseconds)
+    timing_stats["end_time"] = ensure_timezone(case_end_wall).isoformat()
+    timing_stats["wall_clock_duration_ms"] = round(case_wall_duration_ms, 3)
+    timing_stats["effective_duration_ms"] = round(effective_processing_time_ms, 3)
+    timing_stats["retry_overhead_ms"] = round(total_retry_overhead_ms, 3)
+    timing_stats["other_overhead_ms"] = round(other_overhead_ms, 3)
+    timing_stats["total_llm_time_ms"] = round(timing_stats["total_llm_time_ms"], 3)
+    timing_stats["llm_retry_time_ms"] = round(timing_stats["llm_retry_time_ms"], 3)
+    timing_stats["llm_retry_wait_time_ms"] = round(timing_stats["llm_retry_wait_time_ms"], 3)
+    timing_stats["total_test_time_ms"] = round(timing_stats["total_test_time_ms"], 3)
     timing_stats["success"] = success
     timing_stats["final_round"] = rounds
     timing_stats["timestamp"] = TIMESTAMP
@@ -728,9 +957,19 @@ async def run_single_case_translation(case_type, case_name):
     timing_stats["gpu_server"] = args.nvgpu_server if args.use_nvgpu else None
     
     # Write to JSONL log immediately
-    await write_jsonl_log(timing_stats)
+    await write_jsonl_log(timing_stats, JSONL_LOG_FILE, JSONL_LOCK)
     
-    logger.info(f"⏱️  Timing: Wall={case_wall_duration:.1f}s, Effective(LLM+Test)={effective_processing_time:.1f}s (LLM={timing_stats['total_llm_time']:.1f}s, Test={timing_stats['total_test_time']:.1f}s)")
+    logger.info(
+        "⏱️  Timing: Wall=%0.1fms, Effective(LLM+Test)=%0.1fms "
+        "(LLM=%0.1fms, Test=%0.1fms, RetryCalls=%0.1fms, RetryWait=%0.1fms, Other=%0.1fms)",
+        case_wall_duration_ms,
+        effective_processing_time_ms,
+        timing_stats["total_llm_time_ms"],
+        timing_stats["total_test_time_ms"],
+        timing_stats["llm_retry_time_ms"],
+        timing_stats["llm_retry_wait_time_ms"],
+        other_overhead_ms,
+    )
     
     # Log final model used info (only if different from requested)
     final_model = actual_model_used if actual_model_used else model_name
@@ -839,7 +1078,8 @@ async def run_test_round_local(round_num, test_work_dir, log_file, timing_stats=
         cmd.append("--no-perf")
     
     # Start timing
-    test_start_time = time.time()
+    test_start_wall = now_timestamp()
+    test_start_ns = monotonic_timestamp_ns()
     
     try:
         # Create process with asyncio
@@ -869,27 +1109,27 @@ async def run_test_round_local(round_num, test_work_dir, log_file, timing_stats=
             return False, "", error_msg, log_file
 
         # End timing
-        test_end_time = time.time()
-        test_duration = test_end_time - test_start_time
+        test_end_wall = now_timestamp()
+        test_duration_ms = monotonic_elapsed_ms(test_start_ns)
         
         # Record test timing (actual execution time)
         if timing_stats is not None:
             timing_stats["test_rounds"].append({
                 "round": round_num,
-                "start_time": datetime.fromtimestamp(test_start_time).isoformat(),
-                "end_time": datetime.fromtimestamp(test_end_time).isoformat(),
-                "duration_sec": round(test_duration, 3),
+                "start_time": ensure_timezone(test_start_wall).isoformat(),
+                "end_time": ensure_timezone(test_end_wall).isoformat(),
+                "duration_ms": round(test_duration_ms, 3),
                 "success": returncode == 0 and ("PASSED" in stdout),
                 "execution_mode": "local"
             })
-            timing_stats["total_test_time"] += test_duration
+            timing_stats["total_test_time_ms"] += test_duration_ms
 
         # Write full output to log file
         with open(log_file, 'w') as f:
             f.write(f"=== Test Round {round_num} (Local) ===\n")
             f.write(f"Command: {' '.join(cmd)}\n")
             f.write(f"Exit code: {returncode}\n")
-            f.write(f"Execution time: {test_duration:.3f}s\n\n")
+            f.write(f"Execution time: {test_duration_ms:.3f}ms\n\n")
             f.write("=== STDOUT ===\n")
             f.write(stdout)
             f.write("\n=== STDERR ===\n")
@@ -940,60 +1180,145 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
         logger.info(f"Task submitted: {task_id}")
         
         # Wait for task completion with progress updates
-        start_time = time.time()
         last_status = None
+        
+        def _format_status_progress(result_obj):
+            parts = []
+            if result_obj.total_duration_ms is not None:
+                parts.append(f"total≈{result_obj.total_duration_ms:.0f}ms")
+            else:
+                if result_obj.pending_duration_ms is not None:
+                    parts.append(f"pending≈{result_obj.pending_duration_ms:.0f}ms")
+                if result_obj.queue_duration_ms is not None:
+                    parts.append(f"queue≈{result_obj.queue_duration_ms:.0f}ms")
+                if result_obj.waiting_duration_ms is not None:
+                    parts.append(f"waiting≈{result_obj.waiting_duration_ms:.0f}ms")
+                if result_obj.running_duration_ms is not None:
+                    parts.append(f"running≈{result_obj.running_duration_ms:.0f}ms")
+            return ", ".join(parts)
         
         while True:
             result = nvgpu_client.get_task(task_id)
             current_status = result.status
             
             if current_status != last_status:
-                elapsed = time.time() - start_time
-                logger.info(f"Task {task_id[:8]}: {current_status} (elapsed: {elapsed*1000:.0f}ms)")
+                progress_text = _format_status_progress(result)
+                if progress_text:
+                    logger.info(f"Task {task_id[:8]}: {current_status} ({progress_text})")
+                else:
+                    logger.info(f"Task {task_id[:8]}: {current_status}")
                 last_status = current_status
             
             if current_status in ["completed", "failed", "cancelled"]:
                 break
             
             await asyncio.sleep(2)  # Poll every 2 seconds
-        
-        elapsed_total = time.time() - start_time
-        
-        # Calculate actual execution time (from task start to end) - THIS is what we want!
-        execution_time = None
-        waiting_time = None
-        if result.start_time and result.end_time:
-            from datetime import datetime
-            # Parse timestamps if they are strings
-            if isinstance(result.start_time, str):
-                start_dt = datetime.fromisoformat(result.start_time.replace('Z', '+00:00'))
-                end_dt = datetime.fromisoformat(result.end_time.replace('Z', '+00:00'))
-            else:
-                start_dt = result.start_time
-                end_dt = result.end_time
-            execution_time = (end_dt - start_dt).total_seconds()
-            waiting_time = elapsed_total - execution_time
-        
-        # Record test timing (only actual execution time, not waiting time)
-        if timing_stats is not None and execution_time is not None:
-            timing_stats["test_rounds"].append({
+
+        submit_ts_raw = getattr(result, "submit_timestamp", getattr(result, "submit_time", None))
+        queued_ts_raw = getattr(result, "queued_timestamp", None)
+        start_ts_raw = getattr(result, "start_timestamp", getattr(result, "start_time", None))
+        end_ts_raw = getattr(result, "end_timestamp", getattr(result, "end_time", None))
+
+        start_dt = parse_timestamp(start_ts_raw)
+        end_dt = parse_timestamp(end_ts_raw)
+
+        running_ms = getattr(result, "running_duration_ms", None)
+        waiting_ms = getattr(result, "waiting_duration_ms", None)
+        queue_ms = getattr(result, "queue_duration_ms", None)
+        pending_ms = getattr(result, "pending_duration_ms", None)
+        total_ms = getattr(result, "total_duration_ms", None)
+
+        execution_time_ms = None
+        if running_ms is not None:
+            execution_time_ms = running_ms
+        elif start_dt and end_dt:
+            execution_time_ms = (end_dt - start_dt).total_seconds() * 1000.0
+
+        waiting_time_ms = None
+        if waiting_ms is not None:
+            waiting_time_ms = waiting_ms
+        elif execution_time_ms is not None and total_ms is not None:
+            waiting_time_ms = max(total_ms - execution_time_ms, 0.0)
+
+        queue_time_ms = queue_ms if queue_ms is not None else None
+        pending_time_ms = pending_ms if pending_ms is not None else None
+        total_server_time_ms = total_ms if total_ms is not None else None
+
+        start_iso = normalize_timestamp_iso(start_ts_raw)
+        end_iso = normalize_timestamp_iso(end_ts_raw)
+        submit_iso = normalize_timestamp_iso(submit_ts_raw)
+        queued_iso = normalize_timestamp_iso(queued_ts_raw)
+
+        assigned_gpu = getattr(result, "gpu_id", None)
+        if assigned_gpu is None:
+            assigned_gpu = getattr(result, "assigned_gpu", None)
+
+        def _format_ms(value):
+            return f"{value:,.3f} ms"
+
+        # Record test timing (prefer server-reported execution time)
+        if timing_stats is not None:
+            timing_entry = {
                 "round": round_num,
-                "start_time": result.start_time if isinstance(result.start_time, str) else result.start_time.isoformat(),
-                "end_time": result.end_time if isinstance(result.end_time, str) else result.end_time.isoformat(),
-                "duration_sec": round(execution_time, 3),
-                "waiting_time_sec": round(waiting_time, 3) if waiting_time else 0,
-                "total_elapsed_sec": round(elapsed_total, 3),
                 "success": result.status == "completed" and result.exit_code == 0,
                 "execution_mode": "nvgpu",
-                "gpu_id": getattr(result, 'gpu_id', getattr(result, 'assigned_gpu', 'auto')),
+                "gpu_id": assigned_gpu if assigned_gpu is not None else (args.nvgpu_gpu or "auto"),
                 "task_id": task_id
-            })
-            # Only add execution time, NOT waiting time!
-            timing_stats["total_test_time"] += execution_time
-        
-        logger.info(f"Task finished in {elapsed_total*1000:.0f}ms with status: {result.status}")
-        if execution_time is not None:
-            logger.info(f"  └─ Waiting time: {waiting_time*1000:.0f}ms, Execution time: {execution_time*1000:.0f}ms")
+            }
+            if start_iso:
+                timing_entry["start_time"] = start_iso
+            if end_iso:
+                timing_entry["end_time"] = end_iso
+            if submit_iso:
+                timing_entry["submit_time"] = submit_iso
+            if queued_iso:
+                timing_entry["queued_time"] = queued_iso
+            if execution_time_ms is not None:
+                timing_entry["duration_ms"] = round(execution_time_ms, 3)
+            if waiting_time_ms is not None:
+                timing_entry["waiting_ms"] = round(waiting_time_ms, 3)
+            if queue_time_ms is not None:
+                timing_entry["queue_ms"] = round(queue_time_ms, 3)
+            if pending_time_ms is not None:
+                timing_entry["pending_ms"] = round(pending_time_ms, 3)
+            if total_server_time_ms is not None:
+                timing_entry["total_ms"] = round(total_server_time_ms, 3)
+            timing_stats["test_rounds"].append(timing_entry)
+
+            effective_test_ms = execution_time_ms
+            if effective_test_ms is None:
+                effective_test_ms = total_server_time_ms
+            if effective_test_ms is not None:
+                timing_stats["total_test_time_ms"] += effective_test_ms
+
+        display_total_ms = total_server_time_ms
+        if display_total_ms is None:
+            candidate_sum = 0.0
+            for candidate in (waiting_time_ms, execution_time_ms):
+                if candidate is not None:
+                    candidate_sum += candidate
+            for candidate in (pending_time_ms, queue_time_ms):
+                if candidate is not None:
+                    candidate_sum += candidate
+            display_total_ms = candidate_sum if candidate_sum > 0 else None
+
+        if display_total_ms is not None:
+            logger.info(f"Task finished in {_format_ms(display_total_ms)} with status: {result.status}")
+        else:
+            logger.info(f"Task finished with status: {result.status}")
+        timing_parts = []
+        if pending_time_ms is not None:
+            timing_parts.append(f"Pending: {_format_ms(pending_time_ms)}")
+        if queue_time_ms is not None:
+            timing_parts.append(f"Queue: {_format_ms(queue_time_ms)}")
+        if waiting_time_ms is not None:
+            timing_parts.append(f"Waiting: {_format_ms(waiting_time_ms)}")
+        if execution_time_ms is not None:
+            timing_parts.append(f"Execution: {_format_ms(execution_time_ms)}")
+        if total_server_time_ms is not None:
+            timing_parts.append(f"Total: {_format_ms(total_server_time_ms)}")
+        if timing_parts:
+            logger.info("  └─ " + ", ".join(timing_parts))
         
         # Get task log files from server using nvgpu_client API
         stdout_content = ""
@@ -1020,23 +1345,45 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
             f.write(f"Task ID: {task_id}\n")
             # Use assigned_gpu from result (new API returns this as gpu_id attribute)
             # Note: Use 'is not None' check because GPU ID 0 is valid but falsy
-            assigned_gpu = getattr(result, 'gpu_id', None)
-            if assigned_gpu is None:
-                assigned_gpu = getattr(result, 'assigned_gpu', None)
             f.write(f"GPU: {assigned_gpu if assigned_gpu is not None else (args.nvgpu_gpu or 'auto-assigned')}\n")
             f.write(f"Status: {result.status}\n")
             f.write(f"Exit code: {result.exit_code}\n")
             f.write(f"\n=== Timing Information ===\n")
-            f.write(f"Total elapsed time (submit to finish): {elapsed_total*1000:.0f}ms\n")
-            if execution_time is not None:
-                f.write(f"Waiting time (queue): {waiting_time*1000:.0f}ms\n")
-                f.write(f"Execution time (actual run): {execution_time*1000:.0f}ms\n")
-            if hasattr(result, 'submit_time') and result.submit_time:
-                f.write(f"Submit time: {result.submit_time}\n")
-            if hasattr(result, 'start_time') and result.start_time:
-                f.write(f"Start time: {result.start_time}\n")
-            if hasattr(result, 'end_time') and result.end_time:
-                f.write(f"End time: {result.end_time}\n")
+            timing_ms_entries = []
+            if display_total_ms is not None:
+                timing_ms_entries.append(("Total elapsed time (submit to finish)", display_total_ms))
+            if total_server_time_ms is not None:
+                timing_ms_entries.append(("Server reported total time", total_server_time_ms))
+            if pending_time_ms is not None:
+                timing_ms_entries.append(("Pending time (submit to queue)", pending_time_ms))
+            if queue_time_ms is not None:
+                timing_ms_entries.append(("Queue time (assign to start)", queue_time_ms))
+            if waiting_time_ms is not None:
+                timing_ms_entries.append(("Waiting time (queue)", waiting_time_ms))
+            if execution_time_ms is not None:
+                timing_ms_entries.append(("Execution time (actual run)", execution_time_ms))
+
+            timestamp_entries = []
+            if submit_iso:
+                timestamp_entries.append(("Submit time", submit_iso))
+            if queued_iso:
+                timestamp_entries.append(("Queued time", queued_iso))
+            if start_iso:
+                timestamp_entries.append(("Start time", start_iso))
+            if end_iso:
+                timestamp_entries.append(("End time", end_iso))
+
+            if timing_ms_entries:
+                label_width = max(len(label) for label, _ in timing_ms_entries)
+                value_width = max(len(_format_ms(value)) for _, value in timing_ms_entries)
+                for label, value in timing_ms_entries:
+                    value_str = _format_ms(value)
+                    f.write(f"{label:<{label_width}} : {value_str:>{value_width}}\n")
+            if timestamp_entries:
+                label_width_ts = max(len(label) for label, _ in timestamp_entries)
+                value_width_ts = max(len(value) for _, value in timestamp_entries)
+                for label, value in timestamp_entries:
+                    f.write(f"{label:<{label_width_ts}} : {value:>{value_width_ts}}\n")
             f.write(f"\nServer log: {result.log_file}\n\n")
             f.write("=== STDOUT ===\n")
             f.write(stdout_content)
@@ -1053,17 +1400,25 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
         
     except Exception as e:
         error_msg = f"NVGPU execution failed: {str(e)}"
-        logger.error(error_msg)
+        logger.error(error_msg, exc_info=True)
         with open(log_file, 'w') as f:
             f.write(f"=== Test Round {round_num} ===\n")
             f.write(f"ERROR: {error_msg}\n")
         return False, "", error_msg, log_file
 
 
-async def get_feedback_from_llm(round_num, error_output, stderr_output, test_work_dir, conversation_history, timing_stats=None, pass_id=1):
+async def get_feedback_from_llm(
+    round_num,
+    error_output,
+    stderr_output,
+    test_work_dir,
+    conversation_history,
+    case_type,
+    case_name,
+    timing_stats=None,
+    pass_id=1,
+):
     """Get feedback from LLM to fix the triton kernel using cumulative conversation history."""
-    llm_round_start = time.time()
-    
     try:
         # Prepare feedback prompt
         error_info = f"Round {round_num} Test Output:\n{error_output}\n\nStderr:\n{stderr_output}"
@@ -1079,108 +1434,265 @@ async def get_feedback_from_llm(round_num, error_output, stderr_output, test_wor
         # Add the current kernel code and error feedback to conversation history
         conversation_history.append(make_openai_message_user(prompt))
 
-        # Call LLM with retry logic
         retry_count = 0
         fixed_code_response = None
         feedback_round_id = round_num + 1  # Feedback produces next round code
         feedback_model_used = None  # Track actual model used in feedback
-        
+        round_entry = {
+            "round": feedback_round_id,
+            "attempts": [],
+            "retry_limit": args.max_retries,
+        }
+        round_retry_call_ms = 0.0
+        round_retry_wait_ms = 0.0
+        round_start_wall = None
+        feedback_stage = "feedback_llm_generation"
+
         while retry_count <= args.max_retries:
+            attempt_index = retry_count
+            attempt_start_ns = monotonic_timestamp_ns()
+            attempt_wall_start = now_timestamp()
+            if round_start_wall is None:
+                round_start_wall = attempt_wall_start
+
+            usage_dict = None
+            generation_info = None
+
+            await log_retry_event(
+                test_work_dir,
+                event_type="attempt_start",
+                stage=feedback_stage,
+                case_type=case_type,
+                case_name=case_name,
+                pass_id=pass_id,
+                round_id=feedback_round_id,
+                retry_index=attempt_index,
+                extra={
+                    "model": model_name,
+                    "attempt_started_at": ensure_timezone(attempt_wall_start).isoformat(),
+                },
+            )
+
             try:
-                # Get API parameters and call LLM
                 api_params = get_api_param(conversation_history, model_name)
-                fixed_code_response, feedback_model_used = await async_openai_llm_call(async_client, api_params)
-                
-                # If API doesn't return model info, use the requested model_name
+                fixed_code_response, feedback_model_used, usage_dict, generation_info = await async_openai_llm_call(
+                    async_client, api_params, logger=logger
+                )
+
                 if not feedback_model_used:
                     feedback_model_used = model_name
-                
-                # Log model used (especially useful for openrouter/auto)
+
                 if feedback_model_used != model_name:
                     logger.info(f"🤖 Feedback model used: {feedback_model_used} (requested: {model_name})")
                 else:
                     logger.debug(f"🤖 Feedback model used: {feedback_model_used}")
-                
-                # Save conversation (including retries)
+
                 await save_llm_conversation(
                     test_work_dir=test_work_dir,
                     pass_id=pass_id,
                     round_id=feedback_round_id,
-                    attempt_id=retry_count,
+                    retry_index=attempt_index,
                     messages=conversation_history,
                     full_response=fixed_code_response,
-                    model_used=feedback_model_used
+                    model_used=feedback_model_used,
                 )
-                
-                # Check if we got valid code (not just the original response due to missing code block)
+
+                if generation_info and generation_info.get("native_tokens_reasoning") is not None:
+                    usage_dict = usage_dict or {}
+                    usage_dict["reasoning_tokens"] = generation_info.get("native_tokens_reasoning")
+
                 fixed_code = get_last_code_block(fixed_code_response)
+                attempt_wall_end = now_timestamp()
+                attempt_duration_ms = monotonic_elapsed_ms(attempt_start_ns)
+
+                attempt_entry = {
+                    "retry_index": attempt_index,
+                    "start_time": ensure_timezone(attempt_wall_start).isoformat(),
+                    "end_time": ensure_timezone(attempt_wall_end).isoformat(),
+                    "duration_ms": round(attempt_duration_ms, 3),
+                    "model_used": feedback_model_used,
+                    "success": False,
+                }
+                if usage_dict:
+                    attempt_entry["usage"] = usage_dict
+                if generation_info:
+                    attempt_entry["generation_info"] = generation_info
+
                 if fixed_code == fixed_code_response:
-                    # This means get_last_code_block couldn't find a code block and returned the full response
-                    # This should be retried, not counted as a failed attempt
+                    attempt_entry["reason"] = "missing_code_block"
+                    round_entry["attempts"].append(attempt_entry)
+                    await log_retry_event(
+                        test_work_dir,
+                        event_type="attempt_finish",
+                        stage=feedback_stage,
+                        case_type=case_type,
+                        case_name=case_name,
+                        pass_id=pass_id,
+                        round_id=feedback_round_id,
+                        retry_index=attempt_index,
+                        extra=attempt_entry,
+                    )
+                    if timing_stats is not None:
+                        timing_stats["llm_retry_time_ms"] += attempt_duration_ms
+                    round_retry_call_ms += attempt_duration_ms
+
                     if retry_count < args.max_retries:
                         retry_count += 1
-                        wait_time = args.retry_wait // 2  # Shorter wait for format issues
-                        logger.warning(f"🔄 No code block found in feedback response (retry {retry_count}/{args.max_retries})")
-                        logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
-                        
-                        # Wait with countdown
-                        for remaining in range(wait_time, 0, -1):
-                            if remaining % 5 == 0 or remaining <= 3:
-                                logger.debug(f"⏱️  Retrying in {remaining} seconds...")
-                            await asyncio.sleep(1)
-                        
+                        wait_time = args.retry_wait // 2
+                        logger.warning(
+                            f"🔄 No code block found in feedback response (retry {retry_count}/{args.max_retries})"
+                        )
+                        if wait_time > 0:
+                            logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                            wait_start_ns = monotonic_timestamp_ns()
+                            for remaining in range(wait_time, 0, -1):
+                                if remaining % 5 == 0 or remaining <= 3:
+                                    logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                                await asyncio.sleep(1)
+                            waited_ms = monotonic_elapsed_ms(wait_start_ns)
+                            if timing_stats is not None:
+                                timing_stats["llm_retry_wait_time_ms"] += waited_ms
+                            round_retry_wait_ms += waited_ms
+                            await log_retry_event(
+                                test_work_dir,
+                                event_type="retry_wait",
+                                stage=feedback_stage,
+                                case_type=case_type,
+                                case_name=case_name,
+                                pass_id=pass_id,
+                                round_id=feedback_round_id,
+                                retry_index=retry_count,
+                                extra={
+                                    "reason": "missing_code_block",
+                                    "wait_seconds": wait_time,
+                                    "wait_ms": round(waited_ms, 3),
+                                },
+                            )
                         logger.info(f"🔄 Retrying feedback API call for better code format...")
                         continue
-                    else:
-                        logger.error(f"❌ Max retries exceeded - no valid code block found in feedback")
-                        return None
-                
+
+                    logger.error("❌ Max retries exceeded - no valid code block found in feedback")
+                    await log_retry_event(
+                        test_work_dir,
+                        event_type="attempt_finish",
+                        stage=feedback_stage,
+                        case_type=case_type,
+                        case_name=case_name,
+                        pass_id=pass_id,
+                        round_id=feedback_round_id,
+                        retry_index=attempt_index,
+                        extra=attempt_entry,
+                    )
+                    return None
+
+                # Valid code returned
+                attempt_entry["success"] = True
+                round_entry["attempts"].append(attempt_entry)
+                await log_retry_event(
+                    test_work_dir,
+                    event_type="attempt_finish",
+                    stage=feedback_stage,
+                    case_type=case_type,
+                    case_name=case_name,
+                    pass_id=pass_id,
+                    round_id=feedback_round_id,
+                    retry_index=attempt_index,
+                    extra=attempt_entry,
+                )
+                round_entry["model_used"] = feedback_model_used
+                round_entry["start_time"] = ensure_timezone(round_start_wall).isoformat()
+                round_entry["end_time"] = ensure_timezone(attempt_wall_end).isoformat()
+                round_entry["effective_duration_ms"] = round(attempt_duration_ms, 3)
+                round_entry["retry_duration_ms"] = round(round_retry_call_ms, 3)
+                round_entry["retry_wait_ms"] = round(round_retry_wait_ms, 3)
+                round_entry["retries"] = attempt_index
+
+                if generation_info:
+                    round_entry["generation_info"] = generation_info
+
+                if timing_stats is not None:
+                    timing_stats["total_llm_time_ms"] += attempt_duration_ms
                 if retry_count > 0:
                     logger.info(f"✅ Successfully generated feedback after {retry_count} retries")
                 logger.debug(f"Successfully got LLM feedback for round {round_num}")
-                
-                # Record LLM feedback round timing
-                llm_round_end = time.time()
-                llm_round_duration = llm_round_end - llm_round_start
-                if timing_stats is not None:
-                    timing_stats["llm_rounds"].append({
-                        "round": round_num + 1,  # This is the feedback for next round
-                        "start_time": datetime.fromtimestamp(llm_round_start).isoformat(),
-                        "end_time": datetime.fromtimestamp(llm_round_end).isoformat(),
-                        "duration_sec": round(llm_round_duration, 3),
-                        "retries": retry_count
-                    })
-                    timing_stats["total_llm_time"] += llm_round_duration
                 break
-                
+
             except Exception as e:
                 error_msg = str(e)
-                
-                # Check if this is a retryable error
+                attempt_wall_end = now_timestamp()
+                attempt_duration_ms = monotonic_elapsed_ms(attempt_start_ns)
+                attempt_entry = {
+                    "retry_index": attempt_index,
+                    "start_time": ensure_timezone(attempt_wall_start).isoformat(),
+                    "end_time": ensure_timezone(attempt_wall_end).isoformat(),
+                    "duration_ms": round(attempt_duration_ms, 3),
+                    "success": False,
+                    "error": error_msg,
+                }
+                round_entry["attempts"].append(attempt_entry)
+                await log_retry_event(
+                    test_work_dir,
+                    event_type="attempt_finish",
+                    stage=feedback_stage,
+                    case_type=case_type,
+                    case_name=case_name,
+                    pass_id=pass_id,
+                    round_id=feedback_round_id,
+                    retry_index=attempt_index,
+                    extra=attempt_entry,
+                )
+                if timing_stats is not None:
+                    timing_stats["llm_retry_time_ms"] += attempt_duration_ms
+                round_retry_call_ms += attempt_duration_ms
+
                 if is_retryable_error(error_msg) and retry_count < args.max_retries:
                     retry_count += 1
                     wait_time = args.retry_wait
-                    logger.warning(f"🔄 API overload detected in feedback (retry {retry_count}/{args.max_retries}): {error_msg}")
-                    logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
-                    
-                    # Wait with countdown (only show every 10 seconds to avoid spam)
-                    for remaining in range(wait_time, 0, -1):
-                        if remaining % 10 == 0 or remaining <= 5:
-                            logger.debug(f"⏱️  Retrying in {remaining} seconds...")
-                        await asyncio.sleep(1)
-                    
+                    logger.warning(
+                        f"🔄 API overload detected in feedback (retry {retry_count}/{args.max_retries}): {error_msg}"
+                    )
+                    if wait_time > 0:
+                        logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
+                        wait_start_ns = monotonic_timestamp_ns()
+                        for remaining in range(wait_time, 0, -1):
+                            if remaining % 10 == 0 or remaining <= 5:
+                                logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                            await asyncio.sleep(1)
+                        waited_ms = monotonic_elapsed_ms(wait_start_ns)
+                        if timing_stats is not None:
+                            timing_stats["llm_retry_wait_time_ms"] += waited_ms
+                        round_retry_wait_ms += waited_ms
+                        await log_retry_event(
+                            test_work_dir,
+                            event_type="retry_wait",
+                            stage=feedback_stage,
+                            case_type=case_type,
+                            case_name=case_name,
+                            pass_id=pass_id,
+                            round_id=feedback_round_id,
+                            retry_index=retry_count,
+                            extra={
+                                "reason": "retryable_error",
+                                "error": error_msg,
+                                "wait_seconds": wait_time,
+                                "wait_ms": round(waited_ms, 3),
+                            },
+                        )
                     logger.info(f"🔄 Retrying feedback API call (attempt {retry_count + 1})...")
                     continue
-                else:
-                    # Non-retryable error or max retries exceeded
-                    if retry_count >= args.max_retries:
-                        logger.error(f"❌ Max retries ({args.max_retries}) exceeded for feedback round {round_num}")
-                    logger.error(f"Failed to get LLM feedback for round {round_num}: {error_msg}")
-                    return None
-        
+
+                if retry_count >= args.max_retries:
+                    logger.error(f"❌ Max retries ({args.max_retries}) exceeded for feedback round {round_num}")
+                logger.error(f"Failed to get LLM feedback for round {round_num}: {error_msg}")
+                return None
+
         if fixed_code_response is None:
-            logger.error(f"Failed to get LLM feedback after all retries")
+            logger.error("Failed to get LLM feedback after all retries")
             return None
+
+        round_entry["status"] = "success"
+        if timing_stats is not None:
+            timing_stats["llm_rounds"].append(round_entry)
 
         # Add LLM response to conversation history
         conversation_history.append(make_openai_message_assistant(fixed_code_response))
@@ -1193,7 +1705,14 @@ async def get_feedback_from_llm(round_num, error_output, stderr_output, test_wor
         return None
 
 
-async def run_testing_loop(conversation_history, test_work_dir, timing_stats=None, pass_id=1):
+async def run_testing_loop(
+    conversation_history,
+    test_work_dir,
+    timing_stats=None,
+    pass_id=1,
+    case_type=None,
+    case_name=None,
+):
     """Run the testing and fixing loop with timing statistics."""
     for round_num in range(1, MAX_ROUNDS + 1):
         success, stdout, stderr, log_file = await run_test_round(
@@ -1215,7 +1734,16 @@ async def run_testing_loop(conversation_history, test_work_dir, timing_stats=Non
                 # Get feedback from LLM using cumulative conversation history
                 # 这将产生第(round_num+1)轮对话
                 fixed_code = await get_feedback_from_llm(
-                    round_num, stdout, stderr, test_work_dir, conversation_history, timing_stats, pass_id)
+                    round_num,
+                    stdout,
+                    stderr,
+                    test_work_dir,
+                    conversation_history,
+                    case_type=case_type or "unknown",
+                    case_name=case_name or test_work_dir.name,
+                    timing_stats=timing_stats,
+                    pass_id=pass_id,
+                )
 
                 if fixed_code:
                     # Save the fixed code
@@ -1260,7 +1788,7 @@ async def test_cases():
                 "use_nvgpu": args.use_nvgpu,
                 "nvgpu_server": args.nvgpu_server if args.use_nvgpu else None,
                 "no_perf": args.no_perf,
-                "created_at": datetime.now().isoformat()
+                "created_at": ensure_timezone(now_timestamp()).isoformat()
             }
             f.write(json.dumps(metadata, ensure_ascii=False) + '\n')
         logger.debug(f"Initialized JSONL log file: {JSONL_LOG_FILE}")
@@ -1434,9 +1962,9 @@ async def test_cases():
         "case_types_fully_passed": sum(1 for case_type, results in detailed_results.items() if all(r['success'] for r in results)),
         "rounds_distribution": rounds_distribution,
         "avg_rounds": avg_rounds,
-        "completed_at": datetime.now().isoformat()
+        "completed_at": ensure_timezone(now_timestamp()).isoformat()
     }
-    await write_jsonl_log(final_summary)
+    await write_jsonl_log(final_summary, JSONL_LOG_FILE, JSONL_LOCK)
 
     return {"detailed_results": detailed_results, "all_case_results": all_case_results}
 
