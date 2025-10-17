@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from functools import lru_cache
+import os
+import time
 from zoneinfo import ZoneInfo
 from typing import Any
 
@@ -100,6 +102,17 @@ def normalize_timestamp_iso(value: datetime | str | None) -> str | None:
     if isinstance(value, str):
         return value
     return None
+
+
+def apply_default_timezone_to_os(tz_name: str | None = None) -> None:
+    """Apply the specified/default timezone to the OS-level TZ setting."""
+    tz = get_timezone(tz_name)
+    os.environ['TZ'] = getattr(tz, 'key', DEFAULT_TZ_NAME)
+    try:
+        time.tzset()
+    except AttributeError:
+        pass
+
 
 '''
 # 获取带时区的当前时间（默认 Asia/Shanghai）
