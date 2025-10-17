@@ -75,7 +75,7 @@ The Triton kernel should:
 ```
 
 ## Output Requirements
-Please return only the complete Python code
+Please return only the complete Python code, with the equivalent Triton code in the final ```python...``` code block
 
 ## Important Notes
 - Ensure the generated code can run directly without additional modifications
@@ -102,7 +102,7 @@ Current Triton version is 3.4.0. Target GPU: RTX 6000 Ada.
 ```
 
 ## Output Requirements
-Return only the complete Python code implementation.
+Return only the complete Python code implementation, with the equivalent Triton code in the final ```python...``` code block.
 """
 
 feedback_prompt = """The previously generated code has encountered issues. Please fix it based on the error information provided below:
@@ -123,6 +123,7 @@ feedback_prompt = """The previously generated code has encountered issues. Pleas
 3. Ensure the code compiles and runs correctly
 4. Maintain functional equivalence with the original CUDA code
 5. Return only the complete fixed Python code, properly formatted within ```python...``` code blocks
+6. Place the final corrected Triton code in the last ```python...``` code block
 
 Please provide the complete corrected implementation:"""
 
