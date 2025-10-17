@@ -23,6 +23,7 @@ from llm.client.openai_compat import get_api_param_openai_default
 from llm.client.openai_compat import openai_llm_call, async_openai_llm_call, CallingIdentifier, get_api_params_method, make_openai_message_system, make_openai_message_user, make_openai_message_assistant
 from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
 from utils.timezone import (
+    apply_default_timezone_to_os,
     ensure_timezone,
     format_timestamp,
     normalize_timestamp_iso,
@@ -74,12 +75,21 @@ def parse_args():
     parser.add_argument('--nvgpu-task-type', choices=['functional', 'performance'],
                        default='functional', help='Task type for NVGPU (default: functional)')
     # Async concurrency options
-    parser.add_argument('--concurrency', type=int, default=1,
+    parser.add_argument('--concurrency', type=int, default=10,
                        help='Maximum number of concurrent tasks (default: 10)')
+    parser.add_argument('--max-attempts', type=int, default=5,
+                       help='Maximum number of independent attempts (pass@k) to run per case (default: 1)')
+    parser.add_argument('--attempt-policy', choices=['first_success', 'exhaustive'], default='exhaustive',
+                       help='Attempt execution policy: stop after first success or exhaust all attempts')
     return parser.parse_args()
 
 # Parse arguments
 args = parse_args()
+if args.max_attempts < 1:
+    raise ValueError("--max-attempts must be at least 1")
+
+# Ensure process-level timezone matches project default
+apply_default_timezone_to_os()
 
 # Handle nvgpu flag
 if args.no_nvgpu:
@@ -449,7 +459,7 @@ async def log_retry_event(
     stage,
     case_type,
     case_name,
-    pass_id,
+    attempt_number,
     round_id,
     retry_index,
     extra=None,
@@ -464,7 +474,7 @@ async def log_retry_event(
         "stage": stage,
         "case_type": case_type,
         "case_name": case_name,
-        "pass_id": pass_id,
+        "attempt_number": attempt_number,
         "round_id": round_id,
         "retry_index": retry_index,
         "timestamp": ensure_timezone(now_timestamp()).isoformat(),
@@ -498,25 +508,25 @@ def extract_thinking_content(full_response):
     return None
 
 
-async def save_llm_conversation(test_work_dir, pass_id, round_id, retry_index, messages, full_response, model_used=None):
+async def save_llm_conversation(test_work_dir, attempt_number, round_id, retry_index, messages, full_response, model_used=None):
     """
     Save LLM conversation to JSONL format with structured metadata.
-    Supports pass@n, multiple rounds, and retries.
+    Supports attempt@n, multiple rounds, and retries.
     
     File structure: logs/conversations/all_conversations.jsonl
     
     Format: Each interaction as a JSONL line:
     {
-        "pass": 1,           # Pass number (for pass@n support)
+        "attempt": 1,        # Attempt number within multi-attempt run
         "round": 1,          # Round number (1=initial, 2+=feedback rounds)
-        "retry_index": 0,    # Retry attempt index (0=initial, 1+=retries)
+        "retry_index": 0,    # Retry index (0=initial, >0=additional retries)
         "timestamp": "...",  # ISO timestamp
         "interaction_type": "request/response",
         "role": "user/assistant/system",
         "content": "...",    # Message content
         "thinking": "...",   # Optional: thinking content for assistant
         "model_used": "...", # Optional: actual model used (for openrouter auto)
-        "success": true      # Whether this attempt was successful
+        "success": true      # Whether this interaction was successful
     }
     """
     conversations_dir = test_work_dir / "logs" / "conversations"
@@ -532,7 +542,7 @@ async def save_llm_conversation(test_work_dir, pass_id, round_id, retry_index, m
             # Write request messages (user/system prompts)
             for msg in messages:
                 entry = {
-                    "pass": pass_id,
+                    "attempt": attempt_number,
                     "round": round_id,
                     "retry_index": retry_index,
                     "timestamp": timestamp,
@@ -547,7 +557,7 @@ async def save_llm_conversation(test_work_dir, pass_id, round_id, retry_index, m
             
             # Write response (assistant message)
             response_entry = {
-                "pass": pass_id,
+                "attempt": attempt_number,
                 "round": round_id,
                 "retry_index": retry_index,
                 "timestamp": timestamp,
@@ -576,8 +586,8 @@ async def save_llm_conversation(test_work_dir, pass_id, round_id, retry_index, m
         logger.warning(f"Failed to save conversation to JSONL: {e}")
 
 
-async def run_single_case_translation(case_type, case_name):
-    """Run translation for a single case with detailed timing statistics."""
+async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_work_dir):
+    """Run translation for a single case attempt with detailed timing statistics."""
     # Start timing for end-to-end duration
     case_start_wall = now_timestamp()
     case_start_ns = monotonic_timestamp_ns()
@@ -585,16 +595,20 @@ async def run_single_case_translation(case_type, case_name):
     logger.info(f"{'='*60}")
     logger.info(f"🎯 Testing case type: {case_type}")
     logger.info(f"📁 Case name: {case_name}")
+    if args.max_attempts > 1:
+        logger.info(f"🧪 Attempt {attempt_number}/{args.max_attempts}")
     logger.info(f"{'='*60}")
 
     testcase_src_dir = TESTSET_ROOT_DIR / case_name
-    test_work_dir = WORK_DIR / case_name
-    test_work_dir.mkdir(parents=True, exist_ok=True)
+    if attempt_work_dir.exists():
+        shutil.rmtree(attempt_work_dir)
+    attempt_work_dir.mkdir(parents=True, exist_ok=True)
     
     # Initialize timing statistics
     timing_stats = {
         "case_type": case_type,
         "case_name": case_name,
+        "attempt_number": attempt_number,
         "start_time": ensure_timezone(case_start_wall).isoformat(),
         "llm_rounds": [],
         "test_rounds": [],
@@ -610,21 +624,21 @@ async def run_single_case_translation(case_type, case_name):
 
     for file_path in files_to_copy:
         src_file = testcase_src_dir / file_path
-        dst_file = test_work_dir / file_path
+        dst_file = attempt_work_dir / file_path
 
         dst_file.parent.mkdir(parents=True, exist_ok=True)
 
         if src_file.exists():
             shutil.copy2(src_file, dst_file)
-            logger.debug(f"Copy {file_path} to {test_work_dir}")
+            logger.debug(f"Copy {file_path} to {attempt_work_dir}")
         else:
             logger.warning(f"Source file {src_file} does not exist")
 
     # Read CUDA code
-    cuda_file_path = test_work_dir / DIR_CUDA_ / "kernel.cu"
+    cuda_file_path = attempt_work_dir / DIR_CUDA_ / "kernel.cu"
     if not cuda_file_path.exists():
         logger.error(f"CUDA file not found: {cuda_file_path}")
-        return False
+        return False, None, timing_stats
 
     with open(cuda_file_path, "r") as f:
         cuda_code = f.read()
@@ -640,13 +654,12 @@ async def run_single_case_translation(case_type, case_name):
     # Get API parameters based on model type and call LLM with retry logic
     retry_count = 0
     resp_content = None
-    pass_id = 1  # Currently pass@1, future work: support parallel attempts (pass@k)
     round_id = 1  # Initial generation is round 1
 
     actual_model_used = None  # Track actual model used
     round_entry = {
         "round": round_id,
-        "attempts": [],
+        "retry_records": [],
         "retry_limit": args.max_retries,
     }
     round_retry_call_ms = 0.0
@@ -655,28 +668,28 @@ async def run_single_case_translation(case_type, case_name):
     initial_stage = "initial_llm_generation"
 
     while retry_count <= args.max_retries:
-        attempt_index = retry_count
-        attempt_start_ns = monotonic_timestamp_ns()
-        attempt_wall_start = now_timestamp()
+        retry_index = retry_count
+        retry_start_ns = monotonic_timestamp_ns()
+        retry_wall_start = now_timestamp()
         if round_start_wall is None:
-            round_start_wall = attempt_wall_start
+            round_start_wall = retry_wall_start
 
         usage_dict = None
         generation_info = None
-        attempt_wall_end = None
+        retry_wall_end = None
 
         await log_retry_event(
-            test_work_dir,
+            attempt_work_dir,
             event_type="attempt_start",
             stage=initial_stage,
             case_type=case_type,
             case_name=case_name,
-            pass_id=pass_id,
+            attempt_number=attempt_number,
             round_id=round_id,
-            retry_index=attempt_index,
+            retry_index=retry_index,
             extra={
                 "model": model_name,
-                "attempt_started_at": ensure_timezone(attempt_wall_start).isoformat(),
+                "attempt_started_at": ensure_timezone(retry_wall_start).isoformat(),
             },
         )
 
@@ -697,10 +710,10 @@ async def run_single_case_translation(case_type, case_name):
                 logger.debug(f"🤖 Model used: {actual_model_used}")
 
             await save_llm_conversation(
-                test_work_dir=test_work_dir,
-                pass_id=pass_id,
+                test_work_dir=attempt_work_dir,
+                attempt_number=attempt_number,
                 round_id=round_id,
-                retry_index=attempt_index,
+                retry_index=retry_index,
                 messages=conversation_history,
                 full_response=resp_content,
                 model_used=actual_model_used,
@@ -711,39 +724,39 @@ async def run_single_case_translation(case_type, case_name):
                 usage_dict["reasoning_tokens"] = generation_info.get("native_tokens_reasoning")
 
             triton_code = get_last_code_block(resp_content)
-            attempt_wall_end = now_timestamp()
-            attempt_duration_ms = monotonic_elapsed_ms(attempt_start_ns)
+            retry_wall_end = now_timestamp()
+            retry_duration_ms = monotonic_elapsed_ms(retry_start_ns)
 
-            attempt_entry = {
-                "retry_index": attempt_index,
-                "start_time": ensure_timezone(attempt_wall_start).isoformat(),
-                "end_time": ensure_timezone(attempt_wall_end).isoformat(),
-                "duration_ms": round(attempt_duration_ms, 3),
+            retry_record = {
+                "retry_index": retry_index,
+                "start_time": ensure_timezone(retry_wall_start).isoformat(),
+                "end_time": ensure_timezone(retry_wall_end).isoformat(),
+                "duration_ms": round(retry_duration_ms, 3),
                 "model_used": actual_model_used,
                 "success": False,
             }
             if usage_dict:
-                attempt_entry["usage"] = usage_dict
+                retry_record["usage"] = usage_dict
             if generation_info:
-                attempt_entry["generation_info"] = generation_info
+                retry_record["generation_info"] = generation_info
 
             if triton_code == resp_content:
-                attempt_entry["reason"] = "missing_code_block"
-                round_entry["attempts"].append(attempt_entry)
+                retry_record["reason"] = "missing_code_block"
+                round_entry["retry_records"].append(retry_record)
                 await log_retry_event(
-                    test_work_dir,
+                    attempt_work_dir,
                     event_type="attempt_finish",
                     stage=initial_stage,
                     case_type=case_type,
                     case_name=case_name,
-                    pass_id=pass_id,
+                    attempt_number=attempt_number,
                     round_id=round_id,
-                    retry_index=attempt_index,
-                    extra=attempt_entry,
+                    retry_index=retry_index,
+                    extra=retry_record,
                 )
                 if timing_stats is not None:
-                    timing_stats["llm_retry_time_ms"] += attempt_duration_ms
-                round_retry_call_ms += attempt_duration_ms
+                    timing_stats["llm_retry_time_ms"] += retry_duration_ms
+                round_retry_call_ms += retry_duration_ms
 
                 if retry_count < args.max_retries:
                     retry_count += 1
@@ -761,12 +774,12 @@ async def run_single_case_translation(case_type, case_name):
                             timing_stats["llm_retry_wait_time_ms"] += waited_ms
                         round_retry_wait_ms += waited_ms
                         await log_retry_event(
-                            test_work_dir,
+                            attempt_work_dir,
                             event_type="retry_wait",
                             stage=initial_stage,
                             case_type=case_type,
                             case_name=case_name,
-                            pass_id=pass_id,
+                            attempt_number=attempt_number,
                             round_id=round_id,
                             retry_index=retry_count,
                             extra={
@@ -780,45 +793,45 @@ async def run_single_case_translation(case_type, case_name):
 
                 logger.error("❌ Max retries exceeded - no valid code block found")
                 await log_retry_event(
-                    test_work_dir,
+                    attempt_work_dir,
                     event_type="attempt_finish",
                     stage=initial_stage,
                     case_type=case_type,
                     case_name=case_name,
-                    pass_id=pass_id,
+                    attempt_number=attempt_number,
                     round_id=round_id,
-                    retry_index=attempt_index,
-                    extra=attempt_entry,
+                    retry_index=retry_index,
+                    extra=retry_record,
                 )
-                return False, None
+                return False, None, timing_stats
 
             # Valid code produced
-            attempt_entry["success"] = True
-            round_entry["attempts"].append(attempt_entry)
+            retry_record["success"] = True
+            round_entry["retry_records"].append(retry_record)
             await log_retry_event(
-                test_work_dir,
+                attempt_work_dir,
                 event_type="attempt_finish",
                 stage=initial_stage,
                 case_type=case_type,
                 case_name=case_name,
-                pass_id=pass_id,
+                attempt_number=attempt_number,
                 round_id=round_id,
-                retry_index=attempt_index,
-                extra=attempt_entry,
+                retry_index=retry_index,
+                extra=retry_record,
             )
             round_entry["start_time"] = ensure_timezone(round_start_wall).isoformat()
-            round_entry["end_time"] = ensure_timezone(attempt_wall_end).isoformat()
-            round_entry["effective_duration_ms"] = round(attempt_duration_ms, 3)
+            round_entry["end_time"] = ensure_timezone(retry_wall_end).isoformat()
+            round_entry["effective_duration_ms"] = round(retry_duration_ms, 3)
             round_entry["retry_duration_ms"] = round(round_retry_call_ms, 3)
             round_entry["retry_wait_ms"] = round(round_retry_wait_ms, 3)
-            round_entry["retries"] = attempt_index
+            round_entry["retries"] = retry_index
             round_entry["model_used"] = actual_model_used
 
             if generation_info:
                 round_entry["generation_info"] = generation_info
 
             if timing_stats is not None:
-                timing_stats["total_llm_time_ms"] += attempt_duration_ms
+                timing_stats["total_llm_time_ms"] += retry_duration_ms
 
             if retry_count > 0:
                 logger.info(f"🔄 Successfully generated code after {retry_count} retries")
@@ -826,32 +839,32 @@ async def run_single_case_translation(case_type, case_name):
             break
 
         except Exception as e:
-            attempt_wall_end = now_timestamp()
-            attempt_duration_ms = monotonic_elapsed_ms(attempt_start_ns)
+            retry_wall_end = now_timestamp()
+            retry_duration_ms = monotonic_elapsed_ms(retry_start_ns)
             error_msg = str(e)
-            attempt_entry = {
-                "retry_index": attempt_index,
-                "start_time": ensure_timezone(attempt_wall_start).isoformat(),
-                "end_time": ensure_timezone(attempt_wall_end).isoformat(),
-                "duration_ms": round(attempt_duration_ms, 3),
+            retry_record = {
+                "retry_index": retry_index,
+                "start_time": ensure_timezone(retry_wall_start).isoformat(),
+                "end_time": ensure_timezone(retry_wall_end).isoformat(),
+                "duration_ms": round(retry_duration_ms, 3),
                 "success": False,
                 "error": error_msg,
             }
-            round_entry["attempts"].append(attempt_entry)
+            round_entry["retry_records"].append(retry_record)
             await log_retry_event(
-                test_work_dir,
+                attempt_work_dir,
                 event_type="attempt_finish",
                 stage=initial_stage,
                 case_type=case_type,
                 case_name=case_name,
-                pass_id=pass_id,
+                attempt_number=attempt_number,
                 round_id=round_id,
-                retry_index=attempt_index,
-                extra=attempt_entry,
+                retry_index=retry_index,
+                extra=retry_record,
             )
             if timing_stats is not None:
-                timing_stats["llm_retry_time_ms"] += attempt_duration_ms
-            round_retry_call_ms += attempt_duration_ms
+                timing_stats["llm_retry_time_ms"] += retry_duration_ms
+            round_retry_call_ms += retry_duration_ms
 
             if is_retryable_error(error_msg) and retry_count < args.max_retries:
                 retry_count += 1
@@ -869,12 +882,12 @@ async def run_single_case_translation(case_type, case_name):
                         timing_stats["llm_retry_wait_time_ms"] += waited_ms
                     round_retry_wait_ms += waited_ms
                     await log_retry_event(
-                        test_work_dir,
+                        attempt_work_dir,
                         event_type="retry_wait",
                         stage=initial_stage,
                         case_type=case_type,
                         case_name=case_name,
-                        pass_id=pass_id,
+                        attempt_number=attempt_number,
                         round_id=round_id,
                         retry_index=retry_count,
                         extra={
@@ -890,11 +903,11 @@ async def run_single_case_translation(case_type, case_name):
             if retry_count >= args.max_retries:
                 logger.error(f"❌ Max retries ({args.max_retries}) exceeded for initial generation")
             logger.error(f"Failed to generate initial Triton code: {error_msg}", exc_info=True)
-            return False, None
+            return False, None, timing_stats
 
     if resp_content is None:
         logger.error("Failed to generate initial Triton code after all retries")
-        return False, None
+        return False, None, timing_stats
 
     round_entry["status"] = "success"
     timing_stats["llm_rounds"].append(round_entry)
@@ -902,7 +915,7 @@ async def run_single_case_translation(case_type, case_name):
     # 将LLM的回复添加到对话历史中
     conversation_history.append(make_openai_message_assistant(resp_content))
 
-    TRITON_DIR = test_work_dir / DIR_TRITON_
+    TRITON_DIR = attempt_work_dir / DIR_TRITON_
     TRITON_DIR.mkdir(parents=True, exist_ok=True)
     final_triton_code = get_last_code_block(resp_content)
     with open(TRITON_DIR / "kernel.py", "w") as f:
@@ -912,16 +925,16 @@ async def run_single_case_translation(case_type, case_name):
 
     # Save initial conversation history (round 1)
     save_conversation_history(conversation_history,
-                              test_work_dir, round_num=1, timestamp=TIMESTAMP)
+                              attempt_work_dir, round_num=1, timestamp=TIMESTAMP)
 
     # 开始自动化测试和修复流程
     logger.info(f"Starting automated testing and fixing process...")
 
     success, rounds = await run_testing_loop(
         conversation_history,
-        test_work_dir,
+        attempt_work_dir,
         timing_stats,
-        pass_id=pass_id,
+        attempt_number=attempt_number,
         case_type=case_type,
         case_name=case_name,
     )
@@ -958,6 +971,7 @@ async def run_single_case_translation(case_type, case_name):
     
     # Write to JSONL log immediately
     await write_jsonl_log(timing_stats, JSONL_LOG_FILE, JSONL_LOCK)
+    timing_stats["_json_logged"] = True
     
     logger.info(
         "⏱️  Timing: Wall=%0.1fms, Effective(LLM+Test)=%0.1fms "
@@ -976,7 +990,83 @@ async def run_single_case_translation(case_type, case_name):
     if final_model != model_name:
         logger.info(f"🤖 Final model used: {final_model} (requested: {model_name})")
     
-    return success, rounds
+    return success, rounds, timing_stats
+
+
+async def run_single_case_translation(case_type, case_name):
+    """Run translation for a case with optional multi-attempt translation runs."""
+    case_root_dir = WORK_DIR / case_name
+    case_root_dir.mkdir(parents=True, exist_ok=True)
+
+    attempt_results: list[dict] = []
+    success_any = False
+    best_rounds: int | None = None
+
+    for attempt_number in range(1, args.max_attempts + 1):
+        attempt_work_dir = case_root_dir / f"attempt_{attempt_number:02d}"
+        success, rounds, timing_stats = await run_single_case_attempt(
+            case_type, case_name, attempt_number, attempt_work_dir
+        )
+
+        if "success" not in timing_stats:
+            timing_stats["success"] = success
+        if "final_round" not in timing_stats:
+            timing_stats["final_round"] = rounds
+        if "end_time" not in timing_stats:
+            timing_stats["end_time"] = ensure_timezone(now_timestamp()).isoformat()
+        if "timestamp" not in timing_stats:
+            timing_stats["timestamp"] = TIMESTAMP
+        if "model_name" not in timing_stats:
+            timing_stats["model_name"] = model_name
+        if "actual_model_used" not in timing_stats:
+            timing_stats["actual_model_used"] = model_name
+        if "testset" not in timing_stats:
+            timing_stats["testset"] = args.testset
+        if "use_nvgpu" not in timing_stats:
+            timing_stats["use_nvgpu"] = args.use_nvgpu
+        if "concurrency" not in timing_stats:
+            timing_stats["concurrency"] = args.concurrency
+        if "gpu_server" not in timing_stats:
+            timing_stats["gpu_server"] = args.nvgpu_server if args.use_nvgpu else None
+        if "wall_clock_duration_ms" not in timing_stats:
+            timing_stats["wall_clock_duration_ms"] = None
+        if "effective_duration_ms" not in timing_stats:
+            timing_stats["effective_duration_ms"] = None
+        if "retry_overhead_ms" not in timing_stats:
+            timing_stats["retry_overhead_ms"] = 0.0
+        if "other_overhead_ms" not in timing_stats:
+            timing_stats["other_overhead_ms"] = 0.0
+        if "_json_logged" not in timing_stats:
+            await write_jsonl_log(timing_stats, JSONL_LOG_FILE, JSONL_LOCK)
+            timing_stats["_json_logged"] = True
+
+        sanitized_stats = dict(timing_stats)
+        sanitized_stats.pop('_json_logged', None)
+        attempt_results.append(
+            {
+                "attempt_number": attempt_number,
+                "success": success,
+                "rounds": rounds,
+                "timing_stats": sanitized_stats,
+                "work_dir": str(attempt_work_dir),
+            }
+        )
+
+        if success and best_rounds is None:
+            success_any = True
+            best_rounds = rounds
+            if args.attempt_policy == "first_success":
+                logger.info(
+                    f"✅ Case {case_type}/{case_name} succeeded on attempt {attempt_number}/{args.max_attempts}"
+                )
+                break
+
+    if success_any and best_rounds is None:
+        best_rounds = next(res["rounds"] for res in attempt_results if res["success"])
+    if not success_any and attempt_results:
+        best_rounds = attempt_results[-1]["rounds"]
+
+    return success_any, best_rounds, attempt_results
 
 
 def get_last_code_block(resp_content):
@@ -1416,7 +1506,7 @@ async def get_feedback_from_llm(
     case_type,
     case_name,
     timing_stats=None,
-    pass_id=1,
+    attempt_number=1,
 ):
     """Get feedback from LLM to fix the triton kernel using cumulative conversation history."""
     try:
@@ -1440,7 +1530,7 @@ async def get_feedback_from_llm(
         feedback_model_used = None  # Track actual model used in feedback
         round_entry = {
             "round": feedback_round_id,
-            "attempts": [],
+            "retry_records": [],
             "retry_limit": args.max_retries,
         }
         round_retry_call_ms = 0.0
@@ -1449,11 +1539,11 @@ async def get_feedback_from_llm(
         feedback_stage = "feedback_llm_generation"
 
         while retry_count <= args.max_retries:
-            attempt_index = retry_count
-            attempt_start_ns = monotonic_timestamp_ns()
-            attempt_wall_start = now_timestamp()
+            retry_index = retry_count
+            retry_start_ns = monotonic_timestamp_ns()
+            retry_wall_start = now_timestamp()
             if round_start_wall is None:
-                round_start_wall = attempt_wall_start
+                round_start_wall = retry_wall_start
 
             usage_dict = None
             generation_info = None
@@ -1464,12 +1554,12 @@ async def get_feedback_from_llm(
                 stage=feedback_stage,
                 case_type=case_type,
                 case_name=case_name,
-                pass_id=pass_id,
+                attempt_number=attempt_number,
                 round_id=feedback_round_id,
-                retry_index=attempt_index,
+                retry_index=retry_index,
                 extra={
                     "model": model_name,
-                    "attempt_started_at": ensure_timezone(attempt_wall_start).isoformat(),
+                    "attempt_started_at": ensure_timezone(retry_wall_start).isoformat(),
                 },
             )
 
@@ -1489,9 +1579,9 @@ async def get_feedback_from_llm(
 
                 await save_llm_conversation(
                     test_work_dir=test_work_dir,
-                    pass_id=pass_id,
+                    attempt_number=attempt_number,
                     round_id=feedback_round_id,
-                    retry_index=attempt_index,
+                    retry_index=retry_index,
                     messages=conversation_history,
                     full_response=fixed_code_response,
                     model_used=feedback_model_used,
@@ -1502,39 +1592,39 @@ async def get_feedback_from_llm(
                     usage_dict["reasoning_tokens"] = generation_info.get("native_tokens_reasoning")
 
                 fixed_code = get_last_code_block(fixed_code_response)
-                attempt_wall_end = now_timestamp()
-                attempt_duration_ms = monotonic_elapsed_ms(attempt_start_ns)
+                retry_wall_end = now_timestamp()
+                retry_duration_ms = monotonic_elapsed_ms(retry_start_ns)
 
-                attempt_entry = {
-                    "retry_index": attempt_index,
-                    "start_time": ensure_timezone(attempt_wall_start).isoformat(),
-                    "end_time": ensure_timezone(attempt_wall_end).isoformat(),
-                    "duration_ms": round(attempt_duration_ms, 3),
+                retry_record = {
+                    "retry_index": retry_index,
+                    "start_time": ensure_timezone(retry_wall_start).isoformat(),
+                    "end_time": ensure_timezone(retry_wall_end).isoformat(),
+                    "duration_ms": round(retry_duration_ms, 3),
                     "model_used": feedback_model_used,
                     "success": False,
                 }
                 if usage_dict:
-                    attempt_entry["usage"] = usage_dict
+                    retry_record["usage"] = usage_dict
                 if generation_info:
-                    attempt_entry["generation_info"] = generation_info
+                    retry_record["generation_info"] = generation_info
 
                 if fixed_code == fixed_code_response:
-                    attempt_entry["reason"] = "missing_code_block"
-                    round_entry["attempts"].append(attempt_entry)
+                    retry_record["reason"] = "missing_code_block"
+                    round_entry["retry_records"].append(retry_record)
                     await log_retry_event(
                         test_work_dir,
                         event_type="attempt_finish",
                         stage=feedback_stage,
                         case_type=case_type,
                         case_name=case_name,
-                        pass_id=pass_id,
+                        attempt_number=attempt_number,
                         round_id=feedback_round_id,
-                        retry_index=attempt_index,
-                        extra=attempt_entry,
+                        retry_index=retry_index,
+                        extra=retry_record,
                     )
                     if timing_stats is not None:
-                        timing_stats["llm_retry_time_ms"] += attempt_duration_ms
-                    round_retry_call_ms += attempt_duration_ms
+                        timing_stats["llm_retry_time_ms"] += retry_duration_ms
+                    round_retry_call_ms += retry_duration_ms
 
                     if retry_count < args.max_retries:
                         retry_count += 1
@@ -1559,7 +1649,7 @@ async def get_feedback_from_llm(
                                 stage=feedback_stage,
                                 case_type=case_type,
                                 case_name=case_name,
-                                pass_id=pass_id,
+                                attempt_number=attempt_number,
                                 round_id=feedback_round_id,
                                 retry_index=retry_count,
                                 extra={
@@ -1578,40 +1668,40 @@ async def get_feedback_from_llm(
                         stage=feedback_stage,
                         case_type=case_type,
                         case_name=case_name,
-                        pass_id=pass_id,
+                        attempt_number=attempt_number,
                         round_id=feedback_round_id,
-                        retry_index=attempt_index,
-                        extra=attempt_entry,
+                        retry_index=retry_index,
+                        extra=retry_record,
                     )
                     return None
 
                 # Valid code returned
-                attempt_entry["success"] = True
-                round_entry["attempts"].append(attempt_entry)
+                retry_record["success"] = True
+                round_entry["retry_records"].append(retry_record)
                 await log_retry_event(
                     test_work_dir,
                     event_type="attempt_finish",
                     stage=feedback_stage,
                     case_type=case_type,
                     case_name=case_name,
-                    pass_id=pass_id,
+                    attempt_number=attempt_number,
                     round_id=feedback_round_id,
-                    retry_index=attempt_index,
-                    extra=attempt_entry,
+                    retry_index=retry_index,
+                    extra=retry_record,
                 )
                 round_entry["model_used"] = feedback_model_used
                 round_entry["start_time"] = ensure_timezone(round_start_wall).isoformat()
-                round_entry["end_time"] = ensure_timezone(attempt_wall_end).isoformat()
-                round_entry["effective_duration_ms"] = round(attempt_duration_ms, 3)
+                round_entry["end_time"] = ensure_timezone(retry_wall_end).isoformat()
+                round_entry["effective_duration_ms"] = round(retry_duration_ms, 3)
                 round_entry["retry_duration_ms"] = round(round_retry_call_ms, 3)
                 round_entry["retry_wait_ms"] = round(round_retry_wait_ms, 3)
-                round_entry["retries"] = attempt_index
+                round_entry["retries"] = retry_index
 
                 if generation_info:
                     round_entry["generation_info"] = generation_info
 
                 if timing_stats is not None:
-                    timing_stats["total_llm_time_ms"] += attempt_duration_ms
+                    timing_stats["total_llm_time_ms"] += retry_duration_ms
                 if retry_count > 0:
                     logger.info(f"✅ Successfully generated feedback after {retry_count} retries")
                 logger.debug(f"Successfully got LLM feedback for round {round_num}")
@@ -1619,31 +1709,31 @@ async def get_feedback_from_llm(
 
             except Exception as e:
                 error_msg = str(e)
-                attempt_wall_end = now_timestamp()
-                attempt_duration_ms = monotonic_elapsed_ms(attempt_start_ns)
-                attempt_entry = {
-                    "retry_index": attempt_index,
-                    "start_time": ensure_timezone(attempt_wall_start).isoformat(),
-                    "end_time": ensure_timezone(attempt_wall_end).isoformat(),
-                    "duration_ms": round(attempt_duration_ms, 3),
+                retry_wall_end = now_timestamp()
+                retry_duration_ms = monotonic_elapsed_ms(retry_start_ns)
+                retry_record = {
+                    "retry_index": retry_index,
+                    "start_time": ensure_timezone(retry_wall_start).isoformat(),
+                    "end_time": ensure_timezone(retry_wall_end).isoformat(),
+                    "duration_ms": round(retry_duration_ms, 3),
                     "success": False,
                     "error": error_msg,
                 }
-                round_entry["attempts"].append(attempt_entry)
+                round_entry["retry_records"].append(retry_record)
                 await log_retry_event(
                     test_work_dir,
                     event_type="attempt_finish",
                     stage=feedback_stage,
                     case_type=case_type,
                     case_name=case_name,
-                    pass_id=pass_id,
+                    attempt_number=attempt_number,
                     round_id=feedback_round_id,
-                    retry_index=attempt_index,
-                    extra=attempt_entry,
+                    retry_index=retry_index,
+                    extra=retry_record,
                 )
                 if timing_stats is not None:
-                    timing_stats["llm_retry_time_ms"] += attempt_duration_ms
-                round_retry_call_ms += attempt_duration_ms
+                    timing_stats["llm_retry_time_ms"] += retry_duration_ms
+                round_retry_call_ms += retry_duration_ms
 
                 if is_retryable_error(error_msg) and retry_count < args.max_retries:
                     retry_count += 1
@@ -1668,7 +1758,7 @@ async def get_feedback_from_llm(
                             stage=feedback_stage,
                             case_type=case_type,
                             case_name=case_name,
-                            pass_id=pass_id,
+                            attempt_number=attempt_number,
                             round_id=feedback_round_id,
                             retry_index=retry_count,
                             extra={
@@ -1709,7 +1799,7 @@ async def run_testing_loop(
     conversation_history,
     test_work_dir,
     timing_stats=None,
-    pass_id=1,
+    attempt_number=1,
     case_type=None,
     case_name=None,
 ):
@@ -1742,7 +1832,7 @@ async def run_testing_loop(
                     case_type=case_type or "unknown",
                     case_name=case_name or test_work_dir.name,
                     timing_stats=timing_stats,
-                    pass_id=pass_id,
+                    attempt_number=attempt_number,
                 )
 
                 if fixed_code:
@@ -1788,6 +1878,8 @@ async def test_cases():
                 "use_nvgpu": args.use_nvgpu,
                 "nvgpu_server": args.nvgpu_server if args.use_nvgpu else None,
                 "no_perf": args.no_perf,
+                "max_attempts": args.max_attempts,
+                "attempt_policy": args.attempt_policy,
                 "created_at": ensure_timezone(now_timestamp()).isoformat()
             }
             f.write(json.dumps(metadata, ensure_ascii=False) + '\n')
@@ -1805,6 +1897,7 @@ async def test_cases():
     logger.info(f"   - Skip performance: {args.no_perf}")
     logger.info(f"   - Retry wait time: {args.retry_wait}s")
     logger.info(f"   - Max retries: {args.max_retries}")
+    logger.info(f"   - Multi-attempt: {args.max_attempts} ({args.attempt_policy})")
     logger.info(f"   - Specific case types: {args.case_types if args.case_types else 'All'}")
     logger.info(f"   - Use NVGPU: {args.use_nvgpu}")
     logger.info(f"   - Concurrency: {args.concurrency}")
@@ -1826,22 +1919,42 @@ async def test_cases():
             try:
                 logger.info(
                     f"{'🔹'*20} Starting {case_type}/{case_name_single} {'🔹'*20}")
-                success, rounds = await run_single_case_translation(
+                success, rounds, attempt_details = await run_single_case_translation(
                     case_type, case_name_single)
+
+                successful_attempt = next(
+                    (item.get("attempt_number", item.get("attempt")) for item in attempt_details if item.get("success")), None
+                )
 
                 case_result = {
                     "case_type": case_type,
                     "case_name": case_name_single,
                     "success": success,
-                    "rounds": rounds
+                    "rounds": rounds,
+                    "attempt_details": attempt_details,
+                    "successful_attempt": successful_attempt,
                 }
 
                 if success:
-                    status = f"✅ SUCCESS (Round {rounds})"
+                    attempt_label = (
+                        f"Attempt {successful_attempt}"
+                        if successful_attempt is not None
+                        else "Attempt ?"
+                    )
+                    round_label = f"Round {rounds}" if rounds is not None else "Round ?"
+                    status = f"✅ SUCCESS ({attempt_label}, {round_label})"
                 else:
-                    status = f"❌ FAILED (Round {rounds})"
+                    status = f"❌ FAILED after {len(attempt_details)} attempt(s)"
                 logger.info(f"{'🔹'*15} {case_type}/{case_name_single}: {status} {'🔹'*15}")
-                
+
+                for attempt_info in attempt_details:
+                    attempt_status = '✅' if attempt_info.get('success') else '❌'
+                    attempt_round = attempt_info.get('rounds')
+                    round_desc = f"round {attempt_round}" if attempt_round is not None else "no successful round"
+                    logger.info(
+                        f"        {attempt_status} Attempt {attempt_info.get('attempt_number', attempt_info.get('attempt')):02d}: {round_desc}"
+                    )
+
                 return case_result
 
             except Exception as e:
@@ -1851,6 +1964,8 @@ async def test_cases():
                     "case_name": case_name_single,
                     "success": False,
                     "rounds": None,
+                    "attempt_details": [],
+                    "successful_attempt": None,
                     "error": str(e)
                 }
                 return case_result
@@ -1881,6 +1996,8 @@ async def test_cases():
                 "case_name": "unknown",
                 "success": False,
                 "rounds": None,
+                "attempt_details": [],
+                "successful_attempt": None,
                 "error": str(result)
             }
             detailed_results[case_type].append(error_result)
@@ -1911,12 +2028,20 @@ async def test_cases():
 
         # Individual case details
         for result in case_results:
+            attempt_count = len(result.get('attempt_details', []))
             if result["success"]:
-                status = f"  ✅ (Round {result['rounds']})"
+                attempt_label = "Attempt ?"
+                if result.get('successful_attempt') is not None:
+                    attempt_label = f"Attempt {result['successful_attempt']}"
+                round_label = f"Round {result['rounds']}" if result.get('rounds') is not None else "Round ?"
+                status = f"  ✅ ({attempt_label}, {round_label})"
             else:
-                rounds_info = f"Round {result['rounds']}" if result.get(
-                    'rounds') is not None else "Error"
-                status = f"  ❌ ({rounds_info})"
+                rounds_info = (
+                    f"Round {result['rounds']}"
+                    if result.get('rounds') is not None
+                    else "No successful round"
+                )
+                status = f"  ❌ ({rounds_info}, Attempts {attempt_count})"
 
             error_info = f" - {result.get('error', '')}" if not result["success"] and 'error' in result else ""
             logger.info(f"{status} {result['case_name']}{error_info}")
@@ -1928,7 +2053,9 @@ async def test_cases():
         result for result in all_case_results if result["success"]]
 
     for result in successful_cases:
-        round_num = result["rounds"]
+        round_num = result.get("rounds")
+        if round_num is None:
+            continue
         rounds_distribution[round_num] = rounds_distribution.get(
             round_num, 0) + 1
 
@@ -1937,8 +2064,8 @@ async def test_cases():
         count = rounds_distribution[round_num]
         logger.info(f"   Round {round_num}: {count} cases")
 
-    avg_rounds = sum(result["rounds"] for result in successful_cases) / \
-        len(successful_cases) if successful_cases else 0
+    round_values = [result['rounds'] for result in successful_cases if result.get('rounds') is not None]
+    avg_rounds = sum(round_values) / len(round_values) if round_values else 0
     logger.info(f"📈 Average rounds for successful cases: {avg_rounds:.2f}")
 
     logger.info(f"{'='*80}")
@@ -1962,6 +2089,8 @@ async def test_cases():
         "case_types_fully_passed": sum(1 for case_type, results in detailed_results.items() if all(r['success'] for r in results)),
         "rounds_distribution": rounds_distribution,
         "avg_rounds": avg_rounds,
+        "max_attempts": args.max_attempts,
+        "attempt_policy": args.attempt_policy,
         "completed_at": ensure_timezone(now_timestamp()).isoformat()
     }
     await write_jsonl_log(final_summary, JSONL_LOG_FILE, JSONL_LOCK)
