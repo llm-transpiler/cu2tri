@@ -6,6 +6,7 @@ SEED = 46
 CUDA_FOLDER_NAME = "cuda_"
 TRITON_FOLDER_NAME = "triton_"
 TORCH_FOLDER_NAME = "torch_"
+C_FOLDER_NAME = "c_"
 from eval_.common.loader import load_cuda_extension_from_cufile
 from eval_.common.config import EvalConfig
 def build_kernel(file_name, header_lib_path="./", build_dir="./build"):
@@ -30,6 +31,8 @@ def build_kernel(file_name, header_lib_path="./", build_dir="./build"):
         "-std=c++17",
         # "-Idsl_template.cuh",
         "-I" + header_lib_path,  # 包含utils头文件
+        # "-I/workspace/third_party/NVIDIA/cutlass/include", 
+        # "-I/workspace/third_party/NVIDIA/cutlass/tools/util/include", 
         # "-DNO_MMA_HGEMM_BIN",  # 启用PyTorch绑定而不是独立二进制
     }
     config.extra_cuda_cflags = list(set(config.extra_cuda_cflags) | cuda_flags)
@@ -122,4 +125,69 @@ def load_cuda_kernel(testcase_root_dir, argtypes, restype=None, force_compile=Fa
     lib.cuda_kernel.restype = restype
     
     return lib.cuda_kernel
+
+def compile_c_kernel(testcase_root_dir, cfile_basename="kernel", force_compile=False):
+    """Automatically compile C kernel"""
+    lib_path = os.path.join(testcase_root_dir, C_FOLDER_NAME, 'lib_c_kernel.so')
+    c_source = os.path.join(testcase_root_dir, C_FOLDER_NAME, f"{cfile_basename}.c")
+    
+    # Check if source file exists
+    if not os.path.exists(c_source):
+        raise FileNotFoundError(f"C Source File Not Found: {c_source}")
+    
+    # Check if recompilation is needed
+    if os.path.exists(lib_path):
+        lib_mtime = os.path.getmtime(lib_path)
+        src_mtime = os.path.getmtime(c_source)
+        need_compile = src_mtime > lib_mtime
+    else:
+        need_compile = True
+    
+    if force_compile:
+        print("🔧 Force compiling C kernel...")
+        need_compile = True
+        
+    if need_compile:
+        print("🔧 Compiling C kernel...")
+        
+        # Compilation command
+        cmd = [
+            'gcc', '-O3', '-shared', '-fPIC',
+            '-o', lib_path, c_source
+        ]
+        
+        try:
+            result = subprocess.run(cmd, cwd=testcase_root_dir, capture_output=True, text=True, check=True)
+            if result.stderr:
+                print(f"Compilation Warning: {result.stderr}")
+            
+            print("✅ C kernel compiled successfully")
+            return lib_path
+            
+        except subprocess.CalledProcessError as e:
+            print(f"Command: {' '.join(cmd)}")
+            print(f"Error output: {e.stderr}")
+            raise RuntimeError("❌ C compilation failed")
+        except FileNotFoundError:
+            raise RuntimeError("❌ gcc not found, please ensure GCC is installed and in PATH")
+    else:
+        print("✅ C kernel is the latest version")
+        return lib_path
+
+def load_c_kernel(testcase_root_dir, argtypes, restype=None, force_compile=False):
+    """Load compiled C kernel"""
+    # Try to compile kernel
+    lib_path = compile_c_kernel(testcase_root_dir, "kernel", force_compile=force_compile)
+    if not lib_path:
+        raise RuntimeError("C kernel compilation failed")
+    else:
+        print(f"✅ C kernel compiled successfully: {lib_path}")
+    
+    lib = ctypes.CDLL(lib_path)
+        
+    # Set function signature
+    lib.c_kernel.argtypes = argtypes
+    lib.c_kernel.restype = restype
+    
+    return lib.c_kernel
 
