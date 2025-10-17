@@ -65,8 +65,19 @@ def get_default_statistics_dir(log_file_path):
 def detect_log_format(content):
     """
     Automatically detect the log format style.
-    Returns 'pass_n' for pass@n format, 'comprehensive' for new format with case names, 'compact' for old format.
+    Returns 'pass_n' for pass@n format, 'comprehensive' for new format with case names, 
+    'compact' for old format, 'jsonl' for JSONL format.
     """
+    # Check if it's JSONL format (first line should be valid JSON)
+    first_line = content.strip().split('\n')[0] if content.strip() else ""
+    if first_line:
+        try:
+            data = json.loads(first_line)
+            if isinstance(data, dict) and ('_type' in data or 'case_type' in data):
+                return 'jsonl'
+        except json.JSONDecodeError:
+            pass
+    
     # Check for pass@n format pattern (pass@n testing with multiple attempts)
     pass_n_pattern = r'🔹+ (\w+/[\w_]+): ([✅❌]) (SUCCESS|FAILED) \(pass@\d+, \d+/\d+ successful\) 🔹+'
     if re.search(pass_n_pattern, content):
@@ -84,6 +95,109 @@ def detect_log_format(content):
     
     # Default to compact for backward compatibility
     return 'compact'
+
+def parse_jsonl_log_file(log_file_path):
+    """
+    Parse JSONL format log file where each line is a JSON object.
+    Returns detailed analysis compatible with other formats.
+    """
+    print(f"📖 Analyzing JSONL log file: {log_file_path}")
+    
+    with open(log_file_path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    # First line should be metadata
+    metadata = None
+    case_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            data = json.loads(line)
+            if data.get('_type') == 'metadata':
+                metadata = data
+            elif 'case_type' in data and 'case_name' in data:
+                case_lines.append(data)
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Warning: Failed to parse JSON line: {e}")
+            continue
+    
+    if not metadata:
+        print("⚠️  Warning: No metadata found in JSONL file")
+        metadata = {}
+    
+    model_info = {
+        "model_type": "comprehensive",  # Use comprehensive format for round-based analysis
+        "model_name": metadata.get("model_name", "unknown"),
+        "log_format": "jsonl",
+        "testset": metadata.get("testset", "unknown"),
+        "timestamp": metadata.get("timestamp", "unknown"),
+        "max_rounds": metadata.get("max_rounds", 5),
+        "concurrency": metadata.get("concurrency", 1)
+    }
+    
+    print(f"📊 Found {len(case_lines)} test cases in JSONL format")
+    print(f"🤖 Model: {model_info['model_name']}")
+    print(f"📦 Testset: {model_info['testset']}")
+    print(f"🔄 Max rounds: {model_info['max_rounds']}")
+    
+    # Build detailed results
+    detailed_results = defaultdict(list)
+    all_case_results = []
+    
+    for case_data in case_lines:
+        case_type = case_data['case_type']
+        case_name = case_data['case_name']
+        success = case_data.get('success', False)
+        final_round = case_data.get('final_round', 0)
+        
+        # Extract round information
+        test_rounds = case_data.get('test_rounds', [])
+        llm_rounds = case_data.get('llm_rounds', [])
+        
+        # Build round-by-round results
+        round_results = []
+        for test_round in test_rounds:
+            round_num = test_round.get('round', 1)
+            round_success = test_round.get('success', False)
+            
+            # Find corresponding LLM round
+            llm_time = 0
+            for llm_round in llm_rounds:
+                if llm_round.get('round') == round_num:
+                    llm_time = llm_round.get('duration_sec', 0)
+                    break
+            
+            round_results.append({
+                'round': round_num,
+                'success': round_success,
+                'test_duration_sec': test_round.get('duration_sec', 0),
+                'llm_duration_sec': llm_time,
+                'execution_mode': test_round.get('execution_mode', 'unknown'),
+                'gpu_id': test_round.get('gpu_id')
+            })
+        
+        # Create case result entry (compatible with other formats)
+        case_result = {
+            'case_type': case_type,
+            'case_name': case_name,
+            'success': success,
+            'rounds': final_round if success else len(test_rounds),  # Number of rounds to success or total rounds if failed
+            'round_details': round_results,  # Detailed info for each round
+            'total_llm_time': case_data.get('total_llm_time_sec', 0),
+            'total_test_time': case_data.get('total_test_time_sec', 0),
+            'wall_clock_duration': case_data.get('wall_clock_duration_sec', 0),
+            'effective_duration': case_data.get('effective_duration_sec', 0),
+            'overhead': case_data.get('overhead_sec', 0)
+        }
+        
+        detailed_results[case_type].append(case_result)
+        all_case_results.append(case_result)
+    
+    return model_info, detailed_results, all_case_results
+
 
 def parse_pass_n_log_file(log_file_path):
     """
@@ -249,6 +363,11 @@ def parse_log_file(log_file_path, log_format='auto'):
         print(f"🔍 Auto-detected log format: {log_format}")
     else:
         print(f"📝 Using specified log format: {log_format}")
+    
+    # Handle JSONL format
+    if log_format == 'jsonl':
+        print(f"🔄 Redirecting to JSONL parser...")
+        return parse_jsonl_log_file(log_file_path)
     
     # Handle pass@n format
     if log_format == 'pass_n':
