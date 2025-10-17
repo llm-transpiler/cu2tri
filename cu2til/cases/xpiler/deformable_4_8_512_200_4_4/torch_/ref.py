@@ -17,7 +17,7 @@ def torch_kernel(value_batched, value_spatial_shapes_long, level_start_index_lon
         output: (N_, Lq_, M_*D_) - raw output from MSDeformAttnFunction
     """
     
-    im2col_step = 8  # 通常设为1，可以根据GPU内存调整为更大值如2、4等
+    im2col_step = 4  # 通常设为1，可以根据GPU内存调整为更大值如2、4等
     output = MSDA.ms_deform_attn_forward(
         value_batched, 
         value_spatial_shapes_long, 
