@@ -5,7 +5,19 @@ repo/*
 .env
 **/outputs/**
 **/tests/**
-**/logs/**
+# **/logs/**
 # cu2til/paper/*
 # cu2til/paper/main.tex
 *.so
+extensions/*
+bin/*
+out/*
+node_modules/*
+lib/*
+dist/*
+build/*
+.vscode/*
+.git/*
+models/Qwen3-0.6B/*
+# **/checkpoints/*
+out

@@ -20,6 +20,39 @@ dev/
 cu2tri/outputs/kernelbench_c/*
 cu2tri/outputs/tests/*
 cu2tri/outputs/cu2tri/kernelbench_c_concu_wrong
-models/
+# models/
 # cu2til/paper
 *.so
+*.backup
+extensions/*
+bin/*
+node_modules/*
+models/Qwen3-0.6B/*
+**/checkpoints/*
+out/*
+out
+*.tar.gz
+*.tar
+*.tar.bz2
+cu2til/trans/**check_triton.py
+cu2til/trans/**check_cuda.py
+cu2til/trans/**check*.py
+cu2til/refs
+# cu2til/refs/*
+cu2til/trans/dev_/*
+!cu2til/trans/dev_/llm.py
+!cu2til/trans/dev_/llm_trans.py
+!cu2til/trans/dev_/llm_trans_pass_at_n.py
+!cu2til/trans/dev_/case_config.py
+!cu2til/trans/dev_/check_pass_at_n_config.py
+!cu2til/trans/dev_/statistics_results/
+!cu2til/trans/dev_/statistics_results/**
+node_modules
+tests
+node
+test_cu2til
+triton_kernel
+package.json
+*.hatchet
+*result.html
+tests

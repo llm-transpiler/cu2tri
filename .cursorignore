@@ -4,8 +4,8 @@
 **deprecated**
 */tests/*
 */dev/*
-models/
-tests/
+# models/
+# tests/
 logs
 third_party/*
 # *build/*
@@ -14,5 +14,12 @@ third_party/*
 **/build
 **/dev/
 dev
-**.log
+# **.log
 *.so
+extensions/*
+bin/*
+out/*
+node_modules/*
+models/
+# **/checkpoints/*
+out
