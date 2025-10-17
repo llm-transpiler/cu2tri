@@ -295,20 +295,19 @@ class TaskRunner:
                 
                 f.write(f"\n=== Timing Breakdown (ms) ===\n")
                 if task.pending_duration_ms is not None:
-                    f.write(f"Pending Duration:     {task.pending_duration_ms:>10.2f} ms  (submit -> GPU assignment)\n")
+                    f.write(f"Pending Duration:     {task.pending_duration_ms:>10.2f} ms  ( submit          -> gpu assignment  )\n")
                 if task.queue_duration_ms is not None:
-                    f.write(f"Queue Duration:       {task.queue_duration_ms:>10.2f} ms  (GPU assignment -> execution start)\n")
+                    f.write(f"Queue Duration:       {task.queue_duration_ms:>10.2f} ms  ( gpu assignment  -> execution start )\n")
                 if task.waiting_duration_ms is not None:
-                    f.write(f"Waiting Duration:     {task.waiting_duration_ms:>10.2f} ms  (submit -> execution start)\n")
+                    f.write(f"Waiting Duration:     {task.waiting_duration_ms:>10.2f} ms  ( submit          -> execution start )\n")
                 if task.running_duration_ms is not None:
-                    f.write(f"Running Duration:     {task.running_duration_ms:>10.2f} ms  (execution start -> end)\n")
+                    f.write(f"Running Duration:     {task.running_duration_ms:>10.2f} ms  ( execution start -> end             )\n")
                 if task.total_duration_ms is not None:
-                    f.write(f"Total Duration:       {task.total_duration_ms:>10.2f} ms  (submit -> end)\n")
+                    f.write(f"Total Duration:       {task.total_duration_ms:>10.2f} ms  ( submit          -> end             )\n")
 
                 if task.execution_duration_ms:
                     f.write(f"\n=== Execution Duration (ms) ===\n")
-                    for key, value in task.execution_duration_ms.items():
-                        f.write(f"{key}: {value:>10.2f} ms\n")
+                    f.write(f"Process Running Duration: {task.execution_duration_ms:>10.2f} ms\n")
 
                 f.write(f"\n=== Result ===\n")
                 if timeout:

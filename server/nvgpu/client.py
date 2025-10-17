@@ -26,12 +26,12 @@ class TaskResult:
     stderr_size: int = 0
     gpu_id: int | None = None
     # Computed timing fields (in milliseconds, 2 decimal places)
-    pending_time_ms: float | None = None
-    queue_time_ms: float | None = None
-    waiting_time_ms: float | None = None
-    running_time_ms: float | None = None
-    total_time_ms: float | None = None
-
+    pending_duration_ms: float | None = None
+    queue_duration_ms: float | None = None
+    waiting_duration_ms: float | None = None
+    running_duration_ms: float | None = None
+    total_duration_ms: float | None = None
+    execution_duration_ms: dict[str, float] | None = None
 
 class NVGPUClient:
     """Client for interacting with NVGPU Server."""
@@ -221,11 +221,12 @@ class NVGPUClient:
             stdout_size=data.get("stdout_size", 0),
             stderr_size=data.get("stderr_size", 0),
             gpu_id=data.get("assigned_gpu"),
-            pending_time_ms=data.get("pending_time_ms"),
-            queue_time_ms=data.get("queue_time_ms"),
-            waiting_time_ms=data.get("waiting_time_ms"),
-            running_time_ms=data.get("running_time_ms"),
-            total_time_ms=data.get("total_time_ms"),
+            pending_duration_ms=data.get("pending_duration_ms"),
+            queue_duration_ms=data.get("queue_duration_ms"),
+            waiting_duration_ms=data.get("waiting_duration_ms"),
+            running_duration_ms=data.get("running_duration_ms"),
+            total_duration_ms=data.get("total_duration_ms"),
+            execution_duration_ms=data.get("execution_duration_ms"),
         )
     
     def wait_for_task(

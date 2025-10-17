@@ -129,11 +129,11 @@ def main():
     total_waiting = 0
     for task_id in task_ids:
         result = client.get_task(task_id)
-        running_ms = result.running_time_ms
+        running_ms = result.running_duration_ms
         if running_ms:
             total_execution += running_ms
-        if result.waiting_time_ms:
-            total_waiting += result.waiting_time_ms
+        if result.waiting_duration_ms:
+            total_waiting += result.waiting_duration_ms
     
     print(f"Total Execution Time: {total_execution:.2f} ms")
     print(f"Total Waiting Time:   {total_waiting:.2f} ms")

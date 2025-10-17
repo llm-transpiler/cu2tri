@@ -16,6 +16,9 @@ schedule一定会先执行完所有能分配的任务才会去运行
 如果支持，也就是说当前GPU准备运行刚取出的队首任务了，首先标记这个task running，并且设置gpu的mode
 然后就启动一个线程运行这个GPU任务了，启动参数是task和gpu_id（注意这里是logical_id）
 
+开始running的时候, waiting和queue都结束计时
 
 结束后默认恢复为shared这个mode
 标记任务完成
+
+start_timestamp是runing阶段的开始时间戳，end同理
