@@ -9,7 +9,7 @@ except ImportError:
     NVML_AVAILABLE = False
 
 from models import GPU, GPUStatus, GPUMode, Task
-from config import config, TaskStatus, TaskMode
+from config import config, TaskStatus, TaskMode, LoadBalancingStrategy
 from logger import setup_logger
 from utils.timezone import now_timestamp
 from utils.task_refs import format_task_ref
@@ -39,9 +39,11 @@ class GPUManager:
 
         # Severe error handling
         self.severe_error_active = False
-        self.severe_error_timestamp = None  # wall clock (datetime) for logging
-        self.severe_error_monotonic_ns: int | None = None  # monotonic clock for elapsed checks
+        self.severe_error_timestamp = None  # timestamp of the most recent severe error (for logging)
+        self.severe_error_monotonic_ns: int | None = None  # retained for backward compatibility
         self.error_gpus: set[int] = set()  # GPUs currently marked as error
+        self.gpu_error_monotonic_ns: dict[int, int] = {}  # per-GPU pause timers
+        self._round_robin_cursor: int = -1
 
         # Dependencies (set after initialization)
         self.task_queue : "TaskQueue" | None = None
@@ -92,6 +94,9 @@ class GPUManager:
                 status=GPUStatus.ONLINE
             )
             self.gpus[gpu_id] = gpu
+            # Reset round-robin cursor to ensure new GPU participates immediately
+            if config.load_balancing_strategy == LoadBalancingStrategy.ROUND_ROBIN:
+                self._round_robin_cursor = -1
             logger.info(f"Registered GPU {gpu_id} with mode={gpu.mode}, "
                         f"threshold={gpu.memory_threshold}, max_tasks={gpu.max_concurrent_tasks}")
             return True
@@ -110,6 +115,8 @@ class GPUManager:
                 return False
 
             del self.gpus[gpu_id]
+            if config.load_balancing_strategy == LoadBalancingStrategy.ROUND_ROBIN:
+                self._round_robin_cursor = -1
             logger.info(f"Unregistered GPU {gpu_id}")
             return True
 
@@ -328,10 +335,6 @@ class GPUManager:
         Returns:
             GPU ID if available, None otherwise
         """
-        # Check if in severe error state (outside lock to avoid deadlock with _update_gpu_memory)
-        if self.severe_error_active:
-            return None
-
         # Try preferred GPU first
         if preferred_gpu is not None and preferred_gpu in self.gpus:
             # Update memory usage before checking (important for tasks with delayed GPU memory allocation)
@@ -343,11 +346,15 @@ class GPUManager:
                 if gpu and self.task_queue:
                     queued_depth = self.task_queue.get_queue_size(preferred_gpu)
 
-                if (
-                    gpu
-                    and gpu.can_accept_task(task_mode)
-                    and self._has_queue_capacity(gpu, queued_depth, task_mode)
-                ):
+                if not gpu:
+                    return None
+
+                # Respect paused/error GPUs even when preferred
+                if gpu.status != GPUStatus.ONLINE or preferred_gpu in self.gpu_error_monotonic_ns:
+                    return None
+
+                if gpu.can_accept_task(task_mode) and self._has_queue_capacity(gpu, queued_depth, task_mode):
+                    # Preferred GPU requested; bypass round-robin cursor updates
                     return preferred_gpu
             return None
 
@@ -361,13 +368,41 @@ class GPUManager:
 
         # Now check which GPUs can accept tasks with this mode
         with self.lock:
-            for gpu_id, gpu in self.gpus.items():
-                queued_depth = 0
-                if self.task_queue:
-                    queued_depth = self.task_queue.get_queue_size(gpu_id)
+            if not self.gpus:
+                return None
 
+            base_order = sorted(self.gpus.keys())
+            stats: dict[int, tuple[GPU, int, int]] = {}
+            for gpu_id in base_order:
+                gpu = self.gpus[gpu_id]
+                queued_depth = self.task_queue.get_queue_size(gpu_id) if self.task_queue else 0
+                stats[gpu_id] = (gpu, queued_depth, len(gpu.running_tasks))
+
+            strategy = config.load_balancing_strategy
+            if strategy == LoadBalancingStrategy.FILL:
+                strategy = None
+
+            if strategy == LoadBalancingStrategy.LEAST_LOADED:
+                ordered_ids = sorted(
+                    base_order,
+                    key=lambda gid: (
+                        stats[gid][2] + stats[gid][1],  # total active (running + queued)
+                        stats[gid][1],  # queued depth
+                        gid,
+                    ),
+                )
+            elif strategy == LoadBalancingStrategy.ROUND_ROBIN and base_order:
+                start_idx = (self._round_robin_cursor + 1) % len(base_order)
+                ordered_ids = base_order[start_idx:] + base_order[:start_idx]
+            else:
+                ordered_ids = base_order
+
+            for candidate_id in ordered_ids:
+                gpu, queued_depth, _ = stats[candidate_id]
                 if gpu.can_accept_task(task_mode) and self._has_queue_capacity(gpu, queued_depth, task_mode):
-                    return gpu_id
+                    if strategy == LoadBalancingStrategy.ROUND_ROBIN:
+                        self._set_round_robin_cursor_locked(candidate_id)
+                    return candidate_id
 
         return None
 
@@ -382,6 +417,43 @@ class GPUManager:
         # Shared tasks respect max_concurrent_tasks across running + queued
         active_count = len(gpu.running_tasks) + queued_depth
         return active_count < gpu.max_concurrent_tasks
+
+    def _set_round_robin_cursor_locked(self, gpu_id: int):
+        """Update round-robin cursor assuming self.lock is held (re-entrant)."""
+        if config.load_balancing_strategy != LoadBalancingStrategy.ROUND_ROBIN:
+            return
+
+        if not self.gpus:
+            self._round_robin_cursor = -1
+            return
+
+        base_order = sorted(self.gpus.keys())
+        if gpu_id in base_order:
+            self._round_robin_cursor = base_order.index(gpu_id)
+
+    def is_gpu_paused(self, gpu_id: int) -> bool:
+        """Check if a specific GPU is within the severe-error pause window."""
+        with self.lock:
+            return gpu_id in self.gpu_error_monotonic_ns
+
+    def should_pause_scheduling(self) -> bool:
+        """Return True if all GPUs are currently paused due to severe errors."""
+        with self.lock:
+            if not self.gpus:
+                return False
+
+            for gpu_id, gpu in self.gpus.items():
+                if gpu.status != GPUStatus.ONLINE:
+                    continue
+                if gpu_id not in self.gpu_error_monotonic_ns:
+                    return False
+
+            return bool(self.gpu_error_monotonic_ns)
+
+    def list_paused_gpus(self) -> list[int]:
+        """List GPUs currently paused due to severe error handling."""
+        with self.lock:
+            return sorted(self.gpu_error_monotonic_ns.keys())
 
     def mark_task_running(self, gpu_id: int, task: Task) -> bool:
         """Mark a task as running on a GPU."""
@@ -416,23 +488,29 @@ class GPUManager:
             error_msg: Error message
         """
         with self.lock:
+            pause_marker = monotonic_timestamp_ns()
             self.severe_error_active = True
             self.severe_error_timestamp = now_timestamp()
-            self.severe_error_monotonic_ns = monotonic_timestamp_ns()
+            self.severe_error_monotonic_ns = pause_marker
 
             if gpu_id in self.gpus:
                 self.gpus[gpu_id].status = GPUStatus.ERROR
                 self.gpus[gpu_id].error_message = error_msg
                 self.gpus[gpu_id].last_error_timestamp = self.severe_error_timestamp
                 self.error_gpus.add(gpu_id)
+                self.gpu_error_monotonic_ns[gpu_id] = pause_marker
 
                 # Get all running tasks on this GPU
                 running_task_ids = list(self.gpus[gpu_id].running_tasks)
             else:
                 running_task_ids = []
 
-            logger.error(f"SEVERE ERROR on GPU {gpu_id}: {error_msg}. "
-                         f"Killing {len(running_task_ids)} running tasks.")
+            logger.error(
+                "SEVERE ERROR on GPU %s: %s. Killing %d running tasks.",
+                gpu_id,
+                error_msg,
+                len(running_task_ids),
+            )
 
         # Kill running tasks and mark them failed or requeue collateral tasks (outside lock to avoid deadlock)
         if self.task_queue and self.task_runner and running_task_ids:
@@ -466,26 +544,38 @@ class GPUManager:
                 if not task:
                     continue
 
-                # Kill the task process if possible
-                kill_success = False
-                if self.task_runner:
-                    try:
-                        kill_success = self.task_runner.kill_task(task.task_id)
-                    except Exception as e:
-                        logger.error(f"Error while killing TASK {format_task_ref(task)}: {e}", exc_info=True)
-
-                if kill_success:
-                    logger.info(f"Killed TASK {format_task_ref(task)} due to severe error")
-                else:
-                    logger.warning(f"Could not terminate TASK {format_task_ref(task)} (maybe already exited)")
-
                 if offending_task_id and task.task_id != offending_task_id:
                     # Collateral task: requeue instead of failing
-                    task.error_message = (
-                        f"Killed due to GPU {gpu_id} severe error {trigger_note}"
-                    )
+                    reason = f"GPU {gpu_id} severe error {trigger_note}"
+                    task.last_requeue_reason = reason
+
+                    kill_success = False
+                    if self.task_runner:
+                        try:
+                            kill_success = self.task_runner.kill_task(task)
+                        except Exception as e:
+                            logger.error(f"Error while killing TASK {format_task_ref(task)}: {e}", exc_info=True)
+
+                    if kill_success:
+                        logger.info(f"Killed TASK {format_task_ref(task)} due to severe error")
+                    else:
+                        logger.warning(f"Could not terminate TASK {format_task_ref(task)} (maybe already exited)")
+
+                    task.error_message = f"Killed due to {reason}"
                     collateral_tasks.append(task)
                 else:
+                    kill_success = False
+                    if self.task_runner:
+                        try:
+                            kill_success = self.task_runner.kill_task(task)
+                        except Exception as e:
+                            logger.error(f"Error while killing TASK {format_task_ref(task)}: {e}", exc_info=True)
+
+                    if kill_success:
+                        logger.info(f"Killed TASK {format_task_ref(task)} due to severe error")
+                    else:
+                        logger.warning(f"Could not terminate TASK {format_task_ref(task)} (maybe already exited)")
+
                     _mark_task_failed(task)
 
             # Requeue collateral tasks at front in reverse order to maintain order
@@ -495,9 +585,16 @@ class GPUManager:
                 task.exit_code = None
                 task.stdout_size = 0
                 task.stderr_size = 0
-                task.error_message = task.error_message or (
-                    f"Requeued after GPU {gpu_id} severe error {trigger_note}"
-                )
+                if not isinstance(task.phase_duration_ms, dict):
+                    task.phase_duration_ms = {}
+                else:
+                    task.phase_duration_ms.clear()
+                task.execution_duration_ms = None
+                task.timer.reset()
+                task.requeue_count += 1
+                reason = task.last_requeue_reason or f"GPU {gpu_id} severe error {trigger_note}"
+                task.last_requeue_reason = reason
+                task.error_message = f"Requeued after {reason}"
                 self.task_queue.push_front(task)
                 logger.info(f"Requeued collateral TASK {format_task_ref(task)} after severe error on GPU {gpu_id}")
 
@@ -508,25 +605,46 @@ class GPUManager:
                     self.gpus[gpu_id].running_tasks.clear()
                     logger.info(
                         f"Cleared {cleared_count} tasks from GPU {gpu_id}")
+        remaining_online = 0
+        with self.lock:
+            for gid, gpu in self.gpus.items():
+                if gpu.status == GPUStatus.ONLINE:
+                    remaining_online += 1
 
         logger.error(
-            f"SEVERE ERROR handling complete. System paused for {config.error_pause_duration}s.")
+            "GPU %s paused for %ds due to severe error. %d other GPU(s) remain available for scheduling.",
+            gpu_id,
+            config.error_pause_duration,
+            remaining_online,
+        )
 
-    def clear_severe_error(self):
-        """Clear severe error state and resume operations."""
+    def _clear_gpu_error_locked(self, gpu_id: int):
+        gpu = self.gpus.get(gpu_id)
+        if gpu:
+            gpu.status = GPUStatus.ONLINE
+            gpu.error_message = None
+            logger.info(f"GPU {gpu_id} recovered from severe error and is back online")
+        self.error_gpus.discard(gpu_id)
+        self.gpu_error_monotonic_ns.pop(gpu_id, None)
+
+    def clear_severe_error(self, gpu_id: int | None = None):
+        """Clear severe error state.
+
+        Args:
+            gpu_id: Optional GPU to clear. If None, clears all GPUs.
+        """
         with self.lock:
-            self.severe_error_active = False
-            self.severe_error_timestamp = None
-            self.severe_error_monotonic_ns = None
-            recovered_gpus = list(self.error_gpus)
-            for error_gpu_id in recovered_gpus:
-                gpu = self.gpus.get(error_gpu_id)
-                if gpu:
-                    gpu.status = GPUStatus.ONLINE
-                    gpu.error_message = None
-                    logger.info(f"GPU {error_gpu_id} recovered from severe error and is back online")
-            self.error_gpus.clear()
-            logger.info("Severe error state cleared, resuming operations")
+            if gpu_id is not None:
+                self._clear_gpu_error_locked(gpu_id)
+            else:
+                for error_gpu_id in list(self.error_gpus):
+                    self._clear_gpu_error_locked(error_gpu_id)
+
+            self.severe_error_active = bool(self.error_gpus)
+            if not self.severe_error_active:
+                self.severe_error_timestamp = None
+                self.severe_error_monotonic_ns = None
+                logger.info("All GPUs recovered from severe errors, resuming full operations")
 
     def _update_gpu_memory(self, gpu_id: int):
         """Update GPU memory usage."""
@@ -563,13 +681,19 @@ class GPUManager:
                 for gpu_id in gpu_ids:
                     self._update_gpu_memory(gpu_id)
 
-                # Check if severe error timeout has passed - auto-resume after pause duration
-                if self.severe_error_active and self.severe_error_monotonic_ns is not None:
-                    elapsed_ms = monotonic_elapsed_ms(self.severe_error_monotonic_ns)
+                # Check if any paused GPU can be resumed (per-GPU pause window)
+                with self.lock:
+                    paused_gpus = list(self.gpu_error_monotonic_ns.items())
+
+                for paused_gpu_id, start_ns in paused_gpus:
+                    elapsed_ms = monotonic_elapsed_ms(start_ns)
                     if elapsed_ms > config.error_pause_duration * 1000:
                         logger.info(
-                            f"Severe error pause duration ({config.error_pause_duration}s) elapsed, auto-resuming")
-                        self.clear_severe_error()
+                            "GPU %s pause duration (%ds) elapsed, auto-resuming",
+                            paused_gpu_id,
+                            config.error_pause_duration,
+                        )
+                        self.clear_severe_error(paused_gpu_id)
             except Exception as e:
                 logger.error(f"Error in monitor loop: {e}", exc_info=True)
 

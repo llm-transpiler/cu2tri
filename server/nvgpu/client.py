@@ -31,7 +31,7 @@ class TaskResult:
     waiting_duration_ms: float | None = None
     running_duration_ms: float | None = None
     total_duration_ms: float | None = None
-    execution_duration_ms: dict[str, float] | None = None
+    execution_duration_ms: float | None = None
 
 class NVGPUClient:
     """Client for interacting with NVGPU Server."""
@@ -468,14 +468,18 @@ class NVGPUClient:
         )
         return response.status_code == 200
     
-    def clear_severe_error(self) -> bool:
+    def clear_severe_error(self, gpu_id: int | None = None) -> bool:
         """Clear severe error state.
-        
+
+        Args:
+            gpu_id: Optional GPU to clear. If None, clears all GPUs.
+
         Returns:
             True if successful
         """
         response = self.session.post(
             f"{self.base_url}/gpus/clear_error",
+            params={"gpu_id": gpu_id} if gpu_id is not None else None,
             timeout=10
         )
         return response.status_code == 200

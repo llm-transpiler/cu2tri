@@ -40,6 +40,13 @@ class GPUStatus(str, Enum):
     MAINTENANCE = "maintenance"
 
 
+class LoadBalancingStrategy(str, Enum):
+    """Scheduler load balancing strategy."""
+    ROUND_ROBIN = "round_robin"
+    LEAST_LOADED = "least_loaded"
+    FILL = "fill"  # Equivalent to default behavior
+
+
 @dataclass
 class ServerConfig:
     """Server configuration."""
@@ -61,6 +68,7 @@ class ServerConfig:
     # Scheduler settings
     scheduler_interval: float = 1.0  # Check every 1 second
     gpu_monitor_interval: float = 5.0  # Monitor GPU every 5 seconds
+    load_balancing_strategy: LoadBalancingStrategy | None = None  # Advanced strategies disabled by default
 
 # Global server configuration instance
 config = ServerConfig()

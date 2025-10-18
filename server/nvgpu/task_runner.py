@@ -90,7 +90,7 @@ class TaskRunner:
             # Get absolute path of script
             script_abs_path = os.path.abspath(task.script_path)
             
-            logger.info(f"Starting task {task_ref_str} on GPU {gpu_id}")
+            logger.info(f"Starting TASK {task_ref_str} on GPU {gpu_id}")
             logger.info(f"  Script: {script_abs_path}")
             
             # Prepare environment
@@ -388,38 +388,38 @@ class TaskRunner:
         else:
             return f"{size_bytes / (1024 * 1024 * 1024):.1f}GB"
     
-    def kill_task(self, task_id: str) -> bool:
+    def kill_task(self, task: Task) -> bool:
         """Kill a running task.
         
         Args:
-            task_id: Task ID to kill
+            task: Task to kill
             
         Returns:
             True if task was killed, False if not found or already finished
         """
         with self.lock:
-            process = self.running_processes.get(task_id)
+            process = self.running_processes.get(task.task_id)
             if not process:
-                logger.warning(f"Cannot kill task {task_id}: not running or already finished")
+                logger.warning(f"Cannot kill TASK {format_task_ref(task)}: not running or already finished")
                 return False
             
             try:
                 # Try graceful termination first
-                logger.info(f"Terminating task {task_id}...")
+                logger.info(f"Terminating TASK {format_task_ref(task)}...")
                 process.terminate()
                 
                 # Wait up to 5 seconds for graceful shutdown
                 try:
                     process.wait(timeout=5)
-                    logger.info(f"TASK {task_id} terminated gracefully")
+                    logger.info(f"TASK {format_task_ref(task)} terminated gracefully")
                 except subprocess.TimeoutExpired:
                     # Force kill if termination didn't work
-                    logger.warning(f"TASK {task_id} did not terminate, sending SIGKILL...", exc_info=True)
+                    logger.warning(f"TASK {format_task_ref(task)} did not terminate, sending SIGKILL...", exc_info=True)
                     process.kill()
                     process.wait()
-                    logger.info(f"TASK {task_id} killed forcefully", exc_info=True)
+                    logger.info(f"TASK {format_task_ref(task)} killed forcefully", exc_info=True)
                 
                 return True
             except Exception as e:
-                logger.error(f"Failed to kill task {task_id}: {e}", exc_info=True)
+                logger.error(f"Failed to kill TASK {format_task_ref(task)}: {e}", exc_info=True)
                 return False

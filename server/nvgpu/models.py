@@ -101,8 +101,10 @@ class Task:
     error_message: str | None = None
     stdout_size: int = 0  # Size of stdout in bytes
     stderr_size: int = 0  # Size of stderr in bytes
-    execution_duration_ms: dict[str, float] = field(default_factory=dict)
+    execution_duration_ms: float | None = None
     phase_duration_ms: dict[str, float] = field(default_factory=dict)
+    requeue_count: int = 0  # Number of times task has been requeued
+    last_requeue_reason: str | None = None  # Reason for the most recent requeue
     timer: TaskTimer = field(default_factory=TaskTimer, repr=False, compare=False)
     
     @property
@@ -224,5 +226,7 @@ class Task:
         result["running_duration_ms"] = self.running_duration_ms
         result["total_duration_ms"] = self.total_duration_ms
         result["execution_duration_ms"] = self.execution_duration_ms
+        result["requeue_count"] = self.requeue_count
+        result["last_requeue_reason"] = self.last_requeue_reason
 
         return result

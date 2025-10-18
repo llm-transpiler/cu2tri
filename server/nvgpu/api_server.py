@@ -207,10 +207,10 @@ async def trigger_gpu_error(gpu_id: int, data: GPUError):
 
 
 @app.post("/gpus/clear_error")
-async def clear_severe_error():
+async def clear_severe_error(gpu_id: int | None = Query(None, description="GPU ID to clear; omit to clear all")):
     """Clear severe error state."""
-    gpu_manager.clear_severe_error()
-    return {"success": True}
+    gpu_manager.clear_severe_error(gpu_id)
+    return {"success": True, "gpu_id": gpu_id}
 
 
 @app.post("/tasks")
@@ -332,6 +332,7 @@ async def get_statistics():
         "total_gpus": len(gpu_manager.list_gpus()),
         "online_gpus": sum(1 for g in gpu_manager.list_gpus() if g.status == GPUStatus.ONLINE),
         "severe_error_active": gpu_manager.severe_error_active,
+        "paused_gpus": gpu_manager.list_paused_gpus(),
     }
     
     return {

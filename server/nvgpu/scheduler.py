@@ -117,9 +117,9 @@ class Scheduler:
         """Main scheduler loop."""
         while self.running:
             try:
-                # Skip scheduling if severe error is active
-                if self.gpu_manager.severe_error_active:
-                    logger.warning("Severe error active, skipping scheduling")
+                # Skip scheduling only if all GPUs are paused due to severe errors
+                if self.gpu_manager.should_pause_scheduling():
+                    logger.warning("All GPUs paused due to severe errors, skipping scheduling round")
                     time.sleep(config.scheduler_interval)
                     continue
                 

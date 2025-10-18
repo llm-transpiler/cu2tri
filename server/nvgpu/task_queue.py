@@ -55,6 +55,7 @@ class TaskQueue:
             task.queued_timestamp = None
             task.start_timestamp = None
             task.end_timestamp = None
+            # The same Task instance is reused so task.task_id remains stable.
             self.global_queue.appendleft(task)
             task.timer.start("pending")
             logger.info(f"TASK {format_task_ref(task)} requeued at front (priority)")
@@ -167,7 +168,7 @@ class TaskQueue:
             # For running tasks, kill the process
             if task.status == TaskStatus.RUNNING:
                 logger.info(f"Force cancelling running TASK {task_ref_str}")
-                if task_runner.kill_task(task_id):
+                if task_runner.kill_task(task):
                     task.status = TaskStatus.CANCELLED
                     task.error_message = "Cancelled by user (force)"
                     task.end_timestamp = now_timestamp()

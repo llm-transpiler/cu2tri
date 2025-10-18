@@ -4,16 +4,16 @@
 # GPU list configuration
 gpus:
   # GPU 0 - First RTX 6000 Ada
-  - logical_id: 0           # Logical ID used by this system
-    nvidia_smi_id: 0        # GPU index shown in nvidia-smi
-    cuda_visible_id: 0      # CUDA_VISIBLE_DEVICES mapping
+  - logical_id: 0            # Logical ID used by this system
+    nvidia_smi_id: 0         # GPU index shown in nvidia-smi
+    cuda_visible_id: 0       # CUDA_VISIBLE_DEVICES mapping
     name: "NVIDIA RTX 6000 Ada Generation"
     uuid: "GPU-1b8c43a8-35ba-a01b-a2ee-0d6fe8f1f60f"
-    memory_gb: 48           # Memory in GB
-    enabled: true           # Whether to register this GPU on startup
-    default_mode: "shared"  # Default mode: "shared" or "exclusive"
-    memory_threshold: 0.75  # Memory usage threshold (0-1)
-    max_concurrent_tasks: 3 # Max concurrent tasks in shared mode
+    memory_gb: 48            # Memory in GB
+    enabled: true            # Whether to register this GPU on startup
+    default_mode: "shared"   # Default mode: "shared" or "exclusive"
+    memory_threshold: 0.75   # Memory usage threshold (0-1)
+    max_concurrent_tasks: 10 # Max concurrent tasks in shared mode
     
   # GPU 1 - Second RTX 6000 Ada
   - logical_id: 1
@@ -25,7 +25,7 @@ gpus:
     enabled: true
     default_mode: "shared"
     memory_threshold: 0.75
-    max_concurrent_tasks: 3
+    max_concurrent_tasks: 10
 
 # Server settings
 server:

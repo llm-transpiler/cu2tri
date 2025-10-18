@@ -22,3 +22,8 @@ schedule一定会先执行完所有能分配的任务才会去运行
 标记任务完成
 
 start_timestamp是runing阶段的开始时间戳，end同理
+
+
+所以pending实际上代表进入了global_queue但是没有分配实际GPU是么
+是的。
+TaskQueue.submit_task 把新任务状态设为 pending 并塞到 global_queue，这表示任务已入列但还没挑到具体 GPU。调度器下一次扫队列时，只有把任务放进某个 GPU 专属队列（queue_task_for_gpu）后状态才会变成 queued；再启动执行线程时才会进 running。所以 pending 就是“还在全局等待、尚未分配 GPU”的那一步。

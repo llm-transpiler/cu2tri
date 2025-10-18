@@ -5,7 +5,7 @@ import signal
 import sys
 from pathlib import Path
 
-from config import config, GPUMode
+from config import config, GPUMode, LoadBalancingStrategy
 from logger import setup_logger
 from gpu_manager import GPUManager
 from task_queue import TaskQueue
@@ -137,6 +137,12 @@ class NVGPUServer:
         
         # Start scheduler
         self.scheduler.start()
+        strategy_name = (
+            config.load_balancing_strategy.value
+            if config.load_balancing_strategy
+            else LoadBalancingStrategy.FILL.value
+        )
+        logger.info(f"Load balancing strategy: {strategy_name}")
         
         # Initialize FastAPI app
         init_app(self.gpu_manager, self.task_queue, self.scheduler, self.task_runner)
@@ -214,10 +220,16 @@ def main():
                        help="GPU resource configuration file (YAML)")
     parser.add_argument("--gpus", type=int, nargs="+", 
                        help="GPU IDs to register at startup (overrides config file)")
-    parser.add_argument("--gpu-mode", default="shared", choices=["exclusive", "shared"], 
+    parser.add_argument("--gpu-mode", choices=["exclusive", "shared"], 
                        help="Default GPU mode (when using --gpus)")
-    parser.add_argument("--memory-threshold", type=float, default=0.75,
+    parser.add_argument("--memory-threshold", type=float,
                        help="Default memory threshold (when using --gpus)")
+    parser.add_argument(
+        "--lb-strategy",
+        choices=["default"] + [s.value for s in LoadBalancingStrategy],
+        default="round_robin",
+        help="Load balancing strategy (default: legacy fill-first scheduling)",
+    )
     
     args = parser.parse_args()
     
@@ -236,8 +248,18 @@ def main():
     # else: keep the auto-generated timestamped log_file
     
     config.log_level = args.log_level
-    config.default_gpu_mode = GPUMode(args.gpu_mode)
-    config.default_memory_threshold = args.memory_threshold
+    if args.gpu_mode:
+        config.default_gpu_mode = GPUMode(args.gpu_mode)
+    if args.memory_threshold:
+        config.default_memory_threshold = args.memory_threshold
+    if args.lb_strategy == "default":
+        config.load_balancing_strategy = None
+    else:
+        strategy = LoadBalancingStrategy(args.lb_strategy)
+        # Treat fill as explicit legacy mode
+        config.load_balancing_strategy = (
+            None if strategy == LoadBalancingStrategy.FILL else strategy
+        )
     
     # Re-setup main logger with dual logging (timestamped + history)
     import logging
