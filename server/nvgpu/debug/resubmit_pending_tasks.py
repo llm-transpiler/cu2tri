@@ -103,8 +103,17 @@ def parse_pending_tasks(log_path: Path) -> List[TaskInfo]:
 
 def add_priority_task(pending_tasks: List[TaskInfo]) -> List[TaskInfo]:
     """Add the specific CUDA error triggering task as the first priority."""
-    # The specific task that triggered the CUDA error
-    priority_path = Path("/workspace/cu2til/trans/dev_/gpt_oss_20b_xpiler_extended/20251018_223123/batchnorm_128_32_32_32/attempt_01")
+    # The specific task that triggered the CUDA error (now under debug examples)
+    priority_path = (
+        PROJECT_ROOT
+        / "server"
+        / "nvgpu"
+        / "debug"
+        / "gpt_oss_20b_xpiler_extended"
+        / "20251018_223123"
+        / "batchnorm_128_32_32_32"
+        / "attempt_01"
+    )
     
     # Check if this task is already in the pending list
     for task in pending_tasks:
@@ -252,7 +261,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Re-submit NVGPU tasks that stayed pending after a server issue."
     )
     # Default to the same translation log path used previously.
-    default_log = PROJECT_ROOT / "cu2til" / "trans" / "dev_" / "gpt_oss_20b_xpiler_extended" / "20251018_223123" / "gpt_oss_20b_xpiler_extended.log"
+    default_log = (
+        PROJECT_ROOT
+        / "server"
+        / "nvgpu"
+        / "debug"
+        / "gpt_oss_20b_xpiler_extended"
+        / "20251018_223123"
+        / "gpt_oss_20b_xpiler_extended.log"
+    )
     parser.add_argument(
         "--log",
         type=Path,
@@ -308,6 +325,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Resubmit even if the old task still exists on the NVGPU server.",
     )
+    parser.add_argument(
+        "--list-pending",
+        action="store_true",
+        help="List pending tasks (case/attempt) from the log and exit.",
+    )
     return parser
 
 
@@ -319,12 +341,27 @@ def main() -> None:
         parser.error(f"Log file not found: {args.log}")
 
     pending_tasks = parse_pending_tasks(args.log)
-    
+
     # Add the priority CUDA error task as the first task
     pending_tasks = add_priority_task(pending_tasks)
     
     if not pending_tasks:
         print("[info] No pending tasks detected in the log.")
+        return
+
+    if args.list_pending:
+        print(f"[info] Listing {len(pending_tasks)} pending task(s) from {args.log}")
+        shown_cases: set[str] = set()
+        for info in pending_tasks:
+            attempt_dir = info.attempt_dir or Path("<unknown>")
+            case_label = info.case_name
+            attempt_label = info.attempt_label
+            status_summary = describe_statuses(info.statuses)
+            print(
+                f"- {attempt_label} | task_id={info.task_id} | statuses={status_summary} | path={attempt_dir}"
+            )
+            shown_cases.add(case_label)
+        print("[cases] " + ", ".join(sorted(shown_cases)))
         return
 
     print(f"[info] Detected {len(pending_tasks)} pending task(s) in {args.log}")
