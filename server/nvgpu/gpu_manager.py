@@ -67,7 +67,7 @@ class GPUManager:
             self.nvml_device_count = device_count
             logger.info(f"NVML initialized, found {device_count} GPUs")
         except Exception as e:
-            logger.error(f"Failed to initialize NVML: {e}")
+            logger.error(f"Failed to initialize NVML: {e}", exc_info=True)
             self.nvml_initialized = False
 
     def register_gpu(self, gpu_id: int, mode: GPUMode = None, memory_threshold: float = None,
@@ -472,7 +472,7 @@ class GPUManager:
                     self.gpus[gpu_id].current_memory_usage = usage
         except Exception as e:
             logger.debug(
-                f"Failed to get memory info for GPU {gpu_id}: {e}")
+                f"Failed to get memory info for GPU {gpu_id}: {e}", exc_info=True)
 
     def _monitor_loop(self):
         """Background monitoring loop."""
@@ -493,7 +493,7 @@ class GPUManager:
                             f"Severe error pause duration ({config.error_pause_duration}s) elapsed, auto-resuming")
                         self.clear_severe_error()
             except Exception as e:
-                logger.error(f"Error in monitor loop: {e}")
+                logger.error(f"Error in monitor loop: {e}", exc_info=True)
 
             time.sleep(config.gpu_monitor_interval)
 

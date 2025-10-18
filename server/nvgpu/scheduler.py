@@ -101,7 +101,7 @@ class Scheduler:
                                 # Could trigger severe error here if needed
                                 self.gpu_manager.trigger_severe_error(gpu_id, "GPU error in TASK " + format_task_ref(task))
                     except Exception as e:
-                        logger.debug(f"Could not check stderr for GPU errors: {e}")
+                        logger.debug(f"Could not check stderr for GPU errors: {e}", exc_info=True)
         finally:
             # Restore GPU mode after task completes
             self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task)
@@ -122,7 +122,7 @@ class Scheduler:
                 # Run one scheduling round
                 self._schedule_round()
             except Exception as e:
-                logger.error(f"Error in scheduler loop: {e}")
+                logger.error(f"Error in scheduler loop: {e}", exc_info=True)
             
             time.sleep(config.scheduler_interval)
     

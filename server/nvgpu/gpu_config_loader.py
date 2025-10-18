@@ -84,7 +84,7 @@ class GPUConfigLoader:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to load GPU configuration: {e}")
+            logger.error(f"Failed to load GPU configuration: {e}", exc_info=True)
             return False
     
     def get_gpu_config(self, logical_id: int) -> GPUConfig | None:

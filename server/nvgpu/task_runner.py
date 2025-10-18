@@ -142,7 +142,7 @@ class TaskRunner:
                     exit_code = process.wait(timeout=config.task_timeout)
             except subprocess.TimeoutExpired:
                 # Kill the process on timeout
-                logger.warning(f"TASK {task_ref_str} timed out, terminating...")
+                logger.warning(f"TASK {task_ref_str} timed out, terminating...", exc_info=True)
                 process.kill()
                 process.wait()  # Wait for process to be killed
                 raise
@@ -194,7 +194,7 @@ class TaskRunner:
             task.status = TaskStatus.FAILED
             task.error_message = f"Timeout after {config.task_timeout} seconds"
             task.end_timestamp = now_timestamp()
-            logger.error(f"TASK {task_ref_str} timed out after {config.task_timeout}s")
+            logger.error(f"TASK {task_ref_str} timed out after {config.task_timeout}s", exc_info=True)
             
             # Close files if still open
             if stdout_file:
@@ -218,7 +218,7 @@ class TaskRunner:
             task.status = TaskStatus.FAILED
             task.error_message = str(e)
             task.end_timestamp = now_timestamp()
-            logger.error(f"TASK {task_ref_str} failed with exception: {e}")
+            logger.error(f"TASK {task_ref_str} failed with exception: {e}", exc_info=True)
             
             # Close files if still open
             if stdout_file:
@@ -363,7 +363,7 @@ class TaskRunner:
                 f.write("\n=== END OF LOG ===\n")
             logger.debug(f"TASK {task_ref} log written to {task.log_file}")
         except Exception as e:
-            logger.error(f"Failed to write log file for task {task_ref}: {e}")
+            logger.error(f"Failed to write log file for task {task_ref}: {e}", exc_info=True)
     
     def _format_size(self, size_bytes: int) -> str:
         """Format size in human-readable format."""
@@ -402,12 +402,12 @@ class TaskRunner:
                     logger.info(f"TASK {task_id} terminated gracefully")
                 except subprocess.TimeoutExpired:
                     # Force kill if termination didn't work
-                    logger.warning(f"TASK {task_id} did not terminate, sending SIGKILL...")
+                    logger.warning(f"TASK {task_id} did not terminate, sending SIGKILL...", exc_info=True)
                     process.kill()
                     process.wait()
-                    logger.info(f"TASK {task_id} killed forcefully")
+                    logger.info(f"TASK {task_id} killed forcefully", exc_info=True)
                 
                 return True
             except Exception as e:
-                logger.error(f"Failed to kill task {task_id}: {e}")
+                logger.error(f"Failed to kill task {task_id}: {e}", exc_info=True)
                 return False
