@@ -99,7 +99,11 @@ class Scheduler:
                                     format_task_ref(task, short_id=True),
                                 )
                                 # Could trigger severe error here if needed
-                                self.gpu_manager.trigger_severe_error(gpu_id, "GPU error in TASK " + format_task_ref(task))
+                                self.gpu_manager.trigger_severe_error(
+                                    gpu_id,
+                                    "GPU error in TASK " + format_task_ref(task),
+                                    task.task_id,
+                                )
                     except Exception as e:
                         logger.debug(f"Could not check stderr for GPU errors: {e}", exc_info=True)
         finally:

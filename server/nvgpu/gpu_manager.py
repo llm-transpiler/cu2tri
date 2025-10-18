@@ -9,11 +9,16 @@ except ImportError:
     NVML_AVAILABLE = False
 
 from models import GPU, GPUStatus, GPUMode, Task
-from config import config
+from config import config, TaskStatus
 from logger import setup_logger
 from utils.timezone import now_timestamp
 from utils.task_refs import format_task_ref
 from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from task_queue import TaskQueue
+    from task_runner import TaskRunner
 
 logger = setup_logger("gpu_manager")
 
@@ -36,10 +41,11 @@ class GPUManager:
         self.severe_error_active = False
         self.severe_error_timestamp = None  # wall clock (datetime) for logging
         self.severe_error_monotonic_ns: int | None = None  # monotonic clock for elapsed checks
+        self.error_gpus: set[int] = set()  # GPUs currently marked as error
 
         # Dependencies (set after initialization)
-        self.task_queue = None
-        self.task_runner = None
+        self.task_queue : "TaskQueue" | None = None
+        self.task_runner : "TaskRunner" | None = None
 
         self._initialize_nvml()
 
@@ -375,8 +381,11 @@ class GPUManager:
                 logger.debug(f"TASK {format_task_ref(task)} completed on GPU {gpu_id}")
             return True
 
-    def trigger_severe_error(self, gpu_id: int, error_msg: str):
-        """Trigger severe error state, kill all running tasks and requeue them.
+    def trigger_severe_error(self, gpu_id: int, error_msg: str, offending_task_id: str | None = None):
+        """Trigger severe error state.
+
+        The offending task is marked failed, any collateral tasks are terminated and
+        requeued to run again once the GPU recovers.
 
         Args:
             gpu_id: GPU that encountered the error
@@ -391,6 +400,7 @@ class GPUManager:
                 self.gpus[gpu_id].status = GPUStatus.ERROR
                 self.gpus[gpu_id].error_message = error_msg
                 self.gpus[gpu_id].last_error_timestamp = self.severe_error_timestamp
+                self.error_gpus.add(gpu_id)
 
                 # Get all running tasks on this GPU
                 running_task_ids = list(self.gpus[gpu_id].running_tasks)
@@ -400,44 +410,80 @@ class GPUManager:
             logger.error(f"SEVERE ERROR on GPU {gpu_id}: {error_msg}. "
                          f"Killing {len(running_task_ids)} running tasks.")
 
-        # Kill and requeue tasks (outside lock to avoid deadlock)
+        # Kill running tasks and mark them failed or requeue collateral tasks (outside lock to avoid deadlock)
         if self.task_queue and self.task_runner and running_task_ids:
-            killed_tasks = []
+            damage_message = f"GPU damage bug: {error_msg}"
+            trigger_note = (
+                f"triggered by task {offending_task_id}"
+                if offending_task_id
+                else "triggered by severe error"
+            )
+
+            def _mark_task_failed(task: Task):
+                """Mark task as failed without retry and tag damage bug message."""
+                if task.status != TaskStatus.CANCELLED:
+                    task.status = TaskStatus.FAILED
+
+                if task.error_message:
+                    if damage_message not in task.error_message:
+                        task.error_message = f"{task.error_message} | {damage_message}"
+                else:
+                    task.error_message = damage_message
+
+                if task.end_timestamp is None:
+                    task.end_timestamp = now_timestamp()
+
+                logger.info(f"Marked TASK {format_task_ref(task)} as failed due to severe error (no retry)")
+
+            collateral_tasks: list[Task] = []
+
             for task_id in running_task_ids:
                 task = self.task_queue.get_task(task_id)
-                if task:
-                    # Kill the task process
-                    if self.task_runner.kill_task(task):
-                        logger.info(
-                            "Killed TASK %s due to severe error",
-                            format_task_ref(task),
-                        )
-                        killed_tasks.append(task)
-                    else:
-                        logger.warning(
-                            "Failed to kill TASK %s",
-                            format_task_ref(task),
-                        )
+                if not task:
+                    continue
 
-            # Requeue killed tasks at front (reverse order to maintain original order)
-            for task in reversed(killed_tasks):
-                # Reset task state for requeue
+                # Kill the task process if possible
+                kill_success = False
+                if self.task_runner:
+                    try:
+                        kill_success = self.task_runner.kill_task(task.task_id)
+                    except Exception as e:
+                        logger.error(f"Error while killing TASK {format_task_ref(task)}: {e}", exc_info=True)
+
+                if kill_success:
+                    logger.info(f"Killed TASK {format_task_ref(task)} due to severe error")
+                else:
+                    logger.warning(f"Could not terminate TASK {format_task_ref(task)} (maybe already exited)")
+
+                if offending_task_id and task.task_id != offending_task_id:
+                    # Collateral task: requeue instead of failing
+                    task.error_message = (
+                        f"Killed due to GPU {gpu_id} severe error {trigger_note}"
+                    )
+                    collateral_tasks.append(task)
+                else:
+                    _mark_task_failed(task)
+
+            # Requeue collateral tasks at front in reverse order to maintain order
+            for task in reversed(collateral_tasks):
                 task.start_timestamp = None
                 task.end_timestamp = None
                 task.exit_code = None
-                task.error_message = f"Requeued due to GPU {gpu_id} severe error"
-                self.task_queue.push_front(task)
-                logger.info(
-                    "Requeued TASK %s at front of queue",
-                    format_task_ref(task),
+                task.stdout_size = 0
+                task.stderr_size = 0
+                task.error_message = task.error_message or (
+                    f"Requeued after GPU {gpu_id} severe error {trigger_note}"
                 )
+                self.task_queue.push_front(task)
+                logger.info(f"Requeued collateral TASK {format_task_ref(task)} after severe error on GPU {gpu_id}")
 
             # Clear running tasks from GPU
             with self.lock:
                 if gpu_id in self.gpus:
+                    cleared_count = len(self.gpus[gpu_id].running_tasks)
                     self.gpus[gpu_id].running_tasks.clear()
                     logger.info(
-                        f"Cleared {len(killed_tasks)} tasks from GPU {gpu_id}")
+                        f"Cleared {cleared_count} tasks from GPU {gpu_id}")
 
         logger.error(
             f"SEVERE ERROR handling complete. System paused for {config.error_pause_duration}s.")
@@ -448,6 +494,14 @@ class GPUManager:
             self.severe_error_active = False
             self.severe_error_timestamp = None
             self.severe_error_monotonic_ns = None
+            recovered_gpus = list(self.error_gpus)
+            for error_gpu_id in recovered_gpus:
+                gpu = self.gpus.get(error_gpu_id)
+                if gpu:
+                    gpu.status = GPUStatus.ONLINE
+                    gpu.error_message = None
+                    logger.info(f"GPU {error_gpu_id} recovered from severe error and is back online")
+            self.error_gpus.clear()
             logger.info("Severe error state cleared, resuming operations")
 
     def _update_gpu_memory(self, gpu_id: int):

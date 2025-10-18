@@ -60,11 +60,23 @@ class TaskRunner:
         stderr_file = None
         
         running_timer_started = False
+
+        def append_error_message(message: str):
+            """Attach an error message without overwriting existing context."""
+            if not message:
+                return
+            if task.error_message:
+                if message not in task.error_message:
+                    task.error_message = f"{task.error_message} | {message}"
+            else:
+                task.error_message = message
+        
         try:
             # Update task status
             task.status = TaskStatus.RUNNING
             task.assigned_gpu = gpu_id
             task.start_timestamp = now_timestamp()
+            task.error_message = None
             task_ref_str = format_task_ref(task)
             
             # Stop queue/wait timers and record durations
@@ -176,13 +188,13 @@ class TaskRunner:
                 # Don't override CANCELLED status (set by force_cancel_task)
                 if task.status != TaskStatus.CANCELLED:
                     task.status = TaskStatus.FAILED
-                    task.error_message = f"Process terminated by signal {signal_name} ({exit_code})"
+                    append_error_message(f"Process terminated by signal {signal_name} ({exit_code})")
                 logger.error(f"TASK {task_ref_str} terminated by signal {signal_name} ({exit_code})")
             else:
                 # Don't override CANCELLED status
                 if task.status != TaskStatus.CANCELLED:
                     task.status = TaskStatus.FAILED
-                    task.error_message = f"Exit code {exit_code}"
+                    append_error_message(f"Exit code {exit_code}")
                 logger.warning(f"TASK {task_ref_str} failed with exit code {exit_code}")
             
             # Write summary log file AFTER status is finalized
@@ -192,7 +204,7 @@ class TaskRunner:
             
         except subprocess.TimeoutExpired as e:
             task.status = TaskStatus.FAILED
-            task.error_message = f"Timeout after {config.task_timeout} seconds"
+            append_error_message(f"Timeout after {config.task_timeout} seconds")
             task.end_timestamp = now_timestamp()
             logger.error(f"TASK {task_ref_str} timed out after {config.task_timeout}s", exc_info=True)
             
@@ -216,7 +228,7 @@ class TaskRunner:
             
         except Exception as e:
             task.status = TaskStatus.FAILED
-            task.error_message = str(e)
+            append_error_message(str(e))
             task.end_timestamp = now_timestamp()
             logger.error(f"TASK {task_ref_str} failed with exception: {e}", exc_info=True)
             
