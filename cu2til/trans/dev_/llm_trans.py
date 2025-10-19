@@ -75,12 +75,14 @@ def parse_args():
     parser.add_argument('--nvgpu-task-type', choices=['functional', 'performance'],
                        default='functional', help='Task type for NVGPU (default: functional)')
     # Async concurrency options
-    parser.add_argument('--concurrency', type=int, default=10,
-                       help='Maximum number of concurrent tasks (default: 10)')
-    parser.add_argument('--max-attempts', type=int, default=5,
+    parser.add_argument('--concurrency', type=int, default=1,
+                       help='Maximum number of concurrent tasks (default: 1)')
+    parser.add_argument('--max-attempts', type=int, default=1,
                        help='Maximum number of independent attempts (pass@k) to run per case (default: 1)')
     parser.add_argument('--attempt-policy', choices=['first_success', 'exhaustive'], default='exhaustive',
                        help='Attempt execution policy: stop after first success or exhaust all attempts')
+    parser.add_argument('--ms-format', choices=['comma', 'plain'], default='comma',
+                       help='Milliseconds formatting style for logs (default: comma)')
     return parser.parse_args()
 
 # Parse arguments
@@ -90,6 +92,13 @@ if args.max_attempts < 1:
 
 # Ensure process-level timezone matches project default
 apply_default_timezone_to_os()
+
+def format_ms(value: float | None) -> str:
+    """Format millisecond values with optional thousands separators."""
+    if value is None:
+        return 'N/A'
+    fmt = '{:,.3f}' if args.ms_format == 'comma' else '{:.3f}'
+    return f"{fmt.format(value)} ms"
 
 # Handle nvgpu flag
 if args.no_nvgpu:
@@ -102,6 +111,7 @@ model_name = "DEFAULT_MODEL_NAME"
 # Create both sync and async clients
 client = None
 async_client = None
+BASE_URL = None
 
 if run_model == "qwen":
     # model_name = "Qwen/Qwen3-Next-80B-A3B-Thinking-FP8"
@@ -228,6 +238,14 @@ elif run_model == "openrouter_auto":
     get_api_param = get_api_params_method(CallingIdentifier.OPENAI_OPENROUTER)
 else:
     raise ValueError(f"Unsupported model: {run_model}")
+
+# Prefer reading base_url from the constructed client objects if available
+try:
+    _candidate_base_url = getattr(client, "base_url", None) or getattr(async_client, "base_url", None)
+    if _candidate_base_url:
+        BASE_URL = str(_candidate_base_url)
+except Exception:
+    pass
 
 def check_network_connectivity(logger):
     """Check network connectivity using curl-like request."""
@@ -372,6 +390,7 @@ for handler in handlers:
     logger.addHandler(handler)
 
 logger.info(f"Using {run_model} model: {model_name}")
+logger.info(f"LLM base_url: {BASE_URL}")
 
 
 def get_first_case_from_each_type():
@@ -442,6 +461,41 @@ JSONL_LOCK = asyncio.Lock()
 RETRY_LOG_LOCK = asyncio.Lock()
 
 
+def _serialize_for_logging(data):
+    """
+    Convert arbitrary objects into JSON-serializable structures.
+    Falls back to string representation if serialization fails.
+    """
+    try:
+        return json.loads(json.dumps(data, ensure_ascii=False, default=str))
+    except Exception as exc:  # pragma: no cover - defensive
+        return f"<<serialization_failed: {exc}>>"
+
+
+def build_retry_context(
+    *,
+    conversation_history=None,
+    retry_count=None,
+    max_retries=None,
+    api_params=None,
+    additional_meta=None,
+):
+    context = {}
+    if retry_count is not None:
+        context["retry_count"] = retry_count
+    if max_retries is not None:
+        context["max_retries"] = max_retries
+    if conversation_history is not None:
+        context["conversation"] = _serialize_for_logging(conversation_history)
+        context["conversation_message_count"] = len(conversation_history)
+    if api_params is not None:
+        sanitized_params = {k: v for k, v in api_params.items() if k != "messages"}
+        context["api_params"] = _serialize_for_logging(sanitized_params)
+    if additional_meta:
+        context["meta"] = _serialize_for_logging(additional_meta)
+    return context
+
+
 async def write_jsonl_log(log_entry, log_file, jsonl_lock):
     """Write a log entry to JSONL file in real-time with async lock."""
     async with jsonl_lock:
@@ -463,6 +517,7 @@ async def log_retry_event(
     round_id,
     retry_index,
     extra=None,
+    context=None,
 ):
     """Persist detailed retry events for later auditing."""
     retry_log_dir = test_work_dir / "logs"
@@ -480,13 +535,16 @@ async def log_retry_event(
         "timestamp": ensure_timezone(now_timestamp()).isoformat(),
     }
     if extra:
-        record.update(extra)
+        record.update(_serialize_for_logging(extra))
+    if context is not None:
+        record["context"] = _serialize_for_logging(context)
     async with RETRY_LOG_LOCK:
         try:
             with open(retry_log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
         except Exception as exc:
             logger.warning(f"Failed to persist retry event: {exc}")
+
 
 
 def extract_thinking_content(full_response):
@@ -674,9 +732,25 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
         if round_start_wall is None:
             round_start_wall = retry_wall_start
 
+        resp_content = None
         usage_dict = None
         generation_info = None
         retry_wall_end = None
+
+        api_params = None
+        api_params_exc = None
+        try:
+            api_params = get_api_param(conversation_history, model_name)
+        except Exception as exc:
+            api_params_exc = exc
+
+        context_meta = {
+            "wall_start": ensure_timezone(retry_wall_start).isoformat(),
+        }
+        if round_start_wall:
+            context_meta["round_start"] = ensure_timezone(round_start_wall).isoformat()
+        if api_params_exc is not None:
+            context_meta["api_param_error"] = str(api_params_exc)
 
         await log_retry_event(
             attempt_work_dir,
@@ -690,11 +764,22 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
             extra={
                 "model": model_name,
                 "attempt_started_at": ensure_timezone(retry_wall_start).isoformat(),
+                "retry_count": retry_count,
+                "max_retries": args.max_retries,
             },
+            context=build_retry_context(
+                conversation_history=conversation_history,
+                retry_count=retry_index,
+                max_retries=args.max_retries,
+                api_params=api_params if api_params_exc is None else None,
+                additional_meta=context_meta,
+            ),
         )
 
+        if api_params_exc is not None:
+            raise api_params_exc
+
         try:
-            api_params = get_api_param(conversation_history, model_name)
             resp_content, actual_model_used, usage_dict, generation_info = await async_openai_llm_call(
                 async_client, api_params, logger=logger
             )
@@ -740,6 +825,15 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
             if generation_info:
                 retry_record["generation_info"] = generation_info
 
+            finish_meta = {
+                **context_meta,
+                "response": resp_content,
+                "response_char_count": len(resp_content) if resp_content is not None else 0,
+            }
+            if triton_code is not None:
+                finish_meta["generated_code"] = triton_code
+                finish_meta["generated_code_char_count"] = len(triton_code)
+
             if triton_code == resp_content:
                 retry_record["reason"] = "missing_code_block"
                 round_entry["retry_records"].append(retry_record)
@@ -753,6 +847,13 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
                     round_id=round_id,
                     retry_index=retry_index,
                     extra=retry_record,
+                    context=build_retry_context(
+                        conversation_history=conversation_history,
+                        retry_count=retry_index,
+                        max_retries=args.max_retries,
+                        api_params=api_params,
+                        additional_meta={**finish_meta, "status": "missing_code_block"},
+                    ),
                 )
                 if timing_stats is not None:
                     timing_stats["llm_retry_time_ms"] += retry_duration_ms
@@ -787,6 +888,18 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
                                 "wait_seconds": wait_time,
                                 "wait_ms": round(waited_ms, 3),
                             },
+                            context=build_retry_context(
+                                conversation_history=conversation_history,
+                                retry_count=retry_count,
+                                max_retries=args.max_retries,
+                                api_params=api_params,
+                                additional_meta={
+                                    **finish_meta,
+                                    "status": "retry_wait_missing_code_block",
+                                    "wait_seconds": wait_time,
+                                    "wait_ms": round(waited_ms, 3),
+                                },
+                            ),
                         )
                     logger.info("🔄 Retrying API call for better code format...")
                     continue
@@ -802,6 +915,13 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
                     round_id=round_id,
                     retry_index=retry_index,
                     extra=retry_record,
+                    context=build_retry_context(
+                        conversation_history=conversation_history,
+                        retry_count=retry_index,
+                        max_retries=args.max_retries,
+                        api_params=api_params,
+                        additional_meta={**finish_meta, "status": "max_retries_exceeded"},
+                    ),
                 )
                 return False, None, timing_stats
 
@@ -818,6 +938,13 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
                 round_id=round_id,
                 retry_index=retry_index,
                 extra=retry_record,
+                context=build_retry_context(
+                    conversation_history=conversation_history,
+                    retry_count=retry_index,
+                    max_retries=args.max_retries,
+                    api_params=api_params,
+                    additional_meta={**finish_meta, "status": "success"},
+                ),
             )
             round_entry["start_time"] = ensure_timezone(round_start_wall).isoformat()
             round_entry["end_time"] = ensure_timezone(retry_wall_end).isoformat()
@@ -834,8 +961,8 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
                 timing_stats["total_llm_time_ms"] += retry_duration_ms
 
             if retry_count > 0:
-                logger.info(f"🔄 Successfully generated code after {retry_count} retries")
-            logger.debug("🔄 Successfully generated initial Triton code")
+                logger.info(f"🟢 Successfully generated code after {retry_count} retries")
+            logger.debug("🟢 Successfully generated initial Triton code")
             break
 
         except Exception as e:
@@ -851,6 +978,14 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
                 "error": error_msg,
             }
             round_entry["retry_records"].append(retry_record)
+            error_meta = {
+                **context_meta,
+                "error": error_msg,
+                "exception_type": type(e).__name__,
+            }
+            if resp_content:
+                error_meta["response"] = resp_content
+                error_meta["response_char_count"] = len(resp_content)
             await log_retry_event(
                 attempt_work_dir,
                 event_type="attempt_finish",
@@ -861,6 +996,13 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
                 round_id=round_id,
                 retry_index=retry_index,
                 extra=retry_record,
+                context=build_retry_context(
+                    conversation_history=conversation_history,
+                    retry_count=retry_index,
+                    max_retries=args.max_retries,
+                    api_params=api_params,
+                    additional_meta={**error_meta, "status": "error"},
+                ),
             )
             if timing_stats is not None:
                 timing_stats["llm_retry_time_ms"] += retry_duration_ms
@@ -896,6 +1038,18 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
                             "wait_seconds": wait_time,
                             "wait_ms": round(waited_ms, 3),
                         },
+                        context=build_retry_context(
+                            conversation_history=conversation_history,
+                            retry_count=retry_count,
+                            max_retries=args.max_retries,
+                            api_params=api_params,
+                            additional_meta={
+                                **error_meta,
+                                "status": "retry_wait_error",
+                                "wait_seconds": wait_time,
+                                "wait_ms": round(waited_ms, 3),
+                            },
+                        ),
                     )
                     logger.info(f"🔄 Retrying API call (attempt {retry_count + 1})...")
                     continue
@@ -993,7 +1147,7 @@ async def run_single_case_attempt(case_type, case_name, attempt_number, attempt_
     return success, rounds, timing_stats
 
 
-async def run_single_case_translation(case_type, case_name):
+async def run_single_case_translation(case_type, case_name, attempt_semaphore: asyncio.Semaphore | None = None):
     """Run translation for a case with optional multi-attempt translation runs."""
     case_root_dir = WORK_DIR / case_name
     case_root_dir.mkdir(parents=True, exist_ok=True)
@@ -1002,67 +1156,123 @@ async def run_single_case_translation(case_type, case_name):
     success_any = False
     best_rounds: int | None = None
 
-    for attempt_number in range(1, args.max_attempts + 1):
-        attempt_work_dir = case_root_dir / f"attempt_{attempt_number:02d}"
-        success, rounds, timing_stats = await run_single_case_attempt(
-            case_type, case_name, attempt_number, attempt_work_dir
-        )
-
-        if "success" not in timing_stats:
-            timing_stats["success"] = success
-        if "final_round" not in timing_stats:
-            timing_stats["final_round"] = rounds
-        if "end_time" not in timing_stats:
-            timing_stats["end_time"] = ensure_timezone(now_timestamp()).isoformat()
-        if "timestamp" not in timing_stats:
-            timing_stats["timestamp"] = TIMESTAMP
-        if "model_name" not in timing_stats:
-            timing_stats["model_name"] = model_name
-        if "actual_model_used" not in timing_stats:
-            timing_stats["actual_model_used"] = model_name
-        if "testset" not in timing_stats:
-            timing_stats["testset"] = args.testset
-        if "use_nvgpu" not in timing_stats:
-            timing_stats["use_nvgpu"] = args.use_nvgpu
-        if "concurrency" not in timing_stats:
-            timing_stats["concurrency"] = args.concurrency
-        if "gpu_server" not in timing_stats:
-            timing_stats["gpu_server"] = args.nvgpu_server if args.use_nvgpu else None
-        if "wall_clock_duration_ms" not in timing_stats:
-            timing_stats["wall_clock_duration_ms"] = None
-        if "effective_duration_ms" not in timing_stats:
-            timing_stats["effective_duration_ms"] = None
-        if "retry_overhead_ms" not in timing_stats:
-            timing_stats["retry_overhead_ms"] = 0.0
-        if "other_overhead_ms" not in timing_stats:
-            timing_stats["other_overhead_ms"] = 0.0
+    async def normalize_attempt_stats(
+        attempt_number: int,
+        attempt_work_dir: Path,
+        timing_stats: dict,
+        success: bool,
+        rounds: int | None,
+    ) -> dict:
+        timing_stats = dict(timing_stats)
+        timing_stats.setdefault("case_type", case_type)
+        timing_stats.setdefault("case_name", case_name)
+        timing_stats.setdefault("attempt_number", attempt_number)
+        timing_stats.setdefault("success", success)
+        timing_stats.setdefault("final_round", rounds)
+        timing_stats.setdefault("work_dir", str(attempt_work_dir))
+        timing_stats.setdefault("timestamp", ensure_timezone(now_timestamp()).isoformat())
+        timing_stats.setdefault("model_name", model_name)
+        timing_stats.setdefault("actual_model_used", model_name)
+        timing_stats.setdefault("testset", args.testset)
+        timing_stats.setdefault("use_nvgpu", args.use_nvgpu)
+        timing_stats.setdefault("concurrency", args.concurrency)
+        timing_stats.setdefault("gpu_server", args.nvgpu_server if args.use_nvgpu else None)
+        timing_stats.setdefault("wall_clock_duration_ms", None)
+        timing_stats.setdefault("effective_duration_ms", None)
+        timing_stats.setdefault("retry_overhead_ms", 0.0)
+        timing_stats.setdefault("other_overhead_ms", 0.0)
+        timing_stats.setdefault("max_attempts", args.max_attempts)
+        timing_stats.setdefault("attempt_policy", args.attempt_policy)
+        timing_stats.setdefault("ms_format", args.ms_format)
         if "_json_logged" not in timing_stats:
             await write_jsonl_log(timing_stats, JSONL_LOG_FILE, JSONL_LOCK)
             timing_stats["_json_logged"] = True
+        sanitized = dict(timing_stats)
+        sanitized.pop("_json_logged", None)
+        return sanitized
 
-        sanitized_stats = dict(timing_stats)
-        sanitized_stats.pop('_json_logged', None)
+    async def execute_attempt(attempt_number: int) -> tuple[bool, int | None, dict] | Exception:
+        attempt_work_dir = case_root_dir / f"attempt_{attempt_number:02d}"
+        try:
+            if attempt_semaphore is not None:
+                async with attempt_semaphore:
+                    return await run_single_case_attempt(case_type, case_name, attempt_number, attempt_work_dir)
+            return await run_single_case_attempt(case_type, case_name, attempt_number, attempt_work_dir)
+        except Exception as exc:
+            return exc
+
+    async def finalize_attempt(attempt_number: int, outcome: tuple | Exception):
+        nonlocal success_any, best_rounds
+        attempt_work_dir = case_root_dir / f"attempt_{attempt_number:02d}"
+        if isinstance(outcome, Exception):
+            logger.error(f"Attempt {attempt_number} for {case_type}/{case_name} raised: {outcome}")
+            timing_stats = {
+                "case_type": case_type,
+                "case_name": case_name,
+                "attempt_number": attempt_number,
+                "success": False,
+                "final_round": None,
+                "error": str(outcome),
+                "work_dir": str(attempt_work_dir),
+                "timestamp": ensure_timezone(now_timestamp()).isoformat(),
+                "model_name": model_name,
+                "testset": args.testset,
+                "use_nvgpu": args.use_nvgpu,
+                "concurrency": args.concurrency,
+                "gpu_server": args.nvgpu_server if args.use_nvgpu else None,
+                "wall_clock_duration_ms": None,
+                "effective_duration_ms": None,
+                "retry_overhead_ms": 0.0,
+                "other_overhead_ms": 0.0,
+            }
+            sanitized = await normalize_attempt_stats(attempt_number, attempt_work_dir, timing_stats, False, None)
+            attempt_results.append(
+                {
+                    "attempt_number": attempt_number,
+                    "success": False,
+                    "rounds": None,
+                    "timing_stats": sanitized,
+                    "work_dir": str(attempt_work_dir),
+                }
+            )
+            return False, None
+        success, rounds, timing_stats = outcome
+        sanitized = await normalize_attempt_stats(attempt_number, attempt_work_dir, timing_stats, success, rounds)
         attempt_results.append(
             {
                 "attempt_number": attempt_number,
                 "success": success,
                 "rounds": rounds,
-                "timing_stats": sanitized_stats,
+                "timing_stats": sanitized,
                 "work_dir": str(attempt_work_dir),
             }
         )
-
-        if success and best_rounds is None:
+        if success:
             success_any = True
-            best_rounds = rounds
-            if args.attempt_policy == "first_success":
+            if rounds is not None:
+                best_rounds = rounds if best_rounds is None else min(best_rounds, rounds)
+        return success, rounds
+
+    if args.attempt_policy == "exhaustive" and args.max_attempts > 1:
+        attempt_numbers = list(range(1, args.max_attempts + 1))
+        attempt_tasks = [asyncio.create_task(execute_attempt(num)) for num in attempt_numbers]
+        outcomes = await asyncio.gather(*attempt_tasks, return_exceptions=True)
+        for attempt_number, outcome in zip(attempt_numbers, outcomes):
+            await finalize_attempt(attempt_number, outcome)
+    else:
+        for attempt_number in range(1, args.max_attempts + 1):
+            outcome = await execute_attempt(attempt_number)
+            success, rounds = await finalize_attempt(attempt_number, outcome)
+            if success and args.attempt_policy == "first_success":
                 logger.info(
                     f"✅ Case {case_type}/{case_name} succeeded on attempt {attempt_number}/{args.max_attempts}"
                 )
                 break
 
+    attempt_results.sort(key=lambda entry: entry.get("attempt_number", 0))
+
     if success_any and best_rounds is None:
-        best_rounds = next(res["rounds"] for res in attempt_results if res["success"])
+        best_rounds = next((res["rounds"] for res in attempt_results if res["success"]), None)
     if not success_any and attempt_results:
         best_rounds = attempt_results[-1]["rounds"]
 
@@ -1219,7 +1429,7 @@ async def run_test_round_local(round_num, test_work_dir, log_file, timing_stats=
             f.write(f"=== Test Round {round_num} (Local) ===\n")
             f.write(f"Command: {' '.join(cmd)}\n")
             f.write(f"Exit code: {returncode}\n")
-            f.write(f"Execution time: {test_duration_ms:.3f}ms\n\n")
+            f.write(f"Execution time: {format_ms(test_duration_ms)}\n\n")
             f.write("=== STDOUT ===\n")
             f.write(stdout)
             f.write("\n=== STDERR ===\n")
@@ -1275,16 +1485,16 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
         def _format_status_progress(result_obj):
             parts = []
             if result_obj.total_duration_ms is not None:
-                parts.append(f"total≈{result_obj.total_duration_ms:.0f}ms")
+                parts.append(f"total={format_ms(result_obj.total_duration_ms)}")
             else:
                 if result_obj.pending_duration_ms is not None:
-                    parts.append(f"pending≈{result_obj.pending_duration_ms:.0f}ms")
+                    parts.append(f"pending={format_ms(result_obj.pending_duration_ms)}")
                 if result_obj.queue_duration_ms is not None:
-                    parts.append(f"queue≈{result_obj.queue_duration_ms:.0f}ms")
+                    parts.append(f"queue={format_ms(result_obj.queue_duration_ms)}")
                 if result_obj.waiting_duration_ms is not None:
-                    parts.append(f"waiting≈{result_obj.waiting_duration_ms:.0f}ms")
+                    parts.append(f"waiting={format_ms(result_obj.waiting_duration_ms)}")
                 if result_obj.running_duration_ms is not None:
-                    parts.append(f"running≈{result_obj.running_duration_ms:.0f}ms")
+                    parts.append(f"running={format_ms(result_obj.running_duration_ms)}")
             return ", ".join(parts)
         
         while True:
@@ -1294,9 +1504,9 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
             if current_status != last_status:
                 progress_text = _format_status_progress(result)
                 if progress_text:
-                    logger.info(f"Task {task_id[:8]}: {current_status} ({progress_text})")
+                    logger.info(f"Task {task_id}: {current_status} ({progress_text})")
                 else:
-                    logger.info(f"Task {task_id[:8]}: {current_status}")
+                    logger.info(f"Task {task_id}: {current_status}")
                 last_status = current_status
             
             if current_status in ["completed", "failed", "cancelled"]:
@@ -1342,9 +1552,6 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
         assigned_gpu = getattr(result, "gpu_id", None)
         if assigned_gpu is None:
             assigned_gpu = getattr(result, "assigned_gpu", None)
-
-        def _format_ms(value):
-            return f"{value:,.3f} ms"
 
         # Record test timing (prefer server-reported execution time)
         if timing_stats is not None:
@@ -1393,20 +1600,20 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
             display_total_ms = candidate_sum if candidate_sum > 0 else None
 
         if display_total_ms is not None:
-            logger.info(f"Task finished in {_format_ms(display_total_ms)} with status: {result.status}")
+            logger.info(f"Task {task_id} finished in {format_ms(display_total_ms)} with status: {result.status}")
         else:
-            logger.info(f"Task finished with status: {result.status}")
+            logger.info(f"Task {task_id} finished with status: {result.status}")
         timing_parts = []
         if pending_time_ms is not None:
-            timing_parts.append(f"Pending: {_format_ms(pending_time_ms)}")
+            timing_parts.append(f"Pending: {format_ms(pending_time_ms)}")
         if queue_time_ms is not None:
-            timing_parts.append(f"Queue: {_format_ms(queue_time_ms)}")
+            timing_parts.append(f"Queue: {format_ms(queue_time_ms)}")
         if waiting_time_ms is not None:
-            timing_parts.append(f"Waiting: {_format_ms(waiting_time_ms)}")
+            timing_parts.append(f"Waiting: {format_ms(waiting_time_ms)}")
         if execution_time_ms is not None:
-            timing_parts.append(f"Execution: {_format_ms(execution_time_ms)}")
+            timing_parts.append(f"Execution: {format_ms(execution_time_ms)}")
         if total_server_time_ms is not None:
-            timing_parts.append(f"Total: {_format_ms(total_server_time_ms)}")
+            timing_parts.append(f"Total: {format_ms(total_server_time_ms)}")
         if timing_parts:
             logger.info("  └─ " + ", ".join(timing_parts))
         
@@ -1465,9 +1672,9 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
 
             if timing_ms_entries:
                 label_width = max(len(label) for label, _ in timing_ms_entries)
-                value_width = max(len(_format_ms(value)) for _, value in timing_ms_entries)
+                value_width = max(len(format_ms(value)) for _, value in timing_ms_entries)
                 for label, value in timing_ms_entries:
-                    value_str = _format_ms(value)
+                    value_str = format_ms(value)
                     f.write(f"{label:<{label_width}} : {value_str:>{value_width}}\n")
             if timestamp_entries:
                 label_width_ts = max(len(label) for label, _ in timestamp_entries)
@@ -1545,8 +1752,24 @@ async def get_feedback_from_llm(
             if round_start_wall is None:
                 round_start_wall = retry_wall_start
 
+            fixed_code_response = None
             usage_dict = None
             generation_info = None
+
+            api_params = None
+            api_params_exc = None
+            try:
+                api_params = get_api_param(conversation_history, model_name)
+            except Exception as exc:
+                api_params_exc = exc
+
+            context_meta = {
+                "wall_start": ensure_timezone(retry_wall_start).isoformat(),
+            }
+            if round_start_wall:
+                context_meta["round_start"] = ensure_timezone(round_start_wall).isoformat()
+            if api_params_exc is not None:
+                context_meta["api_param_error"] = str(api_params_exc)
 
             await log_retry_event(
                 test_work_dir,
@@ -1560,11 +1783,22 @@ async def get_feedback_from_llm(
                 extra={
                     "model": model_name,
                     "attempt_started_at": ensure_timezone(retry_wall_start).isoformat(),
+                    "retry_count": retry_count,
+                    "max_retries": args.max_retries,
                 },
+                context=build_retry_context(
+                    conversation_history=conversation_history,
+                    retry_count=retry_index,
+                    max_retries=args.max_retries,
+                    api_params=api_params if api_params_exc is None else None,
+                    additional_meta=context_meta,
+                ),
             )
 
+            if api_params_exc is not None:
+                raise api_params_exc
+
             try:
-                api_params = get_api_param(conversation_history, model_name)
                 fixed_code_response, feedback_model_used, usage_dict, generation_info = await async_openai_llm_call(
                     async_client, api_params, logger=logger
                 )
@@ -1608,6 +1842,15 @@ async def get_feedback_from_llm(
                 if generation_info:
                     retry_record["generation_info"] = generation_info
 
+                finish_meta = {
+                    **context_meta,
+                    "response": fixed_code_response,
+                    "response_char_count": len(fixed_code_response) if fixed_code_response is not None else 0,
+                }
+                if fixed_code is not None:
+                    finish_meta["generated_code"] = fixed_code
+                    finish_meta["generated_code_char_count"] = len(fixed_code)
+
                 if fixed_code == fixed_code_response:
                     retry_record["reason"] = "missing_code_block"
                     round_entry["retry_records"].append(retry_record)
@@ -1621,6 +1864,13 @@ async def get_feedback_from_llm(
                         round_id=feedback_round_id,
                         retry_index=retry_index,
                         extra=retry_record,
+                        context=build_retry_context(
+                            conversation_history=conversation_history,
+                            retry_count=retry_index,
+                            max_retries=args.max_retries,
+                            api_params=api_params,
+                            additional_meta={**finish_meta, "status": "missing_code_block"},
+                        ),
                     )
                     if timing_stats is not None:
                         timing_stats["llm_retry_time_ms"] += retry_duration_ms
@@ -1657,6 +1907,18 @@ async def get_feedback_from_llm(
                                     "wait_seconds": wait_time,
                                     "wait_ms": round(waited_ms, 3),
                                 },
+                                context=build_retry_context(
+                                    conversation_history=conversation_history,
+                                    retry_count=retry_count,
+                                    max_retries=args.max_retries,
+                                    api_params=api_params,
+                                    additional_meta={
+                                        **finish_meta,
+                                        "status": "retry_wait_missing_code_block",
+                                        "wait_seconds": wait_time,
+                                        "wait_ms": round(waited_ms, 3),
+                                    },
+                                ),
                             )
                         logger.info(f"🔄 Retrying feedback API call for better code format...")
                         continue
@@ -1672,6 +1934,13 @@ async def get_feedback_from_llm(
                         round_id=feedback_round_id,
                         retry_index=retry_index,
                         extra=retry_record,
+                        context=build_retry_context(
+                            conversation_history=conversation_history,
+                            retry_count=retry_index,
+                            max_retries=args.max_retries,
+                            api_params=api_params,
+                            additional_meta={**finish_meta, "status": "max_retries_exceeded"},
+                        ),
                     )
                     return None
 
@@ -1688,6 +1957,13 @@ async def get_feedback_from_llm(
                     round_id=feedback_round_id,
                     retry_index=retry_index,
                     extra=retry_record,
+                    context=build_retry_context(
+                        conversation_history=conversation_history,
+                        retry_count=retry_index,
+                        max_retries=args.max_retries,
+                        api_params=api_params,
+                        additional_meta={**finish_meta, "status": "success"},
+                    ),
                 )
                 round_entry["model_used"] = feedback_model_used
                 round_entry["start_time"] = ensure_timezone(round_start_wall).isoformat()
@@ -1703,8 +1979,8 @@ async def get_feedback_from_llm(
                 if timing_stats is not None:
                     timing_stats["total_llm_time_ms"] += retry_duration_ms
                 if retry_count > 0:
-                    logger.info(f"✅ Successfully generated feedback after {retry_count} retries")
-                logger.debug(f"Successfully got LLM feedback for round {round_num}")
+                    logger.info(f"🟢 Feedback obtained successfully after retrying {retry_count} times")
+                logger.debug(f"🟢 Successfully got LLM feedback for round {round_num}")
                 break
 
             except Exception as e:
@@ -1720,6 +1996,14 @@ async def get_feedback_from_llm(
                     "error": error_msg,
                 }
                 round_entry["retry_records"].append(retry_record)
+                error_meta = {
+                    **context_meta,
+                    "error": error_msg,
+                    "exception_type": type(e).__name__,
+                }
+                if fixed_code_response:
+                    error_meta["response"] = fixed_code_response
+                    error_meta["response_char_count"] = len(fixed_code_response)
                 await log_retry_event(
                     test_work_dir,
                     event_type="attempt_finish",
@@ -1730,6 +2014,13 @@ async def get_feedback_from_llm(
                     round_id=feedback_round_id,
                     retry_index=retry_index,
                     extra=retry_record,
+                    context=build_retry_context(
+                        conversation_history=conversation_history,
+                        retry_count=retry_index,
+                        max_retries=args.max_retries,
+                        api_params=api_params,
+                        additional_meta={**error_meta, "status": "error"},
+                    ),
                 )
                 if timing_stats is not None:
                     timing_stats["llm_retry_time_ms"] += retry_duration_ms
@@ -1767,6 +2058,18 @@ async def get_feedback_from_llm(
                                 "wait_seconds": wait_time,
                                 "wait_ms": round(waited_ms, 3),
                             },
+                            context=build_retry_context(
+                                conversation_history=conversation_history,
+                                retry_count=retry_count,
+                                max_retries=args.max_retries,
+                                api_params=api_params,
+                                additional_meta={
+                                    **error_meta,
+                                    "status": "retry_wait_error",
+                                    "wait_seconds": wait_time,
+                                    "wait_ms": round(waited_ms, 3),
+                                },
+                            ),
                         )
                     logger.info(f"🔄 Retrying feedback API call (attempt {retry_count + 1})...")
                     continue
@@ -1880,6 +2183,7 @@ async def test_cases():
                 "no_perf": args.no_perf,
                 "max_attempts": args.max_attempts,
                 "attempt_policy": args.attempt_policy,
+                "ms_format": args.ms_format,
                 "created_at": ensure_timezone(now_timestamp()).isoformat()
             }
             f.write(json.dumps(metadata, ensure_ascii=False) + '\n')
@@ -1890,6 +2194,7 @@ async def test_cases():
     # Log configuration summary
     logger.info(f"⚙️  Configuration:")
     logger.info(f"   - Model: {model_name}")
+    logger.info(f"   - Base URL: {BASE_URL}")
     logger.info(f"   - Testset: {args.testset}")
     logger.info(f"   - Max rounds: {MAX_ROUNDS}")
     logger.info(f"   - Console output: {CONSOLE_OUTPUT}")
@@ -1898,6 +2203,7 @@ async def test_cases():
     logger.info(f"   - Retry wait time: {args.retry_wait}s")
     logger.info(f"   - Max retries: {args.max_retries}")
     logger.info(f"   - Multi-attempt: {args.max_attempts} ({args.attempt_policy})")
+    logger.info(f"   - Millisecond format: {args.ms_format}")
     logger.info(f"   - Specific case types: {args.case_types if args.case_types else 'All'}")
     logger.info(f"   - Use NVGPU: {args.use_nvgpu}")
     logger.info(f"   - Concurrency: {args.concurrency}")
@@ -1915,36 +2221,41 @@ async def test_cases():
     
     async def run_case_with_semaphore(case_type, case_name_single):
         """Run a single case with semaphore control."""
-        async with semaphore:
-            try:
-                logger.info(
-                    f"{'🔹'*20} Starting {case_type}/{case_name_single} {'🔹'*20}")
+        try:
+            logger.info(
+                f"{'🔹'*20} Starting {case_type}/{case_name_single} {'🔹'*20}")
+            if args.attempt_policy == "exhaustive" and args.max_attempts > 1:
                 success, rounds, attempt_details = await run_single_case_translation(
-                    case_type, case_name_single)
+                    case_type, case_name_single, attempt_semaphore=semaphore)
+            else:
+                async with semaphore:
+                    success, rounds, attempt_details = await run_single_case_translation(
+                        case_type, case_name_single)
 
-                successful_attempt = next(
-                    (item.get("attempt_number", item.get("attempt")) for item in attempt_details if item.get("success")), None
+            successful_attempt = next(
+                (item.get("attempt_number", item.get("attempt")) for item in attempt_details if item.get("success")), None
+            )
+
+            case_result = {
+                "case_type": case_type,
+                "case_name": case_name_single,
+                "success": success,
+                "rounds": rounds,
+                "attempt_details": attempt_details,
+                "successful_attempt": successful_attempt,
+            }
+
+            attempt_count = len(attempt_details)
+            if success:
+                attempt_label = (
+                    f"Attempt {successful_attempt}"
+                    if successful_attempt is not None
+                    else "Attempt ?"
                 )
-
-                case_result = {
-                    "case_type": case_type,
-                    "case_name": case_name_single,
-                    "success": success,
-                    "rounds": rounds,
-                    "attempt_details": attempt_details,
-                    "successful_attempt": successful_attempt,
-                }
-
-                if success:
-                    attempt_label = (
-                        f"Attempt {successful_attempt}"
-                        if successful_attempt is not None
-                        else "Attempt ?"
-                    )
-                    round_label = f"Round {rounds}" if rounds is not None else "Round ?"
-                    status = f"✅ SUCCESS ({attempt_label}, {round_label})"
-                else:
-                    status = f"❌ FAILED after {len(attempt_details)} attempt(s)"
+                round_label = f"Round {rounds}" if rounds is not None else "Round ?"
+                status = f"✅ SUCCESS ({attempt_label}, {round_label}, Attempts {attempt_count})"
+            else:
+                status = f"❌ FAILED after {attempt_count} attempt(s)"
                 logger.info(f"{'🔹'*15} {case_type}/{case_name_single}: {status} {'🔹'*15}")
 
                 for attempt_info in attempt_details:
@@ -1957,18 +2268,18 @@ async def test_cases():
 
                 return case_result
 
-            except Exception as e:
-                logger.error(f"Error in {case_type}/{case_name_single}: {e}")
-                case_result = {
-                    "case_type": case_type,
-                    "case_name": case_name_single,
-                    "success": False,
-                    "rounds": None,
-                    "attempt_details": [],
-                    "successful_attempt": None,
-                    "error": str(e)
-                }
-                return case_result
+        except Exception as e:
+            logger.error(f"Error in {case_type}/{case_name_single}: {e}")
+            case_result = {
+                "case_type": case_type,
+                "case_name": case_name_single,
+                "success": False,
+                "rounds": None,
+                "attempt_details": [],
+                "successful_attempt": None,
+                "error": str(e)
+            }
+            return case_result
     
     # Prepare all tasks
     tasks = []
@@ -2091,6 +2402,7 @@ async def test_cases():
         "avg_rounds": avg_rounds,
         "max_attempts": args.max_attempts,
         "attempt_policy": args.attempt_policy,
+        "ms_format": args.ms_format,
         "completed_at": ensure_timezone(now_timestamp()).isoformat()
     }
     await write_jsonl_log(final_summary, JSONL_LOG_FILE, JSONL_LOCK)
