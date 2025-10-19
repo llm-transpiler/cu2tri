@@ -306,21 +306,25 @@ class TaskRunner:
                     f.write(f"End Timestamp:     {task.end_timestamp}\n")
                 
                 f.write(f"\n=== Timing Breakdown (ms) ===\n")
+                duration_width = 15
+
+                def _fmt_duration(value: float) -> str:
+                    return f"{value:>{duration_width},.2f}"
+
                 if task.pending_duration_ms is not None:
-                    f.write(f"Pending Duration:     {task.pending_duration_ms:>10.2f} ms  ( submit          -> gpu assignment  )\n")
+                    f.write(f"Pending Duration:     {_fmt_duration(task.pending_duration_ms)} ms  ( submit          -> gpu assignment  )\n")
                 if task.queue_duration_ms is not None:
-                    f.write(f"Queue Duration:       {task.queue_duration_ms:>10.2f} ms  ( gpu assignment  -> execution start )\n")
+                    f.write(f"Queue Duration:       {_fmt_duration(task.queue_duration_ms)} ms  ( gpu assignment  -> execution start )\n")
                 if task.waiting_duration_ms is not None:
-                    f.write(f"Waiting Duration:     {task.waiting_duration_ms:>10.2f} ms  ( submit          -> execution start )\n")
+                    f.write(f"Waiting Duration:     {_fmt_duration(task.waiting_duration_ms)} ms  ( submit          -> execution start )\n")
                 if task.running_duration_ms is not None:
-                    f.write(f"Running Duration:     {task.running_duration_ms:>10.2f} ms  ( execution start -> end             )\n")
+                    f.write(f"Running Duration:     {_fmt_duration(task.running_duration_ms)} ms  ( execution start -> end             )\n")
                 if task.total_duration_ms is not None:
-                    f.write(f"Total Duration:       {task.total_duration_ms:>10.2f} ms  ( submit          -> end             )\n")
+                    f.write(f"Total Duration:       {_fmt_duration(task.total_duration_ms)} ms  ( submit          -> end             )\n")
 
                 if task.execution_duration_ms:
                     f.write(f"\n=== Execution Duration (ms) ===\n")
-                    f.write(f"Process Running Duration: {task.execution_duration_ms:>10.2f} ms\n")
-
+                    f.write(f"Process Running Duration: {_fmt_duration(task.execution_duration_ms)} ms\n")
                 f.write(f"\n=== Result ===\n")
                 if timeout:
                     f.write(f"Status: TIMEOUT\n")
