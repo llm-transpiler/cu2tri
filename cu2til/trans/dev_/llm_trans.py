@@ -58,10 +58,10 @@ def parse_args():
     parser.add_argument('--no-perf', action='store_true', default=True,
                        help='Skip performance testing (add --no-perf to check_triton.py)')
     parser.add_argument('--testset', choices=['xpiler', 'xpiler_extended', 'leetcuda_dynamic', 'leetcuda_dynamic_2', 'hard'], 
-                       default='xpiler', help='Test set to use (default: xpiler)')
+                       default='xpiler_extended', help='Test set to use (default: xpiler)')
     parser.add_argument('--retry-wait', type=int, default=60,
                        help='Wait time in seconds when encountering API overload errors (default: 60)')
-    parser.add_argument('--max-retries', type=int, default=5,
+    parser.add_argument('--max-retries', type=int, default=10,
                        help='Maximum number of retries for API overload errors (default: 5)')
     # NVGPU server options
     parser.add_argument('--use-nvgpu', action='store_true', default=True,
@@ -75,9 +75,9 @@ def parse_args():
     parser.add_argument('--nvgpu-task-type', choices=['functional', 'performance'],
                        default='functional', help='Task type for NVGPU (default: functional)')
     # Async concurrency options
-    parser.add_argument('--concurrency', type=int, default=1,
+    parser.add_argument('--concurrency', type=int, default=10,
                        help='Maximum number of concurrent tasks (default: 1)')
-    parser.add_argument('--max-attempts', type=int, default=1,
+    parser.add_argument('--max-attempts', type=int, default=10,
                        help='Maximum number of independent attempts (pass@k) to run per case (default: 1)')
     parser.add_argument('--attempt-policy', choices=['first_success', 'exhaustive'], default='exhaustive',
                        help='Attempt execution policy: stop after first success or exhaust all attempts')
@@ -159,27 +159,27 @@ elif run_model == "gpt":
     # model_name = "openai/gpt-4o"
     # model_name = "openai/gpt-5-codex"
     # model_name = "openai/gpt-5-mini"
-    # client = OpenAI(
-    #     base_url='http://10.156.112.253:8003/v1',  # 5880x4
-    #     # base_url="http://10.208.130.44:8000/v1", # sigma44:a800x8
-    #     # base_url="http://127.0.0.1:8002/v1", # docker-h20 8001, 6,7
-    #     # base_url="http://127.0.0.1:8010/v1", # docker-h20 8010, all
-    #     api_key="EMPTY"
-    # )
-    # async_client = AsyncOpenAI(
-    #     base_url="http://127.0.0.1:8003/v1",
-    #     # base_url="http://127.0.0.1:8002/v1",
-    #     # base_url="http://127.0.0.1:8010/v1",
-    #     api_key="EMPTY"
-    # )
     client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
+        # base_url='http://10.156.112.253:8003/v1',  # 5880x4
+        # base_url="http://10.208.130.44:8000/v1", # sigma44:a800x8
+        base_url="http://0.0.0.0:8002/v1", # docker-h20 8001, 6,7
+        # base_url="http://127.0.0.1:8010/v1", # docker-h20 8010, all
+        api_key="EMPTY"
     )
     async_client = AsyncOpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
+        # base_url="http://127.0.0.1:8003/v1",
+        base_url="http://0.0.0.0:8002/v1",
+        # base_url="http://127.0.0.1:8010/v1",
+        api_key="EMPTY"
     )
+    # client = OpenAI(
+    #     base_url="https://openrouter.ai/api/v1",
+    #     api_key=os.getenv("OPENROUTER_API_KEY"),
+    # )
+    # async_client = AsyncOpenAI(
+    #     base_url="https://openrouter.ai/api/v1",
+    #     api_key=os.getenv("OPENROUTER_API_KEY"),
+    # )
     get_api_param = get_api_params_method(CallingIdentifier.OPENAI_OPENROUTER)
 elif run_model == "google":
     model_name = "google/gemma-3-27b-it"
@@ -333,15 +333,15 @@ def is_retryable_error(error_message):
     
     # Network errors are also retryable
     return is_network_error(error_message)
-
+PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 # Constants
 DIR_CUDA_ = Path("cuda_")
 DIR_TORCH_ = Path("torch_")
 DIR_TRITON_ = Path("triton_")
 if args.testset.startswith("xpiler"):
-    TESTSET_ROOT_DIR = Path("/workspace/cu2til/cases/xpiler")
+    TESTSET_ROOT_DIR = PROJECT_ROOT / Path("cu2til/cases/xpiler")
 else:
-    TESTSET_ROOT_DIR = Path(f"/workspace/cu2til/cases/{args.testset}")
+    TESTSET_ROOT_DIR = PROJECT_ROOT / Path(f"cu2til/cases/{args.testset}")
 TEMPERATURE = 0.35
 TIMESTAMP = format_timestamp()
 MAX_ROUNDS = 5
@@ -2254,6 +2254,7 @@ async def test_cases():
                 )
                 round_label = f"Round {rounds}" if rounds is not None else "Round ?"
                 status = f"✅ SUCCESS ({attempt_label}, {round_label}, Attempts {attempt_count})"
+                logger.info(f"{'🔹'*15} {case_type}/{case_name_single}: {status} {'🔹'*15}")
             else:
                 status = f"❌ FAILED after {attempt_count} attempt(s)"
                 logger.info(f"{'🔹'*15} {case_type}/{case_name_single}: {status} {'🔹'*15}")
@@ -2266,7 +2267,7 @@ async def test_cases():
                         f"        {attempt_status} Attempt {attempt_info.get('attempt_number', attempt_info.get('attempt')):02d}: {round_desc}"
                     )
 
-                return case_result
+            return case_result
 
         except Exception as e:
             logger.error(f"Error in {case_type}/{case_name_single}: {e}")

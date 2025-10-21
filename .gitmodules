@@ -43,3 +43,18 @@
 [submodule "third_party/quack"]
 	path = third_party/quack
 	url = https://github.com/Dao-AILab/quack.git
+[submodule "third_party/flash-attention"]
+	path = third_party/flash-attention
+	url = https://github.com/Dao-AILab/flash-attention.git
+[submodule "elib/cutlass_latest"]
+	path = elib/cutlass_latest
+	url = https://github.com/NVIDIA/cutlass.git
+[submodule "elib/cutlass_v392"]
+	path = elib/cutlass_v392
+	url = https://github.com/NVIDIA/cutlass.git
+[submodule "elib/cutlass_v330"]
+	path = elib/cutlass_v330
+	url = https://github.com/NVIDIA/cutlass.git
+[submodule "elib/cutlass_v2110"]
+	path = elib/cutlass_v2110
+	url = https://github.com/NVIDIA/cutlass.git
