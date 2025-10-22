@@ -112,7 +112,7 @@ cp ../cmake/config.cmake .
 
 apt install clang-18 lldb-18 lld-18 llvm-18-dev
 apt install clang-tidy-18 clang-format-18
-
+# conda install -c conda-forge clangxx=18 clang=18 lld=18 clang-tools=18 llvmdev=18
 ...
 
 
@@ -128,5 +128,5 @@ pip install -e /path-to-tvm/python
 python -c "import tvm; print(tvm.base._LIB)"
 python -c "import tvm; print('\n'.join(f'{k}: {v}' for k, v in tvm.support.libinfo().items()))"
 python -c "import tvm; print(tvm.cuda().exist)"
-pip3 install tornado psutil 'xgboost>=1.1.0' cloudpickle
+pip3 install ml_dtypes tornado psutil 'xgboost>=1.1.0' cloudpickle scipy einops ninja
 ```
