@@ -1,8 +1,11 @@
+
+GPU_NAME = "NVIDIA H800 80GB SXM5"
+
 complex_initial_prompt = """
 # CUDA to Triton Code Conversion Task
 
 Please convert the following CUDA code to high-performance Triton code.
-Current Triton version is 3.2.0. GPU is RTX 6000 Ada.
+Current Triton version is 3.4.0. GPU is NVIDIA H800 80GB SXM5.
 
 ## Core Requirements
 
@@ -74,8 +77,11 @@ The Triton kernel should:
 {cuda_code}
 ```
 
-## Output Requirements
-Please return only the complete Python code, with the equivalent Triton code in the final ```python...``` code block
+## Output Rules (strict)
+- Only output a single Markdown code block
+- The code block must start with three backticks + python and end with three backticks
+- Do not output any text or blank lines outside the code block
+- If you must include a literal sequence of three backticks inside the code, **do not type them consecutively**. Construct them at runtime instead (e.g., `tick3 = chr(96)*3` or `tick3 = '`' + '``'`) to avoid prematurely closing the Markdown code fence
 
 ## Important Notes
 - Ensure the generated code can run directly without additional modifications
@@ -87,7 +93,7 @@ simple_initial_prompt = """
 # CUDA to Triton Code Conversion Task
 
 Please convert the following CUDA code to high-performance Triton code.
-Current Triton version is 3.4.0. Target GPU: RTX 6000 Ada.
+Current Triton version is 3.4.0. GPU is NVIDIA H800 80GB SXM5.
 
 ## Key Requirements
 - Pay careful attention to data types and maintain consistency
@@ -101,8 +107,11 @@ Current Triton version is 3.4.0. Target GPU: RTX 6000 Ada.
 {cuda_code}
 ```
 
-## Output Requirements
-Return only the complete Python code implementation, with the equivalent Triton code in the final ```python...``` code block.
+## Output Rules (strict)
+- Only output a single Markdown code block
+- The code block must start with three backticks + python and end with three backticks
+- Do not output any text or blank lines outside the code block
+- If you must include a literal sequence of three backticks inside the code, **do not type them consecutively**. Construct them at runtime instead (e.g., `tick3 = chr(96)*3` or `tick3 = '`' + '``'`) to avoid prematurely closing the Markdown code fence
 """
 
 feedback_prompt = """The previously generated code has encountered issues. Please fix it based on the error information provided below:
@@ -122,8 +131,11 @@ feedback_prompt = """The previously generated code has encountered issues. Pleas
 2. Fix all identified issues in the code
 3. Ensure the code compiles and runs correctly
 4. Maintain functional equivalence with the original CUDA code
-5. Return only the complete fixed Python code, properly formatted within ```python...``` code blocks
-6. Place the final corrected Triton code in the last ```python...``` code block
+5. Output Rules (strict):
+   - Only output a single Markdown code block
+   - The code block must start with three backticks + python and end with three backticks
+   - Do not output any text or blank lines outside the code block
+   - If you must include a literal sequence of three backticks inside the code, **do not type them consecutively**. Construct them at runtime instead (e.g., `tick3 = chr(96)*3` or `tick3 = '`' + '``'`) to avoid prematurely closing the Markdown code fence
 
 Please provide the complete corrected implementation:"""
 
