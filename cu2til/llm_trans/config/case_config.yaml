@@ -1,0 +1,40 @@
+version: 1
+testsets:
+  xpiler:
+    mode: scan
+    # 相对项目根目录的路径，Settings 会基于 PROJECT_ROOT 解析
+    path: cu2til/cases/xpiler
+    include_ops: []   # 空=全部
+    exclude_ops: []   # 可选：排除特定算子
+  xpiler_extended:
+    mode: scan
+    path: cu2til/cases/xpiler
+    include_ops: []
+    exclude_ops: []
+  xpiler_mini:
+    mode: scan
+    path: cu2til/cases/xpiler
+    include_ops:
+      - add
+      - avgpool
+      - bmm
+      - conv1d
+      - conv2d
+      - conv2dnchw
+      - deformable
+      - depthwiseconv
+      - gelu
+      - gemm
+      - gemv
+      - layernorm
+      - maxpool
+      - mha
+      - minpool
+      - relu
+      - rmsnorm
+      - sigmoid
+      - sign
+      - softmax
+      - sumpool
+    exclude_ops: []
+

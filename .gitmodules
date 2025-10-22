@@ -58,3 +58,9 @@
 [submodule "elib/cutlass_v2110"]
 	path = elib/cutlass_v2110
 	url = https://github.com/NVIDIA/cutlass.git
+[submodule "cudev"]
+	path = cudev
+	url = git@github.com:tiledsl/cudev.git
+[submodule "third_party/Deformable-DETR"]
+	path = third_party/Deformable-DETR
+	url = https://github.com/fundamentalvision/Deformable-DETR

@@ -155,20 +155,23 @@ elif run_model == "glm":
     )
     get_api_param = get_api_params_method(CallingIdentifier.OPENAI_OFFICIAL)
 elif run_model == "gpt":
-    model_name = "openai/gpt-oss-20b"
+    model_name = "openai/gpt-oss-120b"
+    # model_name = "openai/gpt-oss-20b"
     # model_name = "openai/gpt-4o"
     # model_name = "openai/gpt-5-codex"
     # model_name = "openai/gpt-5-mini"
     client = OpenAI(
         # base_url='http://10.156.112.253:8003/v1',  # 5880x4
         # base_url="http://10.208.130.44:8000/v1", # sigma44:a800x8
-        base_url="http://0.0.0.0:8002/v1", # docker-h20 8001, 6,7
+        base_url="http://127.0.0.1:8001/v1",
+        # base_url="http://127.0.0.1:8002/v1",
         # base_url="http://127.0.0.1:8010/v1", # docker-h20 8010, all
         api_key="EMPTY"
     )
     async_client = AsyncOpenAI(
         # base_url="http://127.0.0.1:8003/v1",
-        base_url="http://0.0.0.0:8002/v1",
+        base_url="http://127.0.0.1:8001/v1",
+        # base_url="http://127.0.0.1:8002/v1",
         # base_url="http://127.0.0.1:8010/v1",
         api_key="EMPTY"
     )
