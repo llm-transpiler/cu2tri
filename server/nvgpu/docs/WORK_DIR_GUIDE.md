@@ -343,7 +343,7 @@ A: 已经正确使用了：
 # cu2til/trans/dev_/llm_trans.py line 636-646
 task_id = client.submit_task(
     script_path=str((test_work_dir / f"check_triton{CHECK_SUFFIX}.py").absolute()),
-    task_type=args.nvgpu_task_type,
+    task_type="functional",
     work_dir=str(test_work_dir.absolute()),  # ← 已经正确设置
     args=task_args,
     gpu_id=args.nvgpu_gpu
@@ -362,4 +362,3 @@ task_id = client.submit_task(
 - [Client API](../client.py)
 - [Task Runner](../task_runner.py)
 - [llm_trans Integration](../../../cu2til/trans/dev_/LLM_TRANS_NVGPU_INTEGRATION.md)
-

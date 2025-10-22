@@ -216,7 +216,7 @@ def main():
     parser.add_argument("--port", type=int, default=config.port, help="Server port")
     parser.add_argument("--log-file", default=None, help="Log file path (default: auto-generated with timestamp)")
     parser.add_argument("--log-level", default=config.log_level, help="Log level")
-    parser.add_argument("--gpu-config", default=str(NVGPU_ROOT / "configs" / "gpu_resources" / "P250_A6000.yml"),
+    parser.add_argument("--gpu-config", default=str(NVGPU_ROOT / "configs" / "gpu_resources" / "g0015_H800.yml"),
                        help="GPU resource configuration file (YAML)")
     parser.add_argument("--gpus", type=int, nargs="+", 
                        help="GPU IDs to register at startup (overrides config file)")
