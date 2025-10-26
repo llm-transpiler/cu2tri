@@ -18,10 +18,7 @@ def _project_root() -> Path:
 
 def _abs_folders(testset: str, mapping: Dict[str, Iterable[str]]) -> Dict[str, list[str]]:
     root = _project_root()
-    if testset.startswith("xpiler"):
-        cases_root = root / Path("cu2til/cases/xpiler")
-    else:
-        cases_root = root / Path(f"cu2til/cases/{testset}")
+    cases_root = root / Path(f"cu2til/cases/{testset}")
 
     result: Dict[str, list[str]] = {}
     for op, names in mapping.items():

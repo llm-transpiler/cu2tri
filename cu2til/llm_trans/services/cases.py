@@ -104,6 +104,7 @@ def select_available_cases(
     *,
     first_only: bool,
     case_types: Iterable[str] | None,
+    skip_case_types: Iterable[str] | None = None,
     logger=None,
 ) -> Dict[str, Iterable[str]]:
     if first_only:
@@ -111,19 +112,33 @@ def select_available_cases(
     else:
         base = {k: list(v) for k, v in all_cases.items()}
 
-    if not case_types:
-        return base
-
-    filtered: Dict[str, Iterable[str]] = {}
-    for case_type in case_types:
-        if case_type in base:
-            filtered[case_type] = base[case_type]
-        else:
-            message = f"Case type '{case_type}' not found in available cases"
-            if logger is not None:
-                logger.warning(message)
+    # Start from include filter if provided, otherwise start from base
+    if case_types:
+        filtered: Dict[str, Iterable[str]] = {}
+        for case_type in case_types:
+            if case_type in base:
+                filtered[case_type] = base[case_type]
             else:
-                print(message)
+                message = f"Case type '{case_type}' not found in available cases"
+                if logger is not None:
+                    logger.warning(message)
+                else:
+                    print(message)
+    else:
+        filtered = dict(base)
+
+    # Apply skip filter if provided
+    if skip_case_types:
+        for skip_type in skip_case_types:
+            if skip_type in filtered:
+                filtered.pop(skip_type, None)
+            else:
+                message = f"Skip case type '{skip_type}' not present in current selection"
+                if logger is not None:
+                    logger.warning(message)
+                else:
+                    print(message)
+
     return filtered
 
 
