@@ -64,3 +64,6 @@
 [submodule "third_party/Deformable-DETR"]
 	path = third_party/Deformable-DETR
 	url = https://github.com/fundamentalvision/Deformable-DETR
+[submodule "third_party/unsloth"]
+	path = third_party/unsloth
+	url = https://github.com/unslothai/unsloth

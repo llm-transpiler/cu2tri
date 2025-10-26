@@ -41,6 +41,11 @@ def monotonic_elapsed_ms(start_ns: int) -> float:
     return ns_to_ms(monotonic_ns() - start_ns)
 
 
+def perf_counter_elapsed_ms(start_ns: int) -> float:
+    """Return elapsed milliseconds since the provided perf_counter timestamp."""
+    return ns_to_ms(perf_counter_ns() - start_ns)
+
+
 @dataclass(frozen=True)
 class TimerSample:
     """Timing result for a single measurement."""
@@ -218,6 +223,7 @@ __all__ = [
     "ns_to_ms",
     "perf_counter_timestamp_ns",
     "perf_counter_timestamp_ms",
+    "perf_counter_elapsed_ms",
     "monotonic_timestamp_ns",
     "monotonic_timestamp_ms",
     "monotonic_elapsed_ms",

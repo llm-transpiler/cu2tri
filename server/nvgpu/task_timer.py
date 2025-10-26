@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 from profiler.timer import HostTimer, TimerSample, create_host_timer
+from utils.context import ManagedContext
 
 
 class TaskTimer:
@@ -17,7 +18,7 @@ class TaskTimer:
     def __init__(self, task_id: str | None = None) -> None:
         self._samples: list[TimerSample] = []
         self._durations_ms: dict[str, float] = {}
-        self._active_contexts: dict[str, _ManagedContext] = {}
+        self._active_contexts: dict[str, ManagedContext] = {}
         self._timer: HostTimer = create_host_timer(
             reporter=self._capture_sample,
             enabled=True,
@@ -35,7 +36,7 @@ class TaskTimer:
         """Start timing segment if not already active."""
         if label in self._active_contexts:
             return
-        ctx = _ManagedContext(self._timer.time(label))
+        ctx = ManagedContext(self._timer.time(label))
         ctx.enter()
         self._active_contexts[label] = ctx
 
@@ -62,20 +63,3 @@ class TaskTimer:
         self._samples.clear()
         self._durations_ms.clear()
 
-
-class _ManagedContext:
-    """Helper to manually manage timer context enter/exit."""
-
-    def __init__(self, ctx) -> None:  # ctx typing: _TimerContext
-        self._ctx = ctx
-        self._entered = False
-
-    def enter(self) -> None:
-        if not self._entered:
-            self._ctx.__enter__()
-            self._entered = True
-
-    def exit(self) -> None:
-        if self._entered:
-            self._ctx.__exit__(None, None, None)
-            self._entered = False
