@@ -211,6 +211,17 @@ curl -X POST http://localhost:8080/tasks \
     "task_label": "xpiler_cuda/add_3_3_256/cuda_vs_triton",
     "args": ["--verbose"]
   }'
+
+curl -X POST http://localhost:8080/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "script_path": "/data/apps/project/cu2tri/third_party/triton/python/tutorials/05-layer-norm.py",
+    "task_type": "performance",
+    "task_label": "triton_tutorials@05-layer-norm",
+    "task_mode": "exclusive",
+    "work_dir": "/data/apps/project/cu2tri/third_party/triton/python/tutorials/",
+    "args": []
+  }'
 ```
 
 ---
@@ -305,7 +316,8 @@ curl http://localhost:8080/tasks/{task_id}
 **端点:** `GET /tasks`
 
 **查询参数:**
-- `status`: 按状态过滤 (`pending`, `running`, `completed`, `failed`, `cancelled`)
+- `status`: 按状态过滤 (`pending`, `running`, `completed`, `failed`, `
+led`)
 - `task_type`: 按类型过滤 (`functional`, `performance`, `both`)
 - `task_label`: 按标签过滤
 - `gpu_id`: 按 GPU ID 过滤
