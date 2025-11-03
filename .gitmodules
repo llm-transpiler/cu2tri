@@ -67,3 +67,9 @@
 [submodule "third_party/unsloth"]
 	path = third_party/unsloth
 	url = https://github.com/unslothai/unsloth
+[submodule "third_party/tilelang"]
+	path = third_party/tilelang
+	url = https://github.com/tile-ai/tilelang.git
+[submodule "dlib/flash-attention"]
+	path = dlib/flash-attention
+	url = https://github.com/Dao-AILab/flash-attention.git
