@@ -56,3 +56,8 @@ package.json
 *.hatchet
 *result.html
 tests
+/data/apps/project/cu2tri/cu2til/llm_trans/runs
+logs
+**/logs/*
+**/log/*
+cc

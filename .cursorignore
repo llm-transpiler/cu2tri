@@ -23,3 +23,7 @@ node_modules/*
 models/
 # **/checkpoints/*
 out
+logs
+logs/*
+**/runs/*
+**/runs

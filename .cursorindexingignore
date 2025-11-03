@@ -21,3 +21,5 @@ build/*
 models/Qwen3-0.6B/*
 # **/checkpoints/*
 out
+logs
+logs/*
