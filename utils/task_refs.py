@@ -14,7 +14,7 @@ def format_task_ref(
     task: _HasTaskFields | str,
     *,
     include_label: bool = True,
-    short_id: bool = False,
+    # short_id: bool = False,
     wrap: bool = True,
 ) -> str:
     """Return a human-readable identifier for a task.
@@ -32,7 +32,8 @@ def format_task_ref(
         task_id = getattr(task, "task_id", "")
         task_label = getattr(task, "task_label", None)
 
-    task_id_display = task_id[:8] if short_id else task_id
+    # task_id_display = task_id[:8] if short_id else task_id
+    task_id_display = task_id
     if wrap:
         task_id_display = f"[{task_id_display}]"
 
