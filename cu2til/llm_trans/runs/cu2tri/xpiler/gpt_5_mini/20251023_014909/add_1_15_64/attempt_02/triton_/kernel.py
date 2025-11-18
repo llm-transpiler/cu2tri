@@ -3,23 +3,18 @@ import triton.language as tl
 import torch
 
 
-# Triton kernel implementation. Must be named exactly `_triton_kernel_impl`.
-# We use a blocked/chunked loop so we can support BLOCK=960 (as in the original CUDA)
-# while mapping to a reasonable vector width (CHUNK = num_warps * 32).
-@triton.jit(num_warps=8)
+# Triton kernel implementation must be named exactly `_triton_kernel_impl`.
+@triton.jit
 def _triton_kernel_impl(A_ptr, B_ptr, C_ptr, size, BLOCK: tl.constexpr, CHUNK: tl.constexpr):
     pid = tl.program_id(0)
     block_start = pid * BLOCK
     rng = tl.arange(0, CHUNK)
 
-    # iterate over the BLOCK in chunks of CHUNK lanes
-    # ensure we don't touch elements outside the block (i + rng < BLOCK)
-    # and we don't touch elements >= size
+    # Process the block in CHUNK-sized lanes (CHUNK is a compile-time constant)
     for i in range(0, BLOCK, CHUNK):
         offs = block_start + i + rng
-        in_block = (i + rng) < BLOCK
-        in_range = offs < size
-        mask = in_block & in_range
+        # mask out lanes that are outside the array bounds or outside the BLOCK
+        mask = (offs < size) & ((i + rng) < BLOCK)
         a = tl.load(A_ptr + offs, mask=mask, other=0.0)
         b = tl.load(B_ptr + offs, mask=mask, other=0.0)
         c = a + b
@@ -30,13 +25,12 @@ def _triton_kernel_impl(A_ptr, B_ptr, C_ptr, size, BLOCK: tl.constexpr, CHUNK: t
 # triton_kernel(float *A, float *B, float *C, int size)
 def triton_kernel(A, B, C, size):
     """
-    A, B, C: torch.Tensor on CUDA, dtype=torch.float32, 1-D (or will be flattened)
+    A, B, C: torch.Tensor on CUDA, dtype=torch.float32.
     size: number of elements to process (int)
     """
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is not available. Triton kernels require a CUDA device.")
 
-    # Basic type/device/shape checks and preparations
     if not isinstance(A, torch.Tensor) or not isinstance(B, torch.Tensor) or not isinstance(C, torch.Tensor):
         raise TypeError("A, B, and C must be torch.Tensor")
 
@@ -46,36 +40,41 @@ def triton_kernel(A, B, C, size):
     if not A.is_cuda or not B.is_cuda or not C.is_cuda:
         raise ValueError("A, B, and C must be on CUDA device")
 
-    # Flatten to 1-D contiguous tensors (original CUDA kernel treats inputs as flat pointers)
-    if A.dim() != 1 or not A.is_contiguous():
-        A = A.contiguous().view(-1)
-    else:
-        A = A.view(-1)
-    if B.dim() != 1 or not B.is_contiguous():
-        B = B.contiguous().view(-1)
-    else:
-        B = B.view(-1)
-    if C.dim() != 1 or not C.is_contiguous():
-        C = C.contiguous().view(-1)
-    else:
-        C = C.view(-1)
+    # Helper: ensure a 1-D contiguous buffer for Triton. If the input is already 1-D & contiguous,
+    # return it as-is (no copy). Otherwise, create a cloned contiguous 1-D tensor (independent memory).
+    def _ensure_1d_contig_clone(x):
+        if x.dim() == 1 and x.is_contiguous():
+            return x, False
+        # clone() ensures a new buffer (no aliasing) and contiguous memory; view(-1) flattens to 1-D
+        return x.clone().contiguous().view(-1), True
+
+    orig_A, orig_B, orig_C = A, B, C
+    A_, a_copied = _ensure_1d_contig_clone(orig_A)
+    B_, b_copied = _ensure_1d_contig_clone(orig_B)
+    C_, c_copied = _ensure_1d_contig_clone(orig_C)
 
     n = int(size)
 
-    if A.numel() < n or B.numel() < n or C.numel() < n:
+    if A_.numel() < n or B_.numel() < n or C_.numel() < n:
         raise ValueError("Buffers A, B, and C must have at least `size` elements")
 
     # Match the CUDA launch configuration: blockSize = 960
     BLOCK = 960
-    # Choose a CHUNK (vector width) that equals num_warps * 32 used in the @triton.jit decorator.
-    # Here num_warps=8 => CHUNK = 8 * 32 = 256
+    # CHUNK is the number of lanes (threads per program); choose a reasonable compile-time value.
+    # Using 256 (8 warps * 32) is fine for many GPUs; it's a compile-time constant passed to the kernel.
     CHUNK = 256
 
     num_blocks = (n + BLOCK - 1) // BLOCK
     if num_blocks == 0:
-        return  # nothing to do
+        return
 
     grid = (num_blocks,)
 
-    # Launch Triton kernel. The BLOCK and CHUNK are passed as compile-time constants.
-    _triton_kernel_impl[grid](A, B, C, n, BLOCK=BLOCK, CHUNK=CHUNK)
+    # Launch Triton kernel. Pass num_warps as a launch-time kwarg.
+    _triton_kernel_impl[grid](A_, B_, C_, n, BLOCK=BLOCK, CHUNK=CHUNK, num_warps=8)
+
+    # If we created a cloned contiguous buffer for C, copy results back into the original C.
+    if c_copied:
+        # reshape the contiguous 1-D result back to the original shape of C and copy.
+        # Using clone() earlier guarantees no aliasing between src (C_) and dst (orig_C).
+        orig_C.copy_(C_.view(orig_C.shape))

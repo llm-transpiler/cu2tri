@@ -14,7 +14,7 @@ def _triton_kernel_impl(A, B, C, N, BLOCK_SIZE: tl.constexpr):
 
 def triton_kernel(A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, size: int):
     BLOCK_SIZE = 512  # must be a power of 2 for tl.arange
-    grid = (size + BLOCK_SIZE - 1) // BLOCK_SIZE
+    grid = ((size + BLOCK_SIZE - 1) // BLOCK_SIZE,)
     _triton_kernel_impl[grid](A, B, C, size, BLOCK_SIZE=BLOCK_SIZE)
 
 if __name__ == "__main__":

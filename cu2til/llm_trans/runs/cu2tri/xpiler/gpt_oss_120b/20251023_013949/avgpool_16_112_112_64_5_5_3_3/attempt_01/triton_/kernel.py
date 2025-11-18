@@ -2,10 +2,15 @@ import torch
 import triton
 import triton.language as tl
 
+# -------------------------------------------------------------------------
+# Triton kernel that reproduces the exact indexing and computation of the
+# original CUDA average‑pooling kernel. It computes a K×K average pool on an
+# NHWC tensor.
+# -------------------------------------------------------------------------
 @triton.jit
 def _triton_kernel_impl(
-    A_ptr,               # *float32
-    pool_avg_ptr,        # *float32
+    A_ptr,               # *float32  (input tensor, NHWC)
+    pool_avg_ptr,        # *float32  (output tensor, NHWC)
     batch_size,          # int32
     channels,            # int32
     input_H,             # int32
@@ -14,47 +19,85 @@ def _triton_kernel_impl(
     BLOCK_SIZE: tl.constexpr,
     KSIZE: tl.constexpr,
 ):
-    pid = tl.program_id(0)
-    # linear thread ids within the grid
-    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE, dtype=tl.int64)
+    pid = tl.program_id(0)                     # block index (int64)
 
-    total_outputs = batch_size * output_H * output_H * channels
-    mask = offsets < total_outputs
+    # -------------------------------------------------------------
+    # Thread identifiers inside the block
+    # -------------------------------------------------------------
+    tid = tl.arange(0, BLOCK_SIZE)             # [0, BLOCK_SIZE)  (int32)
+    tid_i64 = tl.cast(tid, tl.int64)           # cast to int64 for arithmetic
 
-    # decode NHWC coordinates from linear index
-    c = offsets % channels
-    tmp = offsets // channels
-    w_out = tmp % output_H
-    tmp = tmp // output_H
-    h_out = tmp % output_H
-    n = tmp // output_H
+    # -------------------------------------------------------------
+    # Linear output offset and mask for out‑of‑range threads
+    # -------------------------------------------------------------
+    out_offset = pid * BLOCK_SIZE + tid_i64
+    total_outputs = (
+        tl.cast(batch_size, tl.int64)
+        * tl.cast(output_H, tl.int64)
+        * tl.cast(output_H, tl.int64)
+        * tl.cast(channels, tl.int64)
+    )
+    mask = out_offset < total_outputs
 
-    # cast to int64 for arithmetic
-    n = n.to(tl.int64)
-    h_out = h_out.to(tl.int64)
-    w_out = w_out.to(tl.int64)
-    c = c.to(tl.int64)
+    # -------------------------------------------------------------
+    # Decode the original CUDA indexing scheme
+    # -------------------------------------------------------------
+    # Number of output tiles per batch (output_H is assumed divisible by 4)
+    tile_per_dim = tl.cast(output_H, tl.int64) // 4          # = output_H / 4
+    tiles_per_batch = tile_per_dim * tile_per_dim           # = (output_H/4)^2
 
-    # accumulator for the sum of the kernel window
-    sum_val = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
+    batch = pid // tiles_per_batch                          # batch index
+    tile_mod = pid % tiles_per_batch                         # tile index within batch
 
-    # iterate over the kernel window
+    # thread‑level bits
+    t_hi = tid_i64 >> 8            # bits 8‑9 of threadIdx.x (0..3)
+    t_mid = tid_i64 >> 6           # bits 6‑9 of threadIdx.x (0..15)
+    c = tid_i64 & (tl.cast(channels, tl.int64) - 1)        # channel index (lower 6 bits)
+
+    # output spatial coordinates
+    h_out = ((tile_mod * 4 + t_hi) // tile_per_dim)        # row index
+    w_out = ((pid * 16 + t_mid) % tl.cast(output_H, tl.int64))  # column index
+
+    # -------------------------------------------------------------
+    # Compute base offsets for input indexing (NHWC layout)
+    # -------------------------------------------------------------
+    input_H_i64 = tl.cast(input_H, tl.int64)
+    channels_i64 = tl.cast(channels, tl.int64)
+    stride_i64 = tl.cast(stride, tl.int64)
+
+    # offset to the beginning of the batch
+    batch_offset = batch * (input_H_i64 * input_H_i64 * channels_i64)
+
+    # offset for the top‑left corner of the pooling window
+    h_offset = h_out * (input_H_i64 * stride_i64 * channels_i64)
+    w_offset = w_out * (stride_i64 * channels_i64)
+
+    base_offset = batch_offset + h_offset + w_offset + c
+
+    # -------------------------------------------------------------
+    # Accumulate sum over the K×K window
+    # -------------------------------------------------------------
+    sum_val = tl.cast(0.0, tl.float32)
+
     for rv0 in tl.static_range(KSIZE):
         for rv1 in tl.static_range(KSIZE):
-            in_h = h_out * stride + rv0
-            in_w = w_out * stride + rv1
-            # linear index into the input tensor (NHWC layout)
-            input_offset = ((n * input_H + in_h) * input_H + in_w) * channels + c
-            # load element (masked for out‑of‑range threads)
-            val = tl.load(A_ptr + input_offset, mask=mask, other=0.0)
+            # offset of the current element inside the window
+            offset = (
+                base_offset
+                + rv0 * (input_H_i64 * channels_i64)
+                + rv1 * channels_i64
+            )
+            # masked load (out‑of‑range threads read 0.0)
+            val = tl.load(A_ptr + offset, mask=mask, other=0.0)
             sum_val += val
 
-    # compute average
-    scale = 1.0 / (KSIZE * KSIZE)
+    # -------------------------------------------------------------
+    # Compute average and write back
+    # -------------------------------------------------------------
+    scale = 1.0 / (KSIZE * KSIZE)          # 1/(K*K)
     avg = sum_val * scale
 
-    # write result
-    tl.store(pool_avg_ptr + offsets, avg, mask=mask)
+    tl.store(pool_avg_ptr + out_offset, avg, mask=mask)
 
 
 def triton_kernel(
@@ -67,27 +110,43 @@ def triton_kernel(
     stride: int,
 ):
     """
-    Triton implementation of a 2‑D average‑pooling kernel.
-    The tensors are assumed to be in NHWC layout (batch, height, width, channels)
-    and of type torch.float32 on the CUDA device.
+    Triton entry point mirroring the original CUDA kernel signature.
+
+    Parameters
+    ----------
+    input_tensor   : torch.float32 CUDA tensor, NHWC layout.
+    output_tensor  : torch.float32 CUDA tensor, NHWC layout (pre‑allocated).
+    batch_size     : number of images in the batch.
+    channels       : number of channels (C).
+    input_H        : spatial height/width of the input (square).
+    kernel_size    : size of the pooling kernel (K).
+    stride         : stride of the pooling operation.
     """
-    # sanity checks
+    # -----------------------------------------------------------------
+    # Sanity checks
+    # -----------------------------------------------------------------
     assert input_tensor.is_cuda and output_tensor.is_cuda, "Tensors must be CUDA tensors"
     assert input_tensor.dtype == torch.float32 and output_tensor.dtype == torch.float32, "Only float32 supported"
-    # ensure contiguous memory
+
+    # Ensure contiguous memory layout
     input_tensor = input_tensor.contiguous()
     output_tensor = output_tensor.contiguous()
 
-    # compute output spatial dimension
+    # -----------------------------------------------------------------
+    # Compute output spatial dimension and total number of output elements
+    # -----------------------------------------------------------------
     output_H = (input_H - kernel_size) // stride + 1
-    # total number of output elements
     output_size = batch_size * output_H * output_H * channels
 
-    # launch configuration
-    BLOCK_SIZE = 1024  # matches __launch_bounds__(1024) in the original CUDA kernel
+    # -----------------------------------------------------------------
+    # Launch configuration (matches __launch_bounds__(1024) in the CUDA kernel)
+    # -----------------------------------------------------------------
+    BLOCK_SIZE = 1024
     grid = ((output_size + BLOCK_SIZE - 1) // BLOCK_SIZE,)
 
-    # launch the Triton kernel
+    # -----------------------------------------------------------------
+    # Launch the Triton kernel
+    # -----------------------------------------------------------------
     _triton_kernel_impl[grid](
         input_tensor,
         output_tensor,
@@ -98,5 +157,5 @@ def triton_kernel(
         stride,
         BLOCK_SIZE=BLOCK_SIZE,
         KSIZE=kernel_size,
-        num_warps=32,  # 1024 threads per block = 32 warps
+        num_warps=32,   # 1024 threads per block = 32 warps
     )

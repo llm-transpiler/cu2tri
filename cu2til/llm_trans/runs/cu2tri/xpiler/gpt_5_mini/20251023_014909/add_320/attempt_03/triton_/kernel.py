@@ -4,21 +4,28 @@ import triton.language as tl
 
 # Triton kernel implementation (must be named exactly as requested)
 @triton.jit
-def _triton_kernel_impl(A_ptr, B_ptr, T_add_ptr, size, BLOCK: tl.constexpr):
+def _triton_kernel_impl(A_ptr, B_ptr, T_add_ptr, size, TILE: tl.constexpr, BLOCK: tl.constexpr):
     """
     Triton kernel that performs elementwise A + B -> T_add.
-    BLOCK is a compile-time constant (threads per block). We follow the
-    canonical, correct mapping that matches the intended CUDA behavior:
-      global_idx = program_id(0) * BLOCK + range(0, BLOCK)
-    and we guard loads/stores with a mask (offs < size).
+    - TILE: number of valid lanes per program (matches CUDA block size = 320)
+    - BLOCK: number of lanes for tl.arange; must be a power of two (e.g., 512)
+    We use BLOCK (power-of-two) for tl.arange and mask out lanes >= TILE so behavior
+    matches TILE lanes-per-program.
     """
     pid = tl.program_id(0)
-    offs = pid * BLOCK + tl.arange(0, BLOCK)
-    mask = offs < size
+    lane = tl.arange(0, BLOCK)                       # BLOCK must be power-of-two
+    offs = pid * TILE + lane
+    mask = (lane < TILE) & (offs < size)
     a = tl.load(A_ptr + offs, mask=mask, other=0.0)
     b = tl.load(B_ptr + offs, mask=mask, other=0.0)
     c = a + b
     tl.store(T_add_ptr + offs, c, mask=mask)
+
+
+def _next_power_of_two(x: int) -> int:
+    if x <= 0:
+        return 1
+    return 1 << ((x - 1).bit_length())
 
 
 # Wrapper entry point (must be named exactly as requested and keep same signature)
@@ -30,16 +37,12 @@ def triton_kernel(A, B, C, size):
     Parameters:
       A, B, C : torch.cuda.FloatTensor (1-D) - device tensors
       size    : int - number of elements to process
-
-    Notes:
-      - This wrapper launches a Triton kernel with BLOCK = 320 threads per block,
-        and number of blocks = ceil(size / BLOCK), matching the CUDA wrapper's grid config.
-      - The kernel writes C[i] = A[i] + B[i] for i in [0, size).
     """
-    # Parameters / configuration
-    BLOCK = 320  # must match the original CUDA block size
+    # Configuration matching original CUDA wrapper
+    TILE = 320  # original CUDA block size (threads per block)
+    BLOCK = _next_power_of_two(TILE)  # must be power of two for tl.arange (e.g., 512)
 
-    # Basic type and device checks to ensure correct usage
+    # Basic checks
     if not (torch.is_tensor(A) and torch.is_tensor(B) and torch.is_tensor(C)):
         raise TypeError("A, B, C must be torch tensors on CUDA with dtype=torch.float32")
     if A.dtype != torch.float32 or B.dtype != torch.float32 or C.dtype != torch.float32:
@@ -51,27 +54,30 @@ def triton_kernel(A, B, C, size):
     if A.numel() < size or B.numel() < size or C.numel() < size:
         raise ValueError("A, B, and C must have at least 'size' elements")
 
-    # Ensure tensors are contiguous for best performance with Triton
-    if not A.is_contiguous():
-        A = A.contiguous()
-    if not B.is_contiguous():
-        B = B.contiguous()
-    if not C.is_contiguous():
-        C = C.contiguous()
+    # Early exit
+    if size == 0:
+        return
 
-    # Grid configuration: same as CUDA wrapper
-    num_blocks = (size + BLOCK - 1) // BLOCK
-    # Launch Triton kernel. BLOCK is passed as a compile-time constant.
-    _triton_kernel_impl[(num_blocks,)](A, B, C, size, BLOCK=BLOCK)
+    # Ensure 1-D contiguous buffers for pointer semantics
+    if A.dim() != 1 or not A.is_contiguous():
+        A = A.contiguous().view(-1)
+    if B.dim() != 1 or not B.is_contiguous():
+        B = B.contiguous().view(-1)
+    if C.dim() != 1 or not C.is_contiguous():
+        C = C.contiguous().view(-1)
 
-    # Synchronize to match CUDA's default asynchronous behavior if caller expects results immediately.
-    # (Optional: remove to allow asynchronous operation.)
+    # Grid configuration: same logical grid as CUDA wrapper (ceil(size / TILE))
+    num_blocks = (int(size) + TILE - 1) // TILE
+
+    # Launch Triton kernel. TILE and BLOCK are compile-time constants.
+    _triton_kernel_impl[(num_blocks,)](A, B, C, int(size), TILE=TILE, BLOCK=BLOCK)
+
+    # Synchronize to match CUDA's default behavior if immediate results are expected.
     torch.cuda.synchronize()
 
 
 # Optional simple test when run as a script
 if __name__ == "__main__":
-    # Small self-test to validate correctness
     size = 1024
     a = torch.randn(size, device="cuda", dtype=torch.float32)
     b = torch.randn(size, device="cuda", dtype=torch.float32)
@@ -79,12 +85,10 @@ if __name__ == "__main__":
 
     triton_kernel(a, b, c, size)
 
-    # Validate result
     expected = a + b
     torch.cuda.synchronize()
     if torch.allclose(c, expected):
         print("Test passed: Triton kernel produced correct results.")
     else:
-        # Print max difference for debugging
         diff = (c - expected).abs().max().item()
         print(f"Test failed: max abs difference = {diff}")

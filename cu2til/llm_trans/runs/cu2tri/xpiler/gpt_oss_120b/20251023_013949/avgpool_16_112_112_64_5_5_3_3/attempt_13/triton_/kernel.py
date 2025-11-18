@@ -3,74 +3,75 @@ import triton
 import triton.language as tl
 
 # ----------------------------------------------------------------------
-# Triton kernel: average pooling over a K×K window (default K=5)
+# Triton kernel: average pooling over a K×K window (valid padding, stride)
+# Layout: NCHW (batch, channels, height, width)
 # ----------------------------------------------------------------------
 @triton.jit
 def _triton_kernel_impl(
-    A_ptr,               # *float32, input feature map (NCHW)
-    pool_avg_ptr,        # *float32, output feature map (NCHW)
+    A_ptr,               # *float32, input tensor (NCHW, contiguous)
+    pool_avg_ptr,        # *float32, output tensor (NCHW, contiguous)
     batch_size,          # int32
     channels,            # int32
-    input_H,             # int32
+    input_H,             # int32 (input height, square)
     stride,              # int32
-    output_H,            # int32
+    output_H,            # int32 (output height, square)
+    total_output,        # int32 (batch * channels * output_H * output_H)
     BLOCK_SIZE: tl.constexpr,   # compile‑time block size (threads per program)
     KERNEL_SIZE: tl.constexpr,  # compile‑time kernel size (e.g. 5)
 ):
     """
-    Compute average pooling for a single output element per thread.
-    The kernel assumes NCHW layout and a stride that may be >1.
+    Each thread computes one output element:
+        avg = sum_{i,j} A[n, c, h_out*stride+i, w_out*stride+j] / (K*K)
     """
-    # ------------------------------------------------------------------
-    # 1) Compute a flat output index for each thread
-    # ------------------------------------------------------------------
     pid = tl.program_id(0)                     # block index
-    offsets = tl.arange(0, BLOCK_SIZE)         # [0, 1, ..., BLOCK_SIZE-1]
-    out_idx = pid * BLOCK_SIZE + offsets       # global linear index
-
-    # Total number of output elements (N * C * H_out * W_out)
-    total_output = batch_size * channels * output_H * output_H
-    mask = out_idx < total_output               # mask for out‑of‑range threads
+    offsets = tl.arange(0, BLOCK_SIZE)         # [0, 1, ..., BLOCK_SIZE‑1]
+    out_idx = pid * BLOCK_SIZE + offsets       # linear output index
 
     # ------------------------------------------------------------------
-    # 2) De‑compose the flat index into (n, c, h_out, w_out)
-    #    out_idx = ((n * C + c) * H_out + h_out) * H_out + w_out
+    # Mask for threads that are out of the valid output range
     # ------------------------------------------------------------------
-    spatial = channels * output_H * output_H
-    n = out_idx // spatial
-    rem = out_idx % spatial
-    c = rem // (output_H * output_H)
-    rem2 = rem % (output_H * output_H)
+    mask = out_idx < total_output
+
+    # ------------------------------------------------------------------
+    # Decompose linear index into (n, c, h_out, w_out)
+    # ------------------------------------------------------------------
+    total_spatial = output_H * output_H
+    nc_spatial = channels * total_spatial
+
+    n = out_idx // nc_spatial
+    rem = out_idx % nc_spatial
+    c = rem // total_spatial
+    rem2 = rem % total_spatial
     h_out = rem2 // output_H
     w_out = rem2 % output_H
 
     # ------------------------------------------------------------------
-    # 3) Compute the base offset of the top‑left element of the K×K window
+    # Top‑left corner of the kernel window in the input
     # ------------------------------------------------------------------
-    # batch‑channel index
-    nc = n * channels + c
-    # top‑left corner in the input tensor (row‑major NCHW)
-    # input index = ((nc * input_H + (h_out * stride)) * input_H) + (w_out * stride)
-    h_base = h_out * stride
-    w_base = w_out * stride
-    input_base = ((nc * input_H + h_base) * input_H) + w_base
+    h_start = h_out * stride
+    w_start = w_out * stride
 
     # ------------------------------------------------------------------
-    # 4) Accumulate the sum over the K×K window
+    # Base offset of the top‑left element (NCHW layout)
+    #   offset = ((n * C + c) * H + h_start) * W + w_start
     # ------------------------------------------------------------------
-    acc = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
+    base = ((n * channels + c) * input_H + h_start) * input_H + w_start
+
+    # ------------------------------------------------------------------
+    # Accumulate sum over the K×K window
+    # ------------------------------------------------------------------
+    sum_val = tl.zeros([1], dtype=tl.float32)   # scalar stored as 1‑element tensor
     for i in range(KERNEL_SIZE):
         row_offset = i * input_H
         for j in range(KERNEL_SIZE):
-            col_offset = j
-            a_idx = input_base + row_offset + col_offset
-            a_val = tl.load(A_ptr + a_idx, mask=mask, other=0.0)
-            acc += a_val
+            idx = base + row_offset + j
+            a = tl.load(A_ptr + idx, mask=mask, other=0.0)
+            sum_val = sum_val + a                # broadcast addition, result shape [1]
 
     # ------------------------------------------------------------------
-    # 5) Compute the average and write back
+    # Compute average and write back
     # ------------------------------------------------------------------
-    avg = acc * (1.0 / (KERNEL_SIZE * KERNEL_SIZE))
+    avg = sum_val[0] * (1.0 / (KERNEL_SIZE * KERNEL_SIZE))
     tl.store(pool_avg_ptr + out_idx, avg, mask=mask)
 
 
@@ -101,7 +102,15 @@ def triton_kernel(
         raise RuntimeError("input and output must be CUDA tensors")
     if input.ndim != 4 or output.ndim != 4:
         raise ValueError("input and output must be 4‑D tensors (NCHW)")
-    if input.shape != (batch_size, channels, input_H, input_H):
+
+    # Ensure contiguous layout (required for pointer arithmetic)
+    if not input.is_contiguous():
+        input = input.contiguous()
+    if not output.is_contiguous():
+        output = output.contiguous()
+
+    # Verify shapes
+    if input.shape != (_size, channels, input_H, input_H):
         raise ValueError(
             f"input shape {input.shape} does not match "
             f"(batch_size={batch_size}, channels={channels}, input_H={input_H})"
@@ -112,7 +121,7 @@ def triton_kernel(
         raise ValueError("input_H must be >= kernel_size")
 
     # ------------------------------------------------------------------
-    # Compute output spatial dimension and total size
+    # Compute output spatial dimension (valid pooling, no padding)
     # ------------------------------------------------------------------
     output_H = (input_H - kernel_size) // stride + 1
     if output_H <= 0:
@@ -131,8 +140,7 @@ def triton_kernel(
     BLOCK_SIZE = 1024                     # matches the original CUDA launch bounds
     grid = ((total_output + BLOCK_SIZE - 1) // BLOCK_SIZE,)
 
-    # ------------------------------------------------------------------
-    # Launch the Triton kernel
+    # ---------------------------------------------------------------- # Launch the Triton kernel
     # ------------------------------------------------------------------
     _triton_kernel_impl[grid](
         input,
@@ -142,9 +150,10 @@ def triton_kernel(
         input_H,
         stride,
         output_H,
+        total_output,
         BLOCK_SIZE=BLOCK_SIZE,
         KERNEL_SIZE=kernel_size,
         num_warps=32,                     # 32 warps == 1024 threads
     )
-    # Ensure completion before returning to the caller
+    # Ensure kernel completion before returning
     torch.cuda.synchronize()

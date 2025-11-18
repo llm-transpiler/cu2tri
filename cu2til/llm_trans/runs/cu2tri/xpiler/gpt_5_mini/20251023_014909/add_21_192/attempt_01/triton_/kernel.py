@@ -10,7 +10,7 @@ def _triton_kernel_impl(A_ptr, B_ptr, C_ptr, N, BLOCK: tl.constexpr):
     Mirrors the CUDA kernel which uses blocks of 1024 threads.
     """
     pid = tl.program_id(0)
-    tid = tl.arange(0, BLOCK, dtype=tl.int32)
+    tid = tl.arange(0, BLOCK)         # no dtype kwarg in this Triton version
     offs = pid * BLOCK + tid
     mask = offs < N
     a = tl.load(A_ptr + offs, mask=mask, other=0.0)

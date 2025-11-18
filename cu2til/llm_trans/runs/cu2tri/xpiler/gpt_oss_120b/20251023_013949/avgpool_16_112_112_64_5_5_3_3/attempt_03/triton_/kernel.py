@@ -3,73 +3,84 @@ import triton
 import triton.language as tl
 
 # ----------------------------------------------------------------------
-# Triton kernel that mirrors the original CUDA implementation
+# Triton kernel that reproduces the original CUDA average‑pooling behavior
 # ----------------------------------------------------------------------
 @triton.jit
 def _triton_kernel_impl(
-    A_ptr,                # float*  (input tensor)
-    pool_avg_ptr,         # float*  (output tensor)
-    output_size,          # int32   (total number of output elements)
-    BLOCK_SIZE: tl.constexpr,  # compile‑time block size (must be 1024)
+    A_ptr,                # float* (input tensor, flattened NCHW)
+    pool_avg_ptr,         # float* (output tensor, flattened NCHW)
+    batch_size,           # int64
+    channels,             # int64
+    input_H,              # int64 (input height, square)
+    stride,               # int64
+    output_H,             # int64 (output height)
+    output_size,          # int64 (total number of output elements)
+    kernel_size: tl.constexpr,   # compile‑time kernel size (e.g. 5)
+    BLOCK_SIZE: tl.constexpr,    # compile‑time block size (must be 1024)
 ):
     # ------------------------------------------------------------------
-    # Thread and block identifiers (equivalent to CUDA's blockIdx.x and threadIdx.x)
+    # Thread / block identifiers (equivalent to CUDA's blockIdx.x / threadIdx.x)
     # ------------------------------------------------------------------
-    pid = tl.program_id(0)                              # blockIdx.x
-    tid = tl.arange(0, BLOCK_SIZE, dtype=tl.int64)     # threadIdx.x
+    pid = tl.program_id(0)                     # blockIdx.x (int32)
+    pid_i64 = tl.cast(pid, tl.int64)
 
-    # Linear index of the output element processed by this thread
-    out_idx = pid * BLOCK_SIZE + tid
-    mask = out_idx < output_size                         # guard against out‑of‑bounds threads
+    tid = tl.arange(0, BLOCK_SIZE)             # threadIdx.x vector (int32)
+    tid_i64 = tl.cast(tid, tl.int64)
 
-    # ------------------------------------------------------------------
-    # Hard‑coded constants derived from the original CUDA kernel
-    # (these correspond to the specific shape used in the CUDA code:
-    #  channels = 16, input_H = input_W = 224)
-    # ------------------------------------------------------------------
-    const1 = 802816   # channels * input_H * input_W
-    const2 = 21504    # input_H * channels * 6
-    const3 = 7168     # input_H * channels * 2
-    const4 = 192      # channels * 12
-    const5 = 64       # tile width
+    # Linear index of the output element processed by each lane
+    out_idx = pid_i64 * BLOCK_SIZE + tid_i64
+    mask = out_idx < output_size                # guard against out‑of‑bounds lanes
 
     # ------------------------------------------------------------------
-    # Compute the base address in the input tensor for the 5×5 window
+    # Pre‑compute constants that are independent of the per‑lane mask
     # ------------------------------------------------------------------
-    block_div_81 = pid // 81
-    block_mod_81 = pid % 81
-
-    part1 = block_div_81 * const1
-    part2 = ((block_mod_81 * 4 + (tid >> 8)) // 9) * const2
-    part3 = ((pid * 16 + (tid >> 6)) % 36) * const4
-    part4 = tid & 63
-
-    base = part1 + part2 + part3 + part4
+    out_hw = output_H * output_H                # elements per channel in output
+    channel_stride = input_H * input_H          # H * W per channel
+    batch_stride = channels * channel_stride    # C * H * W per batch
 
     # ------------------------------------------------------------------
-    # Accumulate the sum over the 5×5 pooling window
+    # Compute only for active lanes to avoid out‑of‑bounds address calc
     # ------------------------------------------------------------------
-    sum_val = tl.zeros([BLOCK_SIZE], dtype=tl.float32)
+    if mask:
+        # Decode (batch, channel, out_y, out_x) from the flat output index
+        n_c = out_idx // out_hw                 # (batch * channels) index
+        rem = out_idx % out_hw
+        out_y = rem // output_H
+        out_x = rem % output_H
+        n = n_c // channels                     # batch index
+        c = n_c % channels                      # channel index
 
-    for rv0 in range(5):
-        for rv1 in range(5):
-            offset = base + rv0 * const3 + rv1 * const5
-            a = tl.load(A_ptr + offset, mask=mask, other=0.0)
-            sum_val += a
+        # ------------------------------------------------------------------
+        # Accumulate sum over the K×K pooling window
+        # ------------------------------------------------------------------
+        sum_val = tl.cast(0, tl.float32)        # scalar accumulator
 
-    # ------------------------------------------------------------------
-    # Write the average (sum * 0.04) to the output tensor
-    # ------------------------------------------------------------------
-    avg = sum_val * 0.04
-    tl.store(pool_avg_ptr + out_idx, avg, mask=mask)
+        for rv0 in range(kernel_size):
+            for rv1 in range(kernel_size):
+                in_y = out_y * stride + rv0
+                in_x = out_x * stride + rv1
+                input_idx = (
+                    n * batch_stride
+                    + c * channel_stride
+                    + in_y * input_H
+                    + in_x
+                )
+                a = tl.load(A_ptr + input_idx, other=0.0)
+                sum_val = sum_val + a
+
+        # ------------------------------------------------------------------
+        # Write the average (sum * 1/(K*K)) to the output tensor
+        # ------------------------------------------------------------------
+        avg = sum_val * (1.0 / (kernel_size * kernel_size))
+        tl.store(pool_avg_ptr + out_idx, avg)
 
 
 # ----------------------------------------------------------------------
-# Wrapper function matching the original CUDA kernel signature
+# Wrapper matching the original CUDA kernel signature
 # ----------------------------------------------------------------------
 def triton_kernel(
-    input: torch.Tensor,   # float* input tensor
-    output: torch.Tensor,  # float* output tensor
+    input: torch.Tensor,   # float* input tensor (NCHW)
+    output: torch.Tensor,  # float* output tensor (NCHW)
     batch_size: int,
     channels: int,
     input_H: int,
@@ -77,15 +88,15 @@ def triton_kernel(
     stride: int,
 ):
     """
-    Entry point that mirrors the original CUDA kernel signature.
-    Launches the Triton kernel with the same semantics.
+    Launches the Triton average‑pooling kernel.
+    The semantics are identical to the original CUDA kernel.
     """
-    # Compute output spatial dimension
+    # Compute output spatial dimension and total number of output elements
     output_H = (input_H - kernel_size) // stride + 1
-    output_size = batch_size * output_H * output_H * channels
+    output_size = batch_size * channels * output_H * output_H
 
     BLOCK_SIZE = 1024
-    grid = (output_size + BLOCK_SIZE - 1) // BLOCK_SIZE
+    grid = ((output_size + BLOCK_SIZE - 1) // BLOCK_SIZE,)
 
     # Ensure tensors are on CUDA and contiguous
     if not input.is_cuda:
@@ -99,6 +110,12 @@ def triton_kernel(
     _triton_kernel_impl[grid](
         input,
         output,
+        batch_size,
+        channels,
+        input_H,
+        stride,
+        output_H,
         output_size,
-        BLOCK_SIZE=BLOCK_SIZE,
+        kernel_size=kernel_size,   # constexpr
+        BLOCK_SIZE=BLOCK_SIZE,     # constexpr
     )

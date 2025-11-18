@@ -13,7 +13,7 @@ def _triton_kernel_impl(A_ptr, B_ptr, T_add_ptr, size, BLOCK: tl.constexpr):
     BLOCK : compile-time block size (must be a power-of-two for tl.arange)
     """
     pid = tl.program_id(0)
-    offs = pid * BLOCK + tl.arange(0, BLOCK)           # BLOCK must be power-of-two
+    offs = pid * BLOCK + tl.arange(0, BLOCK)  # BLOCK is a constexpr (power-of-two)
     mask = offs < size
     a = tl.load(A_ptr + offs, mask=mask, other=0.0)
     b = tl.load(B_ptr + offs, mask=mask, other=0.0)
@@ -30,9 +30,10 @@ def triton_kernel(A, B, C, size):
                 float32 CUDA contiguous 1D tensors if necessary.
     - size    : number of elements to process (int)
 
-    Note: Triton's tl.arange requires the range to be a power-of-two. We use BLOCK=1024
-    (next power-of-two >= original 960) to satisfy this constraint. Masking ensures
-    correctness for sizes not divisible by BLOCK.
+    Notes:
+    - Triton's tl.arange requires a power-of-two range; we use BLOCK=1024
+      (next power-of-two >= original CUDA block size 960). Masking ensures
+      correctness for sizes not divisible by BLOCK.
     """
     # Use a power-of-two block size for Triton arange requirements.
     BLOCK = 1024
@@ -41,7 +42,6 @@ def triton_kernel(A, B, C, size):
     if size <= 0:
         return
 
-    # Helper to ensure inputs are CUDA float32 contiguous tensors
     def _to_cuda_float32_tensor(x):
         if not torch.is_tensor(x):
             x = torch.as_tensor(x)
@@ -57,22 +57,19 @@ def triton_kernel(A, B, C, size):
     B_t = _to_cuda_float32_tensor(B)
     C_t = _to_cuda_float32_tensor(C)
 
-    # Flatten to 1D views for simple linear indexing
     A_flat = A_t.view(-1)
     B_flat = B_t.view(-1)
     C_flat = C_t.view(-1)
 
-    # Ensure there are enough elements
     if A_flat.numel() < size or B_flat.numel() < size or C_flat.numel() < size:
         raise ValueError("A, B and C must have at least 'size' elements")
 
-    # Compute grid (number of Triton program instances)
     num_blocks = (size + BLOCK - 1) // BLOCK
     if num_blocks <= 0:
         return
 
-    # Launch Triton kernel with BLOCK as a compile-time constant
-    _triton_kernel_impl[num_blocks](A_flat, B_flat, C_flat, size, BLOCK=BLOCK)
+    # Launch Triton kernel: grid must be provided as a tuple
+    _triton_kernel_impl[(num_blocks,)](A_flat, B_flat, C_flat, size, BLOCK=BLOCK)
 
 
 if __name__ == "__main__":
@@ -83,10 +80,8 @@ if __name__ == "__main__":
     B = torch.randn(size, device="cuda", dtype=torch.float32)
     C = torch.empty(size, device="cuda", dtype=torch.float32)
 
-    # Call the Triton wrapper (signature matches the original CUDA wrapper)
     triton_kernel(A, B, C, size)
 
-    # Validate correctness
     if not torch.allclose(C, A + B):
         raise RuntimeError("Mismatch between Triton result and expected A + B")
     else:

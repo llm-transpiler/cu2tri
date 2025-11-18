@@ -2,21 +2,26 @@ import torch
 import triton
 import triton.language as tl
 
-# Block size matching the CUDA __launch_bounds__(960) and the original blockDim.x = 960
+# Original CUDA block size
 _BLOCK = 960
+# Triton's tl.arange requires a power-of-two range. Choose the next power-of-two >= _BLOCK.
+_BLOCK_VECT = 1 << (_BLOCK - 1).bit_length()  # 960 -> 1024
 
 
 @triton.jit
-def _triton_kernel_impl(A_ptr, B_ptr, T_add_ptr, size, BLOCK: tl.constexpr):
+def _triton_kernel_impl(A_ptr, B_ptr, T_add_ptr, size, BLOCK: tl.constexpr, BLOCK_VECT: tl.constexpr):
     """
-    Triton kernel that computes:
+    Triton kernel that implements elementwise addition:
       T_add[i] = A[i] + B[i]  for i in [0, size)
 
-    One Triton program instance maps to one CUDA block and processes BLOCK contiguous elements.
+    Because tl.arange requires a power-of-two length, we use BLOCK_VECT (a power of two,
+    >= BLOCK) for the arange, and mask out the extra positions where v >= BLOCK.
     """
     pid = tl.program_id(0)
-    offs = pid * BLOCK + tl.arange(0, BLOCK)
-    mask = offs < size
+    v = tl.arange(0, BLOCK_VECT)                # BLOCK_VECT is power-of-two (constexpr)
+    start = pid * BLOCK
+    offs = start + v
+    mask = (v < BLOCK) & (offs < size)          # mask out both beyond-block and beyond-size
     a = tl.load(A_ptr + offs, mask=mask, other=0.0)
     b = tl.load(B_ptr + offs, mask=mask, other=0.0)
     tl.store(T_add_ptr + offs, a + b, mask=mask)
@@ -27,17 +32,12 @@ def triton_kernel(A, B, C, size):
     Wrapper with the same parameter signature as the original CUDA wrapper:
       cuda_kernel(float *A, float *B, float *C, int size)
 
-    Parameters:
-      A, B, C : tensors or array-like (will be converted to torch.cuda.FloatTensor)
-      size    : int number of elements to process
-
     This configures the grid to numBlocks = ceil(size / 960) and launches the Triton kernel.
     """
-    # Normalize size to int
+    # Normalize size
     if not isinstance(size, int):
         size = int(size)
 
-    # Nothing to do
     if size <= 0:
         return
 
@@ -57,7 +57,7 @@ def triton_kernel(A, B, C, size):
     if not C.is_cuda:
         C = C.cuda()
 
-    # Force float32 (matches float* in CUDA code)
+    # Ensure float32
     if A.dtype != torch.float32:
         A = A.to(torch.float32)
     if B.dtype != torch.float32:
@@ -65,7 +65,7 @@ def triton_kernel(A, B, C, size):
     if C.dtype != torch.float32:
         C = C.to(torch.float32)
 
-    # Ensure contiguous memory for efficient Triton access
+    # Ensure contiguous
     if not A.is_contiguous():
         A = A.contiguous()
     if not B.is_contiguous():
@@ -73,16 +73,16 @@ def triton_kernel(A, B, C, size):
     if not C.is_contiguous():
         C = C.contiguous()
 
-    # Ensure there are enough elements
+    # Ensure enough elements
     if A.numel() < size or B.numel() < size or C.numel() < size:
         raise ValueError("Input tensors must have at least 'size' elements")
 
-    # Compute grid configuration like the original CUDA wrapper
+    # Compute grid exactly like the CUDA wrapper
     num_blocks = (size + _BLOCK - 1) // _BLOCK
     if num_blocks <= 0:
         return
 
     grid = (num_blocks,)
 
-    # Launch the Triton kernel. BLOCK is passed as a constexpr parameter.
-    _triton_kernel_impl[grid](A, B, C, size, BLOCK=_BLOCK)
+    # Launch Triton kernel, passing BLOCK and BLOCK_VECT as constexpr parameters
+    _triton_kernel_impl[grid](A, B, C, size, BLOCK=_BLOCK, BLOCK_VECT=_BLOCK_VECT)

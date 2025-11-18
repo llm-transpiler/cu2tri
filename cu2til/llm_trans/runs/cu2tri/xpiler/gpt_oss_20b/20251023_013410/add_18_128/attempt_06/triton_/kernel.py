@@ -4,15 +4,15 @@ import torch
 
 
 @triton.jit
-def _triton_kernel_impl(A_ptr, B_ptr, C_ptr, N):
+def _triton_kernel_impl(A, B, C, N):
     pid = tl.program_id(0)
-    block_size = tl.constexpr(1024)
+    block_size = 1024
     offset = pid * block_size
-    indices = offset + tl.arange(tl.constexpr(0), block_size)
+    indices = offset + tl.arange(0, block_size)
     mask = indices < N
-    a = tl.load(A_ptr + indices, mask=mask)
-    b = tl.load(B_ptr + indices, mask=mask)
-    tl.store(C_ptr + indices, a + b, mask=mask)
+    a = tl.load(A + indices, mask=mask)
+    b = tl.load(B + indices, mask=mask)
+    tl.store(C + indices, a + b, mask=mask)
 
 
 def triton_kernel(A, B, C, size):
@@ -32,6 +32,5 @@ def triton_kernel(A, B, C, size):
     if size > A.numel():
         raise ValueError("size must not exceed the number of elements in the tensors")
 
-    BLOCK_SIZE = 1024
-    grid = triton.cdiv(size, BLOCK_SIZE)
+    grid = triton.cdiv(size, 1024)
     _triton_kernel_impl[(grid,)](A, B, C, size)

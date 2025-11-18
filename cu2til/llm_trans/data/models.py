@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -11,11 +11,11 @@ class RetryRecord:
     end_time: str
     duration_ms: float
     success: bool
-    error: Optional[str] = None
-    usage: Optional[Dict[str, Any]] = None
-    extra_info: Optional[Dict[str, Any]] = None
+    error: str | None
+    usage: dict[str, Any] | None
+    extra_info: dict[str, Any] | None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         return {k: v for k, v in data.items() if v is not None}
 
@@ -24,8 +24,8 @@ class RetryRecord:
 class RoundRecord:
     round: int
     retry_limit: int
-    retry_records: List[RetryRecord] = field(default_factory=list)
-    status: Optional[str] = None
+    retry_records: list[RetryRecord] = field(default_factory=list)
+    status: str | None = None
 
     def add_retry(self, record: RetryRecord) -> None:
         self.retry_records.append(record)
@@ -35,7 +35,7 @@ class RoundRecord:
         *,
         include_retry_records: bool = False,
         only_successful_retry: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         data = {
             "round": self.round,
             "retry_limit": self.retry_limit,
@@ -58,18 +58,18 @@ class TestRoundRecord:
     round: int
     success: bool
     execution_mode: str
-    start_time: Optional[str] = None
-    end_time: Optional[str] = None
-    duration_ms: Optional[float] = None
-    waiting_ms: Optional[float] = None
-    queue_ms: Optional[float] = None
-    pending_ms: Optional[float] = None
-    total_server_ms: Optional[float] = None
-    gpu_id: Optional[str | int] = None
-    status: Optional[str] = None
-    exit_code: Optional[int] = None
+    start_time: str | None
+    end_time: str | None
+    duration_ms: float | None
+    waiting_ms: float | None
+    queue_ms: float | None
+    pending_ms: float | None
+    total_server_ms: float | None
+    gpu_id: str | int | None
+    status: str | None
+    exit_code: int | None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         return {k: v for k, v in data.items() if v is not None}
 
@@ -80,33 +80,33 @@ class AttemptTimingStats:
     case_name: str
     attempt_number: int
     start_time: str
-    llm_rounds: List[RoundRecord] = field(default_factory=list)
-    test_rounds: List[TestRoundRecord] = field(default_factory=list)
+    llm_rounds: list[RoundRecord] = field(default_factory=list)
+    test_rounds: list[TestRoundRecord] = field(default_factory=list)
     total_llm_time_ms: float = 0.0
     llm_retry_time_ms: float = 0.0
     llm_retry_wait_time_ms: float = 0.0
     total_test_time_ms: float = 0.0
-    end_time: Optional[str] = None
-    wall_clock_duration_ms: Optional[float] = None
-    effective_duration_ms: Optional[float] = None
-    retry_overhead_ms: Optional[float] = None
-    other_overhead_ms: Optional[float] = None
-    success: Optional[bool] = None
-    final_round: Optional[int] = None
-    timestamp: Optional[str] = None
-    model_name: Optional[str] = None
-    actual_model_used: Optional[str] = None
-    testset: Optional[str] = None
-    use_nvgpu: Optional[bool] = None
-    concurrency: Optional[int] = None
-    gpu_server: Optional[str] = None
-    max_attempts: Optional[int] = None
-    attempt_policy: Optional[str] = None
-    ms_format: Optional[str] = None
-    error: Optional[str] = None
-    work_dir: Optional[str] = None
-    temperature: Optional[float] = None
-    aggregated_timers: Optional[Dict[str, float]] = None
+    end_time: str | None = None
+    wall_clock_duration_ms: float | None = None
+    effective_duration_ms: float | None = None
+    retry_overhead_ms: float | None = None
+    other_overhead_ms: float | None = None
+    success: bool | None = None
+    final_round: int | None = None
+    timestamp: str | None = None
+    model_name: str | None = None
+    actual_model_used: str | None = None
+    testset: str | None = None
+    use_nvgpu: bool | None = None
+    concurrency: int | None = None
+    gpu_server: str | None = None
+    max_attempts: int | None = None
+    attempt_policy: str | None = None
+    ms_format: str | None = None
+    error: str | None = None
+    work_dir: str | None = None
+    temperature: float | None = None
+    aggregated_timers: dict[str, float] | None = None
 
     def add_llm_round(self, record: RoundRecord) -> None:
         self.llm_rounds.append(record)
@@ -126,7 +126,7 @@ class AttemptTimingStats:
     def add_test_time(self, value: float) -> None:
         self.total_test_time_ms += value
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = {
             "case_type": self.case_type,
             "case_name": self.case_name,
@@ -180,10 +180,10 @@ class AttemptTimingStats:
 class AttemptResult:
     attempt_number: int
     success: bool
-    rounds: Optional[int]
+    rounds: int | None
     timing_stats: AttemptTimingStats
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "attempt_number": self.attempt_number,
             "success": self.success,
@@ -197,12 +197,12 @@ class CaseResult:
     case_type: str
     case_name: str
     success: bool
-    rounds: Optional[int]
-    attempt_details: List[AttemptResult]
-    successful_attempt: Optional[int] = None
-    error: Optional[str] = None
+    rounds: int | None
+    attempt_details: list[AttemptResult]
+    successful_attempt: int | None
+    error: str | None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = {
             "case_type": self.case_type,
             "case_name": self.case_name,
@@ -224,7 +224,7 @@ class BatchSummary:
     success_rate: float
     case_types_total: int
     case_types_fully_passed: int
-    rounds_distribution: Dict[int, int]
+    rounds_distribution: dict[int, int]
     avg_rounds: float
     max_attempts: int
     attempt_policy: str
@@ -232,7 +232,7 @@ class BatchSummary:
     timestamp: str
     completed_at: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
