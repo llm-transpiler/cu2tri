@@ -6,11 +6,6 @@ testsets:
     path: cu2til/cases/xpiler
     include_ops: []   # 空=全部
     exclude_ops: []   # 可选：排除特定算子
-  xpiler_extended:
-    mode: scan
-    path: cu2til/cases/xpiler
-    include_ops: []
-    exclude_ops: []
   xpiler_mini:
     mode: scan
     path: cu2til/cases/xpiler
@@ -36,5 +31,30 @@ testsets:
       - sign
       - softmax
       - sumpool
+    exclude_ops: []
+  triton_tutorial:
+    mode: scan
+    path: cu2til/cases/triton_tutorial
+    include_ops: []
+    exclude_ops: []
+  flaggems_ops:
+    mode: scan
+    path: cu2til/cases/flaggems_ops
+    include_ops: []
+    exclude_ops: []
+  unsloth_kernels:
+    mode: scan
+    path: cu2til/cases/unsloth_kernels
+    include_ops: []
+    exclude_ops: []
+  ligerkernel_ops:
+    mode: scan
+    path: cu2til/cases/ligerkernel_ops
+    include_ops: []
+    exclude_ops: []
+  triton_tutorials:
+    mode: scan
+    path: cu2til/cases/triton_tutorials
+    include_ops: []
     exclude_ops: []
 

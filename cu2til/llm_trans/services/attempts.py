@@ -3,16 +3,17 @@ from __future__ import annotations
 import asyncio
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+import json
 
-from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
+from ..utils.trans_timer import TransTimer
 from utils.timezone import ensure_timezone, now_timestamp
 
-from cu2til.prompt.cuda2triton import simple_initial_prompt
+from cu2til.prompt.cuda2triton import simple_initial_prompt as cuda2triton_prompt
+from cu2til.prompt.triton2cute import get_initial_prompt as get_triton2cute_prompt
 
 from ..clients import async_openai_llm_call
 from ..core.runtime import RuntimeContext
-from ..data.models import AttemptResult, AttemptTimingStats, CaseResult, RetryRecord, RoundRecord
+from ..data.models import AttemptResult, AttemptTimingStats, RetryRecord, RoundRecord
 from ..io.jsonl import write_jsonl_log
 from ..services.conversation import (
     get_last_code_block,
@@ -21,6 +22,7 @@ from ..services.conversation import (
 )
 from ..services.history import AttemptHistoryManager
 from ..services.retry import build_retry_context, is_retryable_error, log_retry_event
+from ..utils.formatting import format_ms
 from ..services.testing import run_testing_loop
 
 
@@ -30,7 +32,7 @@ async def run_single_case_attempt(
     case_name: str,
     attempt_number: int,
     attempt_work_dir: Path,
-) -> Tuple[bool, int | None, AttemptTimingStats]:
+) -> tuple[bool, int | None, AttemptTimingStats]:
     logger = context.logger
     settings = context.settings
     args = context.args
@@ -39,7 +41,8 @@ async def run_single_case_attempt(
     get_api_param = context.model.get_api_param
 
     case_start_wall = now_timestamp()
-    case_start_ns = monotonic_timestamp_ns()
+    trans_timer = TransTimer()
+    trans_timer.start("case_total")
 
     logger.info("=" * 60)
     logger.info(f"🎯 Testing case type: {case_type}")
@@ -61,15 +64,33 @@ async def run_single_case_attempt(
         case_name=case_name,
         attempt_number=attempt_number,
         start_time=ensure_timezone(case_start_wall).isoformat(),
+        temperature=getattr(args, 'temperature', None),
     )
 
+    # Determine which files to copy based on translation direction
+    direction = settings.direction
+    
     files_to_copy = [
         settings.dir_torch / "ref.py",
-        settings.dir_cuda / "kernel.cu",
-        f"check_cuda{settings.check_suffix}.py",
-        f"check_triton{settings.check_suffix}.py",
         "get_data.py",
     ]
+    
+    # Add files based on direction
+    if direction == "cu2tri":
+        # CUDA to Triton
+        files_to_copy.extend([
+            settings.dir_cuda / "kernel.cu",
+            f"check_cuda{settings.check_suffix}.py",
+            f"check_triton{settings.check_suffix}.py",
+        ])
+    elif direction == "tri2cute":
+        # Triton to CUTE
+        files_to_copy.extend([
+            settings.dir_triton / "kernel.py",
+            settings.dir_cute / "kernel.cu",
+            settings.dir_cute / "kernel_template.cu",
+            "check_cute.py",
+        ])
 
     for file_path in files_to_copy:
         src_file = testcase_src_dir / file_path
@@ -89,6 +110,7 @@ async def run_single_case_attempt(
         "check_all.py",
         "check_triton.py",
         "check_triton_gpu_all.py",
+        "check_triton_vs_torch.py",
     ]
     tools_dir = context.settings.project_root / "cu2til" / "tools"
     for script_name in tools_scripts:
@@ -100,13 +122,25 @@ async def run_single_case_attempt(
         else:
             logger.debug(f"Tool script {src_script} not found; skipping")
 
-    cuda_file_path = attempt_work_dir / settings.dir_cuda / "kernel.cu"
-    if not cuda_file_path.exists():
-        logger.error(f"CUDA file not found: {cuda_file_path}")
-        timing_stats.error = f"CUDA file missing: {cuda_file_path}"
+    # Read source code based on direction
+    if direction == "cu2tri":
+        source_file_path = attempt_work_dir / settings.dir_cuda / "kernel.cu"
+        if not source_file_path.exists():
+            logger.error(f"CUDA file not found: {source_file_path}")
+            timing_stats.error = f"CUDA file missing: {source_file_path}"
+            return False, None, timing_stats
+        source_code = source_file_path.read_text()
+    elif direction == "tri2cute":
+        source_file_path = attempt_work_dir / settings.dir_triton / "kernel.py"
+        if not source_file_path.exists():
+            logger.error(f"Triton file not found: {source_file_path}")
+            timing_stats.error = f"Triton file missing: {source_file_path}"
+            return False, None, timing_stats
+        source_code = source_file_path.read_text()
+    else:
+        logger.error(f"Unsupported direction: {direction}")
+        timing_stats.error = f"Unsupported direction: {direction}"
         return False, None, timing_stats
-
-    cuda_code = cuda_file_path.read_text()
 
     history_manager = AttemptHistoryManager(
         attempt_work_dir=attempt_work_dir,
@@ -117,12 +151,40 @@ async def run_single_case_attempt(
         logger=logger,
     )
 
-    system_prompt = (
-        "You are a professional GPU computing optimization expert, proficient in CUDA and Triton programming. "
-        "You help convert CUDA kernels to Triton kernels while maintaining correctness and performance."
-    )
+    # Select appropriate prompts based on translation direction
+    if direction == "cu2tri":
+        system_prompt = (
+            "You are a professional GPU computing optimization expert, proficient in CUDA and Triton programming. "
+            "You help convert CUDA kernels to Triton kernels while maintaining correctness and performance."
+        )
+        initial_user_prompt = cuda2triton_prompt.format(cuda_code=source_code)
+    elif direction == "tri2cute":
+        system_prompt = (
+            "You are a professional GPU computing optimization expert, proficient in Triton and CUTE/CUTLASS programming. "
+            "You help convert Triton kernels to CUTE (CUTLASS 3.x) C++ kernels while maintaining correctness and performance."
+        )
+        initial_user_prompt = get_triton2cute_prompt(
+            triton_code=source_code,
+            use_simple=False,
+            target_gpu=settings.target_gpu,
+        )
+    elif direction == 'tri2cutedsl':
+        system_prompt = (
+            "You are a professional GPU computing optimization expert, proficient in Triton and CUTE DSL programming. "
+            "You help convert Triton kernels to CUTE (CUTLASS 4.x) Python kernels while maintaining correctness and performance."
+        )
+        initial_user_prompt = get_triton2cute_prompt(
+            triton_code=source_code,
+            use_simple=False,
+            target_gpu=settings.target_gpu,
+        )
+    else:
+        logger.error(f"Unsupported direction: {direction}")
+        timing_stats.error = f"Unsupported direction: {direction}"
+        return False, None, timing_stats
+    
     history_manager.ensure_system_prompt(system_prompt)
-    history_manager.ensure_initial_user_prompt(simple_initial_prompt.format(cuda_code=cuda_code))
+    history_manager.ensure_initial_user_prompt(initial_user_prompt)
 
     conversation_history = history_manager.conversation
 
@@ -148,19 +210,24 @@ async def run_single_case_attempt(
 
         while retry_count <= args.max_retries:
             retry_index = retry_count
-            retry_start_ns = monotonic_timestamp_ns()
             retry_wall_start = now_timestamp()
             if round_start_wall is None:
                 round_start_wall = retry_wall_start
 
             resp_content = None
             usage_dict = None
-            generation_info = None
+            extra_info = None
 
             api_params = None
             api_params_exc = None
             try:
-                api_params = get_api_param(conversation_history, model_name)
+                # Extract temperature from settings if available
+                temperature = getattr(args, 'temperature', None)
+                extra_kwargs = {}
+                if temperature is not None:
+                    extra_kwargs['temperature'] = temperature
+
+                api_params = get_api_param(conversation_history, model_name, **extra_kwargs)
             except Exception as exc:
                     api_params_exc = exc
 
@@ -201,9 +268,11 @@ async def run_single_case_attempt(
                 raise api_params_exc
 
             try:
-                resp_content, actual_model_used, usage_dict, generation_info = await async_openai_llm_call(
-                    async_client, api_params, logger=logger
-                )
+                with trans_timer.time("llm_call"):
+                    result = await async_openai_llm_call(
+                        async_client, api_params, logger=logger
+                    )
+                resp_reasoning_content, resp_content, actual_model_used, usage_dict, extra_info = result
 
                 if not actual_model_used:
                     actual_model_used = model_name
@@ -213,7 +282,13 @@ async def run_single_case_attempt(
                 else:
                     logger.debug(f"🤖 Model used: {actual_model_used}")
 
+                # Log temperature if used
+                temperature = getattr(args, 'temperature', None)
+                if temperature is not None:
+                    logger.info(f"🌡️  Temperature: {temperature}")
+
                 history_manager.add_assistant_message(
+                    resp_reasoning_content,
                     resp_content,
                     round_id=round_id,
                     retry_index=retry_index,
@@ -229,14 +304,15 @@ async def run_single_case_attempt(
                     messages=conversation_history,
                     full_response=resp_content,
                     model_used=actual_model_used,
+                    reasoning_content=resp_reasoning_content,
                 )
 
-                if generation_info and generation_info.get("native_tokens_reasoning") is not None:
+                if extra_info and extra_info.get("native_tokens_reasoning") is not None:
                     usage_dict = usage_dict or {}
-                    usage_dict["reasoning_tokens"] = generation_info.get("native_tokens_reasoning")
+                    usage_dict["reasoning_tokens"] = extra_info.get("native_tokens_reasoning")
 
                 retry_wall_end = now_timestamp()
-                retry_duration_ms = monotonic_elapsed_ms(retry_start_ns)
+                retry_duration_ms = trans_timer.last_duration_ms("llm_call") or 0.0
 
                 retry_record = RetryRecord(
                     retry_index=retry_index,
@@ -245,7 +321,7 @@ async def run_single_case_attempt(
                     duration_ms=round(retry_duration_ms, 3),
                     success=True,
                     usage=usage_dict,
-                    generation_info=generation_info,
+                    extra_info=extra_info,
                 )
                 round_entry.add_retry(retry_record)
 
@@ -280,7 +356,7 @@ async def run_single_case_attempt(
 
             except Exception as exc:
                 retry_wall_end = now_timestamp()
-                retry_duration_ms = monotonic_elapsed_ms(retry_start_ns)
+                retry_duration_ms = trans_timer.last_duration_ms("llm_call") or 0.0
                 error_msg = str(exc)
 
                 retry_record = RetryRecord(
@@ -333,12 +409,12 @@ async def run_single_case_attempt(
                 round_retry_call_ms += retry_duration_ms
 
                 if is_retryable_error(error_msg) and retry_count < args.max_retries:
-                    # Rotate endpoint (if a pool is configured) to improve resilience on next retry
-                    ep = context.model.rotate_next()
-                    if ep is not None:
-                        logger.info(
-                            f"🔁 Switched endpoint to '{ep.name}' at {ep.base_url or 'default'} for next retry"
-                        )
+                    if getattr(args, "rotate_endpoints", False):
+                        ep = context.model.rotate_next()
+                        if ep is not None:
+                            logger.info(
+                                f"🔁 Switched endpoint to '{ep.name}' at {ep.base_url or 'default'} for next retry"
+                            )
                     retry_count += 1
                     wait_time = args.retry_wait
                     logger.warning(
@@ -346,12 +422,12 @@ async def run_single_case_attempt(
                     )
                     if wait_time > 0:
                         logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
-                        wait_start_ns = monotonic_timestamp_ns()
-                        for remaining in range(wait_time, 0, -1):
-                            if remaining % 10 == 0 or remaining <= 5:
-                                logger.debug(f"⏱️  Retrying in {remaining} seconds...")
-                            await asyncio.sleep(1)
-                        waited_ms = monotonic_elapsed_ms(wait_start_ns)
+                        with trans_timer.time("retry_wait"):
+                            for remaining in range(wait_time, 0, -1):
+                                if remaining % 10 == 0 or remaining <= 5:
+                                    logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                                await asyncio.sleep(1)
+                        waited_ms = trans_timer.last_duration_ms("retry_wait") or 0.0
                         timing_stats.add_llm_retry_wait(waited_ms)
                         round_retry_wait_ms += waited_ms
                         await log_retry_event(
@@ -406,12 +482,29 @@ async def run_single_case_attempt(
             timing_stats.error = "Missing assistant response for resume"
             return False, None, timing_stats
 
+    # Save generated code to appropriate directory based on direction
+    generated_code = get_last_code_block(resp_content)
+    
+    if direction == "cu2tri":
+        target_dir = attempt_work_dir / settings.dir_triton
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file = target_dir / "kernel.py"
+        target_file.write_text(generated_code)
+        logger.info("Triton code generated successfully")
+    elif direction == "tri2cute":
+        target_dir = attempt_work_dir / settings.dir_cute
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file = target_dir / "kernel.cu"
+        target_file.write_text(generated_code)
+        logger.info("CUTE code generated successfully")
+    else:
+        logger.error(f"Unsupported direction: {direction}")
+        timing_stats.error = f"Unsupported direction: {direction}"
+        return False, None, timing_stats
+    
+    # For backward compatibility
     triton_dir = attempt_work_dir / settings.dir_triton
     triton_dir.mkdir(parents=True, exist_ok=True)
-    final_triton_code = get_last_code_block(resp_content)
-    (triton_dir / "kernel.py").write_text(final_triton_code)
-
-    logger.info("Triton code generated successfully")
 
     save_conversation_history(
         context,
@@ -434,7 +527,7 @@ async def run_single_case_attempt(
     )
 
     case_end_wall = now_timestamp()
-    case_wall_duration_ms = monotonic_elapsed_ms(case_start_ns)
+    case_wall_duration_ms = trans_timer.stop("case_total") or 0.0
 
     effective_processing_time_ms = timing_stats.total_llm_time_ms + timing_stats.total_test_time_ms
     total_retry_overhead_ms = timing_stats.llm_retry_time_ms + timing_stats.llm_retry_wait_time_ms
@@ -462,7 +555,30 @@ async def run_single_case_attempt(
     timing_stats.ms_format = args.ms_format
     timing_stats.work_dir = str(attempt_work_dir)
 
+    # Merge aggregated timer metrics
+    try:
+        timers = trans_timer.as_dict()
+        if timers:
+            if timing_stats.aggregated_timers is None:
+                timing_stats.aggregated_timers = {}
+            for label, value in timers.items():
+                timing_stats.aggregated_timers[label] = timing_stats.aggregated_timers.get(label, 0.0) + float(value)
+    except Exception:
+        pass
+
     await write_jsonl_log(context, timing_stats.to_dict())
+
+    # Persist a copy in attempt logs directory for local analysis/resume
+    try:
+        logs_dir = attempt_work_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        (logs_dir / "attempt_result.json").write_text(
+            json.dumps(timing_stats.to_dict(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        # Best-effort local copy; do not break main flow
+        pass
 
     logger.info(
         "⏱️  Timing: Wall=%0.1fms, Effective(LLM+Test)=%0.1fms (LLM=%0.1fms, Test=%0.1fms, RetryCalls=%0.1fms, RetryWait=%0.1fms, Other=%0.1fms)",
@@ -474,6 +590,12 @@ async def run_single_case_attempt(
         timing_stats.llm_retry_wait_time_ms,
         other_overhead_ms,
     )
+
+    # Print aggregated timers for visibility
+    timers_display = trans_timer.as_dict()
+    if timers_display:
+        parts = [f"{label}={format_ms(value, args.ms_format)}" for label, value in sorted(timers_display.items())]
+        logger.info("⏱️  Aggregated timers: %s", ", ".join(parts))
 
     final_model = timing_stats.actual_model_used or model_name
     if final_model != model_name:
@@ -487,18 +609,18 @@ async def run_single_case_translation(
     case_type: str,
     case_name: str,
     attempt_semaphore: asyncio.Semaphore | None = None,
-) -> Tuple[bool, int | None, List[AttemptResult]]:
+) -> tuple[bool, int | None, list[AttemptResult]]:
     logger = context.logger
     settings = context.settings
     args = context.args
 
     case_root_dir = settings.work_dir / case_name
 
-    attempt_results: List[AttemptResult] = []
+    attempt_results: list[AttemptResult] = []
     success_any = False
     best_rounds: int | None = None
 
-    async def execute_attempt(attempt_number: int) -> Tuple[bool, int | None, AttemptTimingStats] | Exception:
+    async def execute_attempt(attempt_number: int) -> tuple[bool, int | None, AttemptTimingStats] | Exception:
         attempt_work_dir = case_root_dir / f"attempt_{attempt_number:02d}"
         try:
             if attempt_semaphore is not None:
@@ -508,7 +630,7 @@ async def run_single_case_translation(
         except Exception as exc:
             return exc
 
-    async def handle_attempt(attempt_number: int, outcome: Tuple | Exception):
+    async def handle_attempt(attempt_number: int, outcome: tuple | Exception):
         nonlocal success_any, best_rounds
         attempt_work_dir = case_root_dir / f"attempt_{attempt_number:02d}"
         if isinstance(outcome, Exception):
@@ -524,6 +646,16 @@ async def run_single_case_translation(
                 work_dir=str(attempt_work_dir),
             )
             await write_jsonl_log(context, stats.to_dict())
+            # Also persist a local copy in attempt logs directory
+            try:
+                logs_dir = attempt_work_dir / "logs"
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                (logs_dir / "attempt_result.json").write_text(
+                    json.dumps(stats.to_dict(), ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
             attempt_results.append(
                 AttemptResult(
                     attempt_number=attempt_number,

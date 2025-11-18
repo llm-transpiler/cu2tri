@@ -12,7 +12,7 @@ from llm.client.openai_compat import (
     make_openai_message_assistant,
     make_openai_message_system,
     make_openai_message_user,
-    openai_llm_call,
+    # openai_llm_call,
 )
 
 from ..config.model_registry import ModelRegistryError, ProviderConfig
@@ -94,7 +94,7 @@ def _resolve_api_key(provider: ProviderConfig, vendor_name: str) -> str:
     return api_key
 
 
-def _instantiate_endpoint(
+def _instantiate_endpoint_openai(
     *,
     provider_name: str,
     provider: ProviderConfig,
@@ -136,7 +136,7 @@ def create_model_clients(settings: Settings) -> ModelClients:
     for provider_name in provider_sequence:
         provider_cfg = selection.vendor.providers[provider_name]
         endpoints.append(
-            _instantiate_endpoint(
+            _instantiate_endpoint_openai(
                 provider_name=provider_name,
                 provider=provider_cfg,
                 vendor_name=selection.vendor_name,
@@ -181,7 +181,7 @@ __all__ = [
     "ModelClients",
     "create_model_clients",
     "async_openai_llm_call",
-    "openai_llm_call",
+    # "openai_llm_call",
     "make_openai_message_system",
     "make_openai_message_user",
     "make_openai_message_assistant",

@@ -1,34 +1,35 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from pathlib import Path
 
+from utils.logger import get_logger
 from ..config.settings import Settings
 
 
 def configure_logger(settings: Settings) -> logging.Logger:
-    logger = logging.getLogger("llm_trans")
-    logger.setLevel(logging.DEBUG)
+    """
+    配置llm_trans专用的日志记录器
 
-    for handler in list(logger.handlers):
-        logger.removeHandler(handler)
+    Args:
+        settings: Settings对象，包含日志配置信息
 
+    Returns:
+        logging.Logger: 配置好的日志记录器
+    """
     if settings.log_file is None:
         raise RuntimeError("Log file path has not been configured")
 
-    file_handler = logging.FileHandler(settings.log_file, encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
+    # 使用通用的日志模块，传入特定的格式和配置
+    custom_format = "%(asctime)s - %(levelname)-7s - %(message)s"
 
-    handlers: list[logging.Handler] = [file_handler]
-    if settings.console_output:
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        handlers.append(console_handler)
-
-    formatter = logging.Formatter("%(asctime)s - %(levelname)-7s - %(message)s")
-    for handler in handlers:
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+    logger = get_logger(
+        logger_name="llm_trans",
+        log_file=Path(settings.log_file),
+        log_level="DEBUG",
+        console_output=settings.console_output,
+        log_format=custom_format
+    )
 
     return logger
 

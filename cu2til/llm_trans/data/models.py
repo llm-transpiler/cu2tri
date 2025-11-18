@@ -13,7 +13,7 @@ class RetryRecord:
     success: bool
     error: Optional[str] = None
     usage: Optional[Dict[str, Any]] = None
-    generation_info: Optional[Dict[str, Any]] = None
+    extra_info: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -105,6 +105,8 @@ class AttemptTimingStats:
     ms_format: Optional[str] = None
     error: Optional[str] = None
     work_dir: Optional[str] = None
+    temperature: Optional[float] = None
+    aggregated_timers: Optional[Dict[str, float]] = None
 
     def add_llm_round(self, record: RoundRecord) -> None:
         self.llm_rounds.append(record)
@@ -163,6 +165,7 @@ class AttemptTimingStats:
             "ms_format": self.ms_format,
             "error": self.error,
             "work_dir": self.work_dir,
+            "aggregated_timers": self.aggregated_timers,
         }
         for key, value in optional_fields.items():
             if value is not None:

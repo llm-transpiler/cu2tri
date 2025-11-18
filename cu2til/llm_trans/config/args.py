@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 from typing import Sequence
 
+from ..utils.gpu_targets import available_gpu_targets
+
 
 def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run CUDA to Triton translation with iterative fixing"
+        description="Run code translation with iterative fixing (supports CUDA->Triton, Triton->CUTE, etc.)"
     )
     parser.add_argument(
         "--model",
@@ -31,6 +33,11 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Specific case types to test (default: all)",
     )
     parser.add_argument(
+        "--skip-case-types",
+        nargs="*",
+        help="Case types to skip (exclude from run)",
+    )
+    parser.add_argument(
         "--first-only",
         action="store_true",
         default=False,
@@ -43,6 +50,24 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Skip performance testing (default: True)",
     )
     parser.add_argument(
+        "--perf-warmup",
+        type=int,
+        default=None,
+        help="Override warmup iterations for perf benchmark",
+    )
+    parser.add_argument(
+        "--perf-iters",
+        type=int,
+        default=None,
+        help="Override timing iterations for perf benchmark",
+    )
+    parser.add_argument(
+        "--direction",
+        choices=["cu2tri", "tri2cute"],
+        default="cu2tri",
+        help="Translation direction: cu2tri (CUDA→Triton) or tri2cute (Triton→CUTE)",
+    )
+    parser.add_argument(
         "--testset",
         choices=[
             "xpiler",
@@ -50,9 +75,25 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "leetcuda_dynamic",
             "leetcuda_dynamic_2",
             "hard",
+            "triton_tutorial",
+            "flaggems_ops",
+            "unsloth_kernels",
+            "ligerkernel_ops",
         ],
         default="xpiler",
         help="Test set to use",
+    )
+    parser.add_argument(
+        "--target-gpu",
+        choices=available_gpu_targets(),
+        default="h800_sxm",
+        help="Target GPU profile used for prompts, nvcc flags, and validation",
+    )
+    parser.add_argument(
+        "--test-gpu",
+        type=int,
+        default=None,
+        help="Local CUDA device index for check scripts (default derived from --target-gpu)",
     )
     parser.add_argument(
         "--retry-wait",
@@ -65,6 +106,12 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=10,
         help="Maximum number of retries for API overload errors",
+    )
+    parser.add_argument(
+        "--rotate-endpoints",
+        action="store_true",
+        default=False,
+        help="Enable rotating to next endpoint on retry when a provider pool is configured (default: False)",
     )
     parser.add_argument(
         "--use-nvgpu",
@@ -88,6 +135,12 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Specific GPU ID to use",
+    )
+    parser.add_argument(
+        "--nvgpu-perf-gpu",
+        type=int,
+        default=None,
+        help="Preferred GPU ID for performance tasks (fallback to --nvgpu-gpu)",
     )
     parser.add_argument(
         "--max-rounds",
@@ -139,6 +192,12 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Root directory for outputs; overrides env LLM_TRANS_OUTPUTS_ROOT. "
             "Default: <project>/cu2til/llm_trans/runs/cu2tri"
         ),
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.3,
+        help="Sampling temperature for model generation (default: 0.3)",
     )
     return parser.parse_args(argv)
 

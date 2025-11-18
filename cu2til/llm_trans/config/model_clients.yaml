@@ -29,6 +29,10 @@ aliases:
     vendor: openai
     model: openai/gpt-oss-120b
     provider: local-127-8001
+  gpt_120b_local_172_8000:
+    vendor: openai
+    model: openai/gpt-oss-120b
+    provider: local-172-8000
   gpt_oss_20b:
     vendor: openai
     model: openai/gpt-oss-20b
@@ -61,10 +65,24 @@ aliases:
     vendor: qwen
     model: qwen/qwen3-max
     provider: infini-ai
-  qwen_thinking:
+  qwen_thinking_2507_local:
     vendor: qwen
-    model: qwen/Qwen3-235B-A22B-Thinking
-    provider: infini-ai
+    model: qwen/qwen3-235b-a22b-thinking-2507
+    provider: local-172-8000
+  # curl http://172.16.21.36:8000/v1/chat/completions   -H "Content-Type: application/json"   -d '{
+  #   "model": "qwen/qwen3-235b-a22b-thinking-2507",                  
+  #   "messages": [
+  #     {"role": "user", "content": "你好，介绍一下你自己。"}
+  #   ]
+  # }'
+  # qwen_thinking_2507_local:
+  #   vendor: qwen
+  #   model: Qwen3-235B-A22B-Thinking-2507
+  #   provider: local-172-8000
+  qwen_vl_235b_a22b_thinking_local:
+    vendor: qwen
+    model: qwen/qwen3-vl-235b-a22b-thinking
+    provider: local-172-8000
   qwen_local:
     vendor: qwen
     model: qwen/qwen3-max
@@ -93,14 +111,22 @@ aliases:
     vendor: glm
     model: glm/GLM-4.6
     provider: infini-ai
+  minimax_m2_free:
+    vendor: minimax
+    model: minimax/minimax-m2:free
+    provider: openrouter
+  minimax_m2_local_172_8000:
+    vendor: minimax
+    model: minimax/minimax-m2
+    provider: local-172-8000
   deepseek:
     vendor: deepseek
     model: deepseek/deepseek-r1-0528
-    provider: deepseek
+    provider: openrouter
   deepseek_v32:
     vendor: deepseek
-    model: deepseek/deepseek-v3.2
-    provider: deepseek
+    model: deepseek/deepseek-v3.2-exp
+    provider: openrouter
   deepseek_local:
     vendor: deepseek
     model: deepseek/deepseek-r1-0528
@@ -128,11 +154,11 @@ aliases:
   gemini:
     vendor: google
     model: google/gemini-2.5-pro
-    provider: google-openai
+    provider: openrouter
   gemini_flash:
     vendor: google
     model: google/gemini-2.5-flash
-    provider: google-openai
+    provider: openrouter
   grok:
     vendor: xai
     model: xai/grok-4
@@ -157,6 +183,19 @@ aliases:
     vendor: openrouter
     model: openrouter/auto
     provider: openrouter
+
+# providers:
+#   local
+#   openai
+#   openrouter
+#   infini-ai
+#   deepseek
+#   minimax
+#   google
+#   anthropic
+#   xai
+#   moonshot
+#   openrouter
 
 vendors:
   openai:
@@ -183,6 +222,10 @@ vendors:
         calling: OPENAI_OPENROUTER
       local-127-8003:
         base_url: http://127.0.0.1:8003/v1
+        api_key: EMPTY
+        calling: OPENAI_OPENROUTER
+      local-172-8000:
+        base_url: http://172.16.21.36:8000/v1
         api_key: EMPTY
         calling: OPENAI_OPENROUTER
       local-172-8001:
@@ -275,13 +318,14 @@ vendors:
         default_provider: local
         providers:
           - local
-          - openrouter
+          - local-172-8000
+          # - openrouter
           - local-127-8001
-          - local-127-8002
-          - local-127-8003
-          - local-172-8001
-          - local-172-8002
-          - local-172-8003
+          # - local-127-8002
+          # - local-127-8003
+          # - local-172-8001
+          # - local-172-8002
+          # - local-172-8003
       openai/gpt-oss-20b:
         display_name: GPT-OSS-20B
         default_provider: local
@@ -315,6 +359,10 @@ vendors:
         calling: OPENAI_OFFICIAL
       local-127-8003:
         base_url: http://127.0.0.1:8003/v1
+        api_key: EMPTY
+        calling: OPENAI_OFFICIAL
+      local-172-8000:
+        base_url: http://172.16.21.36:8000/v1
         api_key: EMPTY
         calling: OPENAI_OFFICIAL
       local-172-8001:
@@ -354,6 +402,21 @@ vendors:
           - local-172-8001
           - local-172-8002
           - local-172-8003
+      qwen/qwen3-235b-a22b-thinking-2507:
+        display_name: Qwen3 235B A22B Thinking 2507
+        default_provider: local-172-8000
+        providers:
+          - local-172-8000
+      Qwen3-235B-A22B-Thinking-2507:
+        display_name: Qwen3 235B A22B Thinking 2507
+        default_provider: local-172-8000
+        providers:
+          - local-172-8000
+      qwen/qwen3-vl-235b-a22b-thinking:
+        display_name: Qwen3 VL 235B A22B Thinking
+        default_provider: local-172-8000
+        providers:
+          - local-172-8000
       qwen/qwen3-coder-480b-a35b-instruct:
         display_name: Qwen3 Coder 480B A35B Instruct
         default_provider: infini-ai
@@ -366,18 +429,18 @@ vendors:
           - local-172-8001
           - local-172-8002
           - local-172-8003
-      qwen/qwen3-vl-235b-a22b-thinking:
-        display_name: Qwen3 VL 235B A22B Thinking
-        default_provider: infini-ai
-        providers:
-          - infini-ai
-          - openrouter
-          - local
-          - local-127-8001
-          - local-127-8003
-          - local-172-8001
-          - local-172-8002
-          - local-172-8003
+      # qwen/qwen3-vl-235b-a22b-thinking:
+      #   display_name: Qwen3 VL 235B A22B Thinking
+      #   default_provider: infini-ai
+      #   providers:
+      #     - infini-ai
+      #     - openrouter
+      #     - local
+      #     - local-127-8001
+      #     - local-127-8003
+      #     - local-172-8001
+      #     - local-172-8002
+      #     - local-172-8003
 
   glm:
     providers:
@@ -396,7 +459,7 @@ vendors:
       deepseek:
         base_url: https://api.deepseek.com
         api_key: $DEEPSEEK_API_KEY
-        calling: DEEPSEEK_OPENAI
+        calling: OPENAI_OPENROUTER
       openrouter:
         base_url: https://openrouter.ai/api/v1
         api_key: $OPENROUTER_API_KEY
@@ -438,34 +501,67 @@ vendors:
           - local-172-8001
           - local-172-8002
           - local-172-8003
-      deepseek/deepseek-v3.2:
-        display_name: DeepSeek V3.2
-        default_provider: deepseek
+      deepseek/deepseek-v3.2-exp:
+        display_name: DeepSeek V3.2 Exp
+        default_provider: openrouter
         providers:
-          - deepseek
+          # - deepseek
           - openrouter
-          - local
-          - local-127-8001
-          - local-127-8002
-          - local-172-8001
-          - local-172-8002
-          - local-172-8003
+          # - local
+          # - local-127-8001
+          # - local-127-8002
+          # - local-172-8001
+          # - local-172-8002
+          # - local-172-8003
 
+  minimax:
+    providers:
+      minimax:
+        base_url: https://api.minimax.io/v1
+        api_key: $MINIMAX_API_KEY
+        # calling: MINIMAX_OPENROUTER
+      openrouter:
+        base_url: https://openrouter.ai/api/v1
+        api_key: $OPENROUTER_API_KEY
+        calling: OPENAI_OPENROUTER
+      local-172-8000:
+        base_url: http://172.16.21.36:8000/v1
+        api_key: EMPTY
+        calling: OPENAI_OFFICIAL
+    models:
+      minimax/minimax-m2:
+        display_name: MiniMax M2
+        providers:
+          - local-172-8000
+      minimax/minimax-m2:free:
+        display_name: MiniMax M2
+        providers:
+          - openrouter
+      minimax/MiniMax-M2-Stable:
+        display_name: MiniMax M2 Stable
+        providers:
+          - minimax
   google:
     providers:
       google-openai:
         base_url: https://generativelanguage.googleapis.com/v1beta/openai/
         api_key: $GEMINI_API_KEY
         calling: GEMINI_OPENAI
+      openrouter:
+        base_url: https://openrouter.ai/api/v1
+        api_key: $OPENROUTER_API_KEY
+        calling: GEMINI_OPENAI
     models:
       google/gemini-2.5-pro:
         display_name: Gemini 2.5 Pro
+        default_provider: openrouter
         providers:
-          - google-openai
+          - openrouter
       google/gemini-2.5-flash:
         display_name: Gemini 2.5 Flash
+        default_provider: openrouter
         providers:
-          - google-openai
+          - openrouter
 
   anthropic:
     providers:

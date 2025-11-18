@@ -24,6 +24,7 @@ class HistoryEvent:
     attempt_number: int
     round_id: Optional[int] = None
     retry_index: Optional[int] = None
+    reasoning_content: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: ensure_timezone(now_timestamp()).isoformat())
 
@@ -31,6 +32,9 @@ class HistoryEvent:
         payload = asdict(self)
         if not payload.get("metadata"):
             payload["metadata"] = {}
+        # Only include reasoning_content if it's not None and not empty
+        if not payload.get("reasoning_content"):
+            payload.pop("reasoning_content", None)
         return payload
 
 
@@ -135,6 +139,7 @@ class AttemptHistoryManager:
 
     def add_assistant_message(
         self,
+        reasoning_content: str,
         content: str,
         *,
         round_id: Optional[int],
@@ -143,9 +148,11 @@ class AttemptHistoryManager:
     ) -> Dict[str, Any]:
         if self._tree is None:
             raise RuntimeError("System prompt must be set before adding assistant messages")
+        # Only add content (without reasoning) to conversation for feedback context
         message = make_openai_message_assistant(content)
         self._conversation.append(message)
         self._tree.add_assistant_message(text=content)
+        # Save both reasoning_content and content to events for logging
         self._events.append(
             HistoryEvent(
                 role="assistant",
@@ -154,6 +161,7 @@ class AttemptHistoryManager:
                 attempt_number=self.attempt_number,
                 round_id=round_id,
                 retry_index=retry_index,
+                reasoning_content=reasoning_content if reasoning_content else None,
                 metadata=metadata or {},
             )
         )
@@ -204,6 +212,7 @@ class AttemptHistoryManager:
                 attempt_number=item.get("attempt_number", self.attempt_number),
                 round_id=item.get("round_id"),
                 retry_index=item.get("retry_index"),
+                reasoning_content=item.get("reasoning_content"),
                 metadata=item.get("metadata", {}),
                 timestamp=item.get("timestamp", ensure_timezone(now_timestamp()).isoformat()),
             )

@@ -37,6 +37,9 @@
   python -m cu2til.llm_trans --model gpt --testset xpiler
   ```
   - 用例来源改为 YAML/目录扫描：`cu2til/llm_trans/config/case_config.yaml`
+  - `--direction {cu2tri, tri2cute}` 控制 CUDA→Triton 或 Triton→CUTE 转译流程
+  - `--target-gpu {auto,h800_sxm,h100_pcie,h800_pcie,rtx6000_ada,a800_sxm,rtx5090}` 选择提示/测试所针对的 GPU 画像（默认：H800 SXM，自动携带 nvcc gencode）
+  - `--testset` 现已覆盖 `xpiler*`、`triton_tutorial`、`flaggems_ops`, `unsloth_kernels`, `ligerkernel_ops` 等目录，不同来源的 Triton kernel 均可独立批测
   - 列出用例工具：
     ```bash
     python -m cu2til.llm_trans.utils.list_cases --testset xpiler --format json

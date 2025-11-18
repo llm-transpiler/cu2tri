@@ -20,22 +20,23 @@ def prepare_context(argv: Sequence[str] | None = None) -> RuntimeContext:
 
     available_cases = cases.select_available_cases(
         settings.all_cases,
-        first_only=settings.args.first_only,
-        case_types=settings.args.case_types,
+        first_only=getattr(settings.args, "first_only", False),
+        case_types=getattr(settings.args, "case_types", None),
+        skip_case_types=getattr(settings.args, "skip_case_types", None),
         logger=logger,
     )
+    
+    if settings.use_nvgpu and not NVGPU_AVAILABLE:
+        logger.warning("NVGPU client not available, falling back to local execution")
+        settings.use_nvgpu = False
 
     context = RuntimeContext(
         settings=settings,
         model=model_clients,
         logger=logger,
         available_cases=available_cases,
-        nvgpu_available=NVGPU_AVAILABLE,
+        nvgpu_available=settings.use_nvgpu,
     )
-
-    if settings.use_nvgpu and not NVGPU_AVAILABLE:
-        logger.warning("NVGPU client not available, falling back to local execution")
-        settings.use_nvgpu = False
 
     return context
 

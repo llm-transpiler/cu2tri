@@ -6,15 +6,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
+from ..utils.trans_timer import TransTimer
 from utils.timezone import (
     ensure_timezone,
     normalize_timestamp_iso,
     now_timestamp,
     parse_timestamp,
 )
+from utils.task_refs import format_task_ref
 
-from cu2til.prompt.cuda2triton import feedback_prompt
+from cu2til.prompt.cuda2triton import feedback_prompt as cuda2triton_feedback
+from cu2til.prompt.triton2cute import get_feedback_prompt as get_triton2cute_feedback
 
 from ..clients import (
     NVGPU_AVAILABLE,
@@ -34,101 +36,43 @@ async def run_test_round(
     round_num: int,
     test_work_dir: Path,
     timing_stats: AttemptTimingStats | None = None,
+    *,
+    task_label: str | None = None,
 ):
     logger = context.logger
     settings = context.settings
 
     logger.debug(f"Running test round {round_num}...")
+    
+    # Route to appropriate testing method based on direction
+    direction = settings.direction
+    
+    if direction == "tri2cute":
+        # Triton to CUTE: test CUTE code
+        from .testing_cute import run_test_round_cute
+        return await run_test_round_cute(context, round_num, test_work_dir, timing_stats)
+    else:
+        # cu2tri: test Triton code
+        kernel_path = test_work_dir / settings.dir_triton / "kernel.py"
+        backup_path = test_work_dir / settings.dir_triton / f"kernel_v{round_num}.py"
+        shutil.copy(kernel_path, backup_path)
+        logger.debug(f"Backed up kernel to kernel_v{round_num}.py")
 
-    kernel_path = test_work_dir / settings.dir_triton / "kernel.py"
-    backup_path = test_work_dir / settings.dir_triton / f"kernel_v{round_num}.py"
-    shutil.copy(kernel_path, backup_path)
-    logger.debug(f"Backed up kernel to kernel_v{round_num}.py")
+        logs_dir = test_work_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file = logs_dir / f"triton_test_round_{round_num}.log"
 
-    logs_dir = test_work_dir / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    log_file = logs_dir / f"triton_test_round_{round_num}.log"
+        if not (settings.use_nvgpu and context.nvgpu_available):
+            raise ValueError("NVGPU is not available")
 
-    if settings.use_nvgpu and context.nvgpu_available:
-        return await run_test_round_nvgpu(context, round_num, test_work_dir, log_file, timing_stats)
-    return await run_test_round_local(context, round_num, test_work_dir, log_file, timing_stats)
-
-
-async def run_test_round_local(
-    context: RuntimeContext,
-    round_num: int,
-    test_work_dir: Path,
-    log_file: Path,
-    timing_stats: AttemptTimingStats | None = None,
-):
-    args = context.args
-
-    cmd = [sys.executable, f"check_triton{context.settings.check_suffix}.py"]
-    if args.no_perf:
-        cmd.append("--no-perf")
-
-    test_start_wall = now_timestamp()
-    test_start_ns = monotonic_timestamp_ns()
-
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(test_work_dir),
+        return await run_test_round_nvgpu(
+            context,
+            round_num,
+            test_work_dir,
+            log_file,
+            timing_stats,
+            task_label=task_label,
         )
-
-        try:
-            stdout_data, stderr_data = await asyncio.wait_for(process.communicate(), timeout=10000)
-            stdout = stdout_data.decode("utf-8")
-            stderr = stderr_data.decode("utf-8")
-            returncode = process.returncode
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            error_msg = f"Test round {round_num} timed out"
-            with open(log_file, "w") as fp:
-                fp.write(f"=== Test Round {round_num} ===\n")
-                fp.write(f"ERROR: {error_msg}\n")
-            return False, "", error_msg, log_file
-
-        test_end_wall = now_timestamp()
-        test_duration_ms = monotonic_elapsed_ms(test_start_ns)
-
-        if timing_stats is not None:
-            record = TestRoundRecord(
-                round=round_num,
-                success=returncode == 0 and ("PASSED" in stdout),
-                execution_mode="local",
-                start_time=ensure_timezone(test_start_wall).isoformat(),
-                end_time=ensure_timezone(test_end_wall).isoformat(),
-                duration_ms=round(test_duration_ms, 3),
-            )
-            timing_stats.add_test_round(record)
-            timing_stats.add_test_time(test_duration_ms)
-
-        with open(log_file, "w") as fp:
-            fp.write(f"=== Test Round {round_num} (Local) ===\n")
-            fp.write(f"Command: {' '.join(cmd)}\n")
-            fp.write(f"Exit code: {returncode}\n")
-            fp.write(f"Execution time: {format_ms(test_duration_ms, context.args.ms_format)}\n\n")
-            fp.write("=== STDOUT ===\n")
-            fp.write(stdout)
-            fp.write("\n=== STDERR ===\n")
-            fp.write(stderr)
-            fp.write("\n=== END OF LOG ===\n")
-
-        context.logger.debug(f"Test output saved to {log_file}")
-
-        success = returncode == 0 and ("PASSED" in stdout)
-        return success, stdout, stderr, log_file
-
-    except Exception as exc:  # pragma: no cover
-        error_msg = f"Test round {round_num} failed: {exc}"
-        with open(log_file, "w") as fp:
-            fp.write(f"=== Test Round {round_num} ===\n")
-            fp.write(f"ERROR: {error_msg}\n")
-        return False, "", error_msg, log_file
 
 
 async def run_test_round_nvgpu(
@@ -137,13 +81,11 @@ async def run_test_round_nvgpu(
     test_work_dir: Path,
     log_file: Path,
     timing_stats: AttemptTimingStats | None = None,
+    *,
+    task_label: str | None = None,
 ):
     logger = context.logger
     args = context.args
-
-    if NVGPUClient is None:  # pragma: no cover
-        logger.error("NVGPU client is not available")
-        return await run_test_round_local(context, round_num, test_work_dir, log_file, timing_stats)
 
     try:
         nvgpu_client = NVGPUClient(args.nvgpu_server)
@@ -160,11 +102,11 @@ async def run_test_round_nvgpu(
         task_id = nvgpu_client.submit_task_in_script_dir(
             script_path=script_path,
             task_type="functional",
+            task_label=task_label,
             args=task_args,
             gpu_id=args.nvgpu_gpu,
         )
-
-        logger.info(f"Task submitted: {task_id}")
+        logger.info("Task submitted: %s", format_task_ref(task_id, include_label=False))
         last_status = None
 
         def _format_status_progress(result_obj):
@@ -188,10 +130,11 @@ async def run_test_round_nvgpu(
 
             if current_status != last_status:
                 progress_text = _format_status_progress(result)
+                task_ref = format_task_ref(result, include_label=True)
                 if progress_text:
-                    logger.info(f"Task {task_id}: {current_status} ({progress_text})")
+                    logger.info("TASK %s: %s (%s)", task_ref, current_status, progress_text)
                 else:
-                    logger.info(f"Task {task_id}: {current_status}")
+                    logger.info("TASK %s: %s", task_ref, current_status)
                 last_status = current_status
 
             if current_status in ["completed", "failed", "cancelled"]:
@@ -282,6 +225,10 @@ async def run_test_round_nvgpu(
 
         with open(log_file, "w") as fp:
             fp.write(f"=== Test Round {round_num} (NVGPU) ===\n")
+            try:
+                fp.write(f"TASK: {format_task_ref(result, include_label=True)}\n")
+            except Exception:
+                pass
             fp.write(f"Task ID: {task_id}\n")
             fp.write(f"GPU: {assigned_gpu if assigned_gpu is not None else (args.nvgpu_gpu or 'auto-assigned')}\n")
             fp.write(f"Status: {result.status}\n")
@@ -370,12 +317,25 @@ async def get_feedback_from_llm(
         return None
 
     conversation_history = history_manager.conversation
+    settings = context.settings
+    direction = settings.direction
 
     error_info = (
         f"Round {round_num} Test Output:\n{error_output}\n\nStderr:\n{stderr_output}"
     )
     traceback_info = stderr_output if stderr_output else "No traceback available"
-    prompt = feedback_prompt.format(error_info=error_info, traceback_info=traceback_info)
+    
+    # Select appropriate feedback prompt based on direction
+    if direction == "tri2cute":
+        # Get the current CUTE code for feedback
+        cute_file = test_work_dir / settings.dir_cute / "kernel.cu"
+        current_code = cute_file.read_text() if cute_file.exists() else "Code not found"
+        prompt = get_triton2cute_feedback(error_output=error_output, current_code=current_code)
+    elif direction == "cu2tri":
+        # cu2tri
+        prompt = cuda2triton_feedback.format(error_info=error_info, traceback_info=traceback_info)
+    else:
+        raise ValueError(f"Unsupported direction: {direction}")
 
     feedback_round_id = round_num + 1
 
@@ -391,28 +351,33 @@ async def get_feedback_from_llm(
     fixed_code_response = None
     feedback_model_used = None
     round_entry = RoundRecord(round=feedback_round_id, retry_limit=args.max_retries)
-    round_retry_call_ms = 0.0
-    round_retry_wait_ms = 0.0
     round_start_wall = None
     feedback_stage = "feedback_llm_generation"
 
     while retry_count <= args.max_retries:
         retry_index = retry_count
-        retry_start_ns = monotonic_timestamp_ns()
+        trans_timer = TransTimer()
         retry_wall_start = now_timestamp()
         if round_start_wall is None:
             round_start_wall = retry_wall_start
 
         fixed_code_response = None
         usage_dict = None
-        generation_info = None
+        extra_info = None
 
         api_params = None
         api_params_exc = None
         try:
             # Build API params against the currently selected endpoint
             get_api_param = context.model.get_api_param
-            api_params = get_api_param(conversation_history, model_name)
+
+            # Extract temperature from settings if available
+            temperature = getattr(context.args, 'temperature', None)
+            extra_kwargs = {}
+            if temperature is not None:
+                extra_kwargs['temperature'] = temperature
+
+            api_params = get_api_param(conversation_history, model_name, **extra_kwargs)
         except Exception as exc:
             api_params_exc = exc
 
@@ -455,9 +420,10 @@ async def get_feedback_from_llm(
         try:
             # Use currently selected endpoint's async client
             async_client = context.model.async_client
-            fixed_code_response, feedback_model_used, usage_dict, generation_info = await async_openai_llm_call(
-                async_client, api_params, logger=logger
-            )
+            with trans_timer.time("feedback_call"):
+                fixed_reasoning_content_response, fixed_code_response, feedback_model_used, usage_dict, extra_info = await async_openai_llm_call(
+                    async_client, api_params, logger=logger
+                )
 
             if not feedback_model_used:
                 feedback_model_used = model_name
@@ -470,6 +436,7 @@ async def get_feedback_from_llm(
                 logger.debug(f"🤖 Feedback model used: {feedback_model_used}")
 
             history_manager.add_assistant_message(
+                fixed_reasoning_content_response,
                 fixed_code_response,
                 round_id=feedback_round_id,
                 retry_index=retry_index,
@@ -485,14 +452,15 @@ async def get_feedback_from_llm(
                 messages=conversation_history,
                 full_response=fixed_code_response,
                 model_used=feedback_model_used,
+                reasoning_content=fixed_reasoning_content_response,
             )
 
-            if generation_info and generation_info.get("native_tokens_reasoning") is not None:
+            if extra_info and extra_info.get("native_tokens_reasoning") is not None:
                 usage_dict = usage_dict or {}
-                usage_dict["reasoning_tokens"] = generation_info.get("native_tokens_reasoning")
+                usage_dict["reasoning_tokens"] = extra_info.get("native_tokens_reasoning")
 
             retry_wall_end = now_timestamp()
-            retry_duration_ms = monotonic_elapsed_ms(retry_start_ns)
+            retry_duration_ms = trans_timer.last_duration_ms("feedback_call") or 0.0
 
             retry_record = RetryRecord(
                 retry_index=retry_index,
@@ -501,7 +469,7 @@ async def get_feedback_from_llm(
                 duration_ms=round(retry_duration_ms, 3),
                 success=True,
                 usage=usage_dict,
-                generation_info=generation_info,
+                extra_info=extra_info,
             )
             round_entry.add_retry(retry_record)
 
@@ -529,6 +497,12 @@ async def get_feedback_from_llm(
                 ),
             )
 
+            # Print feedback timers for this attempt
+            timers_display = trans_timer.as_dict()
+            if timers_display:
+                parts = [f"{label}={format_ms(value, args.ms_format)}" for label, value in sorted(timers_display.items())]
+                logger.info("⏱️  Feedback timers: %s", ", ".join(parts))
+
             if timing_stats is not None:
                 timing_stats.add_llm_time(retry_duration_ms)
 
@@ -539,7 +513,7 @@ async def get_feedback_from_llm(
 
         except Exception as exc:
             retry_wall_end = now_timestamp()
-            retry_duration_ms = monotonic_elapsed_ms(retry_start_ns)
+            retry_duration_ms = trans_timer.last_duration_ms("feedback_call") or 0.0
             error_msg = str(exc)
 
             retry_record = RetryRecord(
@@ -588,6 +562,12 @@ async def get_feedback_from_llm(
                 ),
             )
 
+            # Print feedback timers for this attempt (error)
+            timers_display = trans_timer.as_dict()
+            if timers_display:
+                parts = [f"{label}={format_ms(value, args.ms_format)}" for label, value in sorted(timers_display.items())]
+                logger.info("⏱️  Feedback timers: %s", ", ".join(parts))
+
             if timing_stats is not None:
                 timing_stats.add_llm_retry_time(retry_duration_ms)
 
@@ -597,20 +577,20 @@ async def get_feedback_from_llm(
                 logger.warning(
                     f"🔄 API overload detected in feedback (retry {retry_count}/{args.max_retries}): {error_msg}"
                 )
-                # Rotate to next endpoint in pool, if any
-                ep = context.model.rotate_next()
-                if ep is not None:
-                    logger.info(
-                        f"🔁 Switched endpoint to '{ep.name}' at {ep.base_url or 'default'} for next retry"
-                    )
+                if getattr(args, "rotate_endpoints", False):
+                    ep = context.model.rotate_next()
+                    if ep is not None:
+                        logger.info(
+                            f"🔁 Switched endpoint to '{ep.name}' at {ep.base_url or 'default'} for next retry"
+                        )
                 if wait_time > 0:
                     logger.info(f"⏳ Waiting {wait_time} seconds before retry...")
-                    wait_start_ns = monotonic_timestamp_ns()
-                    for remaining in range(wait_time, 0, -1):
-                        if remaining % 10 == 0 or remaining <= 5:
-                            logger.debug(f"⏱️  Retrying in {remaining} seconds...")
-                        await asyncio.sleep(1)
-                    waited_ms = monotonic_elapsed_ms(wait_start_ns)
+                    with trans_timer.time("feedback_retry_wait"):
+                        for remaining in range(wait_time, 0, -1):
+                            if remaining % 10 == 0 or remaining <= 5:
+                                logger.debug(f"⏱️  Retrying in {remaining} seconds...")
+                            await asyncio.sleep(1)
+                    waited_ms = trans_timer.last_duration_ms("feedback_retry_wait") or 0.0
                     if timing_stats is not None:
                         timing_stats.add_llm_retry_wait(waited_ms)
                     history_manager.add_error_event(
@@ -675,12 +655,47 @@ async def run_testing_loop(
     logger = context.logger
     max_rounds = context.settings.max_rounds
 
+    direction = context.settings.direction
+
     for round_num in range(1, max_rounds + 1):
-        success, stdout, stderr, log_file = await run_test_round(context, round_num, test_work_dir, timing_stats)
+        success, stdout, stderr, log_file = await run_test_round(
+            context,
+            round_num,
+            test_work_dir,
+            timing_stats,
+            task_label=f"{case_name}|at@{attempt_number}|r@{round_num}",
+        )
 
         if success:
-            logger.info(f"✅ Test round {round_num} PASSED! Triton kernel is working correctly.")
+            kernel_label = "CUTE" if direction == "tri2cute" else "Triton"
+            logger.info(f"✅ Test round {round_num} PASSED! {kernel_label} kernel is working correctly.")
             logger.info(f"Final results saved in {log_file}")
+            # Optionally run performance testing after correctness
+            try:
+                if not context.args.no_perf:
+                    from .perf import run_perf_nvgpu, run_perf_local, record_perf_result
+                    gpu_id = context.args.nvgpu_gpu if getattr(context.args, 'use_nvgpu', True) else None
+                    case_tag = f"{case_type}/{case_name}"
+                    shape_tag = None  # optional: could be inferred from get_data if available
+                    if context.settings.use_nvgpu and context.nvgpu_available:
+                        perf_data, server_times = await run_perf_nvgpu(
+                            context,
+                            test_work_dir,
+                            gpu_id=gpu_id,
+                            case_tag=case_tag,
+                            shape_tag=shape_tag,
+                        )
+                    else:
+                        perf_data = await run_perf_local(
+                            context,
+                            test_work_dir,
+                            case_tag=case_tag,
+                            shape_tag=shape_tag,
+                        )
+                        server_times = {}
+                    await record_perf_result(context, test_work_dir, perf_data, server_times)
+            except Exception as perf_exc:
+                logger.warning(f"Perf step failed: {perf_exc}")
             return True, round_num
 
         logger.info(f"❌ Test round {round_num} FAILED.")
@@ -703,10 +718,19 @@ async def run_testing_loop(
             )
 
             if fixed_code:
-                kernel_path = test_work_dir / context.settings.dir_triton / "kernel.py"
+                # Save fixed code to appropriate location based on direction
+                direction = context.settings.direction
+                if direction == "cu2tri":
+                    kernel_path = test_work_dir / context.settings.dir_triton / "kernel.py"
+                elif direction == "tri2cute":
+                    kernel_path = test_work_dir / context.settings.dir_cute / "kernel.cu"
+                else:
+                    logger.error(f"Unsupported direction: {direction}")
+                    break
+                
                 with open(kernel_path, "w") as fp:
                     fp.write(fixed_code)
-                logger.debug("Updated kernel.py with LLM feedback")
+                logger.debug(f"Updated {kernel_path.name} with LLM feedback")
 
                 save_conversation_history(
                     context,

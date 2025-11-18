@@ -10,12 +10,9 @@ import os
 
 from utils.timezone import apply_default_timezone_to_os, format_timestamp
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ..services import cases
 
 from .model_registry import ModelRegistry, ModelRegistryError, load_model_registry
+from ..utils.gpu_targets import GPUTarget, get_gpu_target
 
 
 @dataclass
@@ -29,6 +26,8 @@ class Settings:
     dir_cuda: Path = Path("cuda_")
     dir_torch: Path = Path("torch_")
     dir_triton: Path = Path("triton_")
+    dir_cute: Path = Path("cute_")
+    direction: str = field(init=False)
     testset_root_dir: Path = field(init=False)
     all_cases: Dict[str, list[str]] = field(init=False)
     check_suffix: str = field(init=False)
@@ -43,6 +42,9 @@ class Settings:
     model_registry: ModelRegistry = field(init=False)
     model_registry_path: Path = field(init=False)
     project_root: Path = field(init=False)
+    target_gpu: str = field(init=False)
+    gpu_target: GPUTarget = field(init=False)
+    test_gpu_index: int | None = field(init=False)
 
     def __post_init__(self) -> None:
         if self.args.max_attempts < 1:
@@ -55,6 +57,11 @@ class Settings:
         self.console_output = bool(self.args.console and not self.args.no_console)
         self.use_nvgpu = bool(self.args.use_nvgpu and not self.args.no_nvgpu)
         self.resume_conversation = bool(getattr(self.args, "resume_conversation", False))
+        
+        # Translation direction
+        self.direction = getattr(self.args, "direction", None)
+        if self.direction is None:
+            raise ValueError("Transpile direction is not set. Please use --direction to set the translation direction.")
 
         project_root_env = os.getenv("PROJECT_ROOT")
         if project_root_env:
@@ -62,10 +69,16 @@ class Settings:
         else:  # pragma: no cover - fallback for tests
             self.project_root = Path(__file__).resolve().parents[3]
 
-        if self.args.testset.startswith("xpiler"):
-            self.testset_root_dir = self.project_root / Path("cu2til/cases/xpiler")
+        target_gpu_key = getattr(self.args, "target_gpu", "h800_sxm")
+        self.gpu_target = get_gpu_target(target_gpu_key)
+        self.target_gpu = self.gpu_target.key
+        cli_gpu_index = getattr(self.args, "test_gpu", None)
+        if cli_gpu_index is not None:
+            self.test_gpu_index = cli_gpu_index
         else:
-            self.testset_root_dir = self.project_root / Path(f"cu2til/cases/{self.args.testset}")
+            self.test_gpu_index = self.gpu_target.default_gpu_index
+
+        self.testset_root_dir = self.project_root / Path(f"cu2til/cases/{self.args.testset}")
 
         self.check_suffix = "" if "xpiler" in self.args.testset else "_dynamic"
         from ..services.cases import resolve_cases_for_testset
@@ -83,11 +96,12 @@ class Settings:
             raise RuntimeError(str(exc)) from exc
 
         # Resolve outputs_root with priority: CLI > env > default
+        # Use direction to determine output subdirectory
         cli_root = getattr(self.args, "outputs_root", None)
         if cli_root:
             self.outputs_root = Path(cli_root).expanduser().resolve()
         else:
-            self.outputs_root = self.project_root / Path("cu2til/llm_trans/runs/cu2tri")
+            self.outputs_root = self.project_root / Path(f"cu2til/llm_trans/runs/{self.direction}")
 
         # Backward-compat alias
         self.base_output_dir = self.outputs_root

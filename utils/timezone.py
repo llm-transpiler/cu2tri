@@ -7,7 +7,6 @@ from functools import lru_cache
 import os
 import time
 from zoneinfo import ZoneInfo
-from typing import Any
 
 # Default timezone can be overridden at runtime via ``set_default_timezone``.
 DEFAULT_TZ_NAME = "Asia/Shanghai"

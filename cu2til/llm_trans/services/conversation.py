@@ -63,6 +63,7 @@ async def save_llm_conversation(
     full_response: str,
     *,
     model_used: str | None = None,
+    reasoning_content: str | None = None,
 ) -> None:
     conversations_dir = test_work_dir / "logs" / "conversations"
     conversations_dir.mkdir(parents=True, exist_ok=True)
@@ -72,18 +73,27 @@ async def save_llm_conversation(
 
     try:
         with open(conversation_file, "a", encoding="utf-8") as fp:
-            for msg in messages:
-                entry = {
+            # 只保存当前轮次的最后一条 user 消息（如果存在）
+            # 避免重复保存整个对话历史
+            last_user_msg = None
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    last_user_msg = msg
+                    break
+            
+            if last_user_msg:
+                user_entry = {
                     "attempt_number": attempt_number,
                     "round_number": round_id,
                     "retry_index": retry_index,
                     "timestamp": timestamp,
                     "interaction_type": "request",
-                    "role": msg.get("role", "unknown"),
-                    "content": msg.get("content", ""),
+                    "role": "user",
+                    "content": last_user_msg.get("content", ""),
                 }
-                fp.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                fp.write(json.dumps(user_entry, ensure_ascii=False) + "\n")
 
+            # 保存当前的 assistant response，包含 reasoning_content
             thinking_content = extract_thinking_content(full_response)
 
             response_entry = {
@@ -98,6 +108,8 @@ async def save_llm_conversation(
             }
             if model_used:
                 response_entry["model_used"] = model_used
+            if reasoning_content:
+                response_entry["reasoning_content"] = reasoning_content
             if thinking_content:
                 response_entry["thinking"] = thinking_content
                 response_entry["content_without_thinking"] = re.sub(

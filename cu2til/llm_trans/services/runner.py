@@ -32,6 +32,7 @@ async def run(context: RuntimeContext) -> Dict[str, object]:
     logger.info("⚙️  Configuration:")
     logger.info(f"   - Model: {context.model.model_name}")
     logger.info(f"   - Base URL: {context.model.base_url}")
+    logger.info(f"   - Temperature: {args.temperature}")
     logger.info(f"   - Testset: {args.testset}")
     logger.info(f"   - Max rounds: {settings.max_rounds}")
     logger.info(f"   - Console output: {settings.console_output}")
@@ -160,6 +161,7 @@ def _initialize_jsonl_metadata(context: RuntimeContext) -> None:
     metadata = {
         "_type": "metadata",
         "model_name": context.model.model_name,
+        "temperature": context.args.temperature,
         "testset": context.args.testset,
         "timestamp": context.settings.timestamp,
         "max_rounds": context.settings.max_rounds,
@@ -167,6 +169,9 @@ def _initialize_jsonl_metadata(context: RuntimeContext) -> None:
         "use_nvgpu": context.settings.use_nvgpu,
         "nvgpu_server": context.args.nvgpu_server if context.settings.use_nvgpu else None,
         "no_perf": context.args.no_perf,
+        "perf_warmup": getattr(context.args, "perf_warmup", None),
+        "perf_iters": getattr(context.args, "perf_iters", None),
+        "nvgpu_perf_gpu": getattr(context.args, "nvgpu_perf_gpu", None),
         "max_attempts": context.args.max_attempts,
         "attempt_policy": context.args.attempt_policy,
         "ms_format": context.args.ms_format,

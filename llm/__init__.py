@@ -24,7 +24,6 @@ from .history import (
 
 # OpenAI-compatible helpers (moved from cu2til/trans/dev_/llm.py)
 from .client.openai_compat import (
-    openai_llm_call,
     async_openai_llm_call,
     CallingIdentifier,
     get_api_params_method,
@@ -53,7 +52,7 @@ __all__ = [
     'MessageNode', 'ConversationTree',
 
     # OpenAI-compatible helpers
-    'openai_llm_call', 'async_openai_llm_call',
+    'async_openai_llm_call',
     'CallingIdentifier', 'get_api_params_method',
     'get_api_param_openai_default', 'get_api_param_openai_openrouter',
     'get_api_param_gemini_openai', 'get_api_param_deepseek_openai',
