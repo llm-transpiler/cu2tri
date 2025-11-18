@@ -366,6 +366,8 @@ async def run_single_case_attempt(
                     duration_ms=round(retry_duration_ms, 3),
                     success=False,
                     error=error_msg,
+                    usage=None,
+                    extra_info=None,
                 )
                 round_entry.add_retry(retry_record)
                 error_meta = {
