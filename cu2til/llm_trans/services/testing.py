@@ -180,6 +180,8 @@ async def run_test_round_nvgpu(
                 round=round_num,
                 success=result.status == "completed" and result.exit_code == 0,
                 execution_mode="nvgpu",
+                start_time=start_iso,
+                end_time=end_iso,
                 duration_ms=round(execution_time_ms, 3) if execution_time_ms is not None else None,
                 waiting_ms=round(waiting_time_ms, 3) if waiting_time_ms is not None else None,
                 queue_ms=round(queue_time_ms, 3) if queue_time_ms is not None else None,
@@ -468,6 +470,7 @@ async def get_feedback_from_llm(
                 end_time=ensure_timezone(retry_wall_end).isoformat(),
                 duration_ms=round(retry_duration_ms, 3),
                 success=True,
+                error=None,
                 usage=usage_dict,
                 extra_info=extra_info,
             )

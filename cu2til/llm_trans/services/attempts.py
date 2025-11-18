@@ -320,6 +320,7 @@ async def run_single_case_attempt(
                     end_time=ensure_timezone(retry_wall_end).isoformat(),
                     duration_ms=round(retry_duration_ms, 3),
                     success=True,
+                    error=None,
                     usage=usage_dict,
                     extra_info=extra_info,
                 )
