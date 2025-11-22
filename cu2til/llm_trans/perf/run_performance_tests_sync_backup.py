@@ -29,8 +29,7 @@ except ImportError as e:
     NVGPU_AVAILABLE = False
 
 
-def load_case_success_stats(case_success_path: Path, case_type_filter: str = None,
-                            case_name_filter: str = None, attempt_filter: Optional[Set[int]] = None) -> Dict:
+def load_case_success_stats(case_success_path: Path, case_type_filter: str = None, case_name_filter: str = None) -> Dict:
     """Load case_success.json and extract successful attempts with optional filtering"""
     with open(case_success_path, 'r') as f:
         data = json.load(f)
@@ -51,15 +50,9 @@ def load_case_success_stats(case_success_path: Path, case_type_filter: str = Non
                     continue
 
             if case_info.get("stat_final_success", False):
-                # Find ALL successful attempts - test each one unless filtered
-                successful_attempts = [
-                    attempt for attempt in case_info.get("attempts", [])
-                    if attempt.get("success", False)
-                ]
+                # Find ALL successful attempts - test each one
+                successful_attempts = [attempt for attempt in case_info.get("attempts", []) if attempt.get("success", False)]
                 for attempt in successful_attempts:
-                    attempt_number = attempt["attempt_number"]
-                    if attempt_filter and attempt_number not in attempt_filter:
-                        continue
                     successful_cases.append({
                         "case_type": case_type,
                         "case_name": case_name,
@@ -355,7 +348,6 @@ def main():
     parser.add_argument("--output-dir", default="/data/apps/project/cu2tri/cu2til/llm_trans/perf/results",
                        help="Output directory for performance results")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be tested without running tests")
-    parser.add_argument("--attempt-number", type=int, help="Only test the specified attempt number")
 
     args = parser.parse_args()
 
@@ -413,15 +405,12 @@ def main():
     all_successful_cases = []
     total_kernels = 0
 
-    attempt_filter = {args.attempt_number} if args.attempt_number is not None else None
-
     for case_success_file, file_info in case_success_files:
         print(f"\n📖 Reading: {case_success_file}")
         successful_cases = load_case_success_stats(
             case_success_file,
             args.case_type,
-            args.case_name,
-            attempt_filter
+            args.case_name
         )
         print(f"  ✅ Found {len(successful_cases)} successful cases (filtered)")
 
