@@ -164,7 +164,8 @@ def submit_performance_test(kernel_path: Path, test_info: Dict, gpu_id: Optional
 
         task_id = client.submit_task_in_script_dir(
             script_path=str(perf_script_path.absolute()),
-            task_type="performance",  # This automatically uses exclusive mode
+            task_mode="shared",       # Use shared mode for concurrent performance testing
+            task_type="performance",  # Still a performance task
             task_label=task_label,
             gpu_id=gpu_id,
         )
@@ -343,7 +344,7 @@ def main():
     parser.add_argument("--timestamp", help="Process only specific timestamp")
     parser.add_argument("--case-type", help="Process only specific case type (e.g., 'add' for all add cases)")
     parser.add_argument("--case-name", help="Process only specific case name (e.g., 'add_1_15_64' for specific case)")
-    parser.add_argument("--gpu", type=int, help="GPU ID for exclusive mode (optional - let NVGPU server auto-assign if not specified)")
+    parser.add_argument("--gpu", type=int, help="GPU ID for shared mode (optional - let NVGPU server auto-assign if not specified)")
     parser.add_argument("--output-dir", default="/data/apps/project/cu2tri/cu2til/llm_trans/perf/results",
                        help="Output directory for performance results")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be tested without running tests")
@@ -357,7 +358,7 @@ def main():
             print(f"Error: case_name '{args.case_name}' doesn't start with case_type '{args.case_type}'")
             return 1
 
-    gpu_info = f"GPU ID: {args.gpu} (exclusive mode)" if args.gpu else "GPU: auto-assigned (exclusive mode)"
+    gpu_info = f"GPU ID: {args.gpu} (shared mode)" if args.gpu else "GPU: auto-assigned (shared mode)"
     print(f"Performance Testing for Successful Triton Kernels")
     print(f"===============================================")
     print(f"{gpu_info}")
