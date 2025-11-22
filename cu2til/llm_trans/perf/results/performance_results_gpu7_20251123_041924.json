@@ -1,0 +1,16 @@
+[
+  {
+    "model": "deepseek_v3_2_exp",
+    "timestamp": "20251024_075645",
+    "case_type": "add",
+    "case_name": "add_1_15_64",
+    "attempt_number": 1,
+    "successful_round": 2,
+    "kernel_path": "/data/apps/project/cu2tri/cu2til/llm_trans/runs/cu2tri/xpiler/deepseek_v3_2_exp/20251024_075645/add_1_15_64/attempt_01/triton_/kernel.py",
+    "task_id": "8796d57f-fd10-4cd3-9bfe-e360e18b805d",
+    "gpu_id": 7,
+    "status": "completed",
+    "error": null,
+    "performance_metrics": null
+  }
+]

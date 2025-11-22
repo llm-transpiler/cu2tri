@@ -1,0 +1,16 @@
+[
+  {
+    "model": "gpt_oss_120b",
+    "timestamp": "20251122_054219",
+    "case_type": "add",
+    "case_name": "add_1_15_64",
+    "attempt_number": 1,
+    "successful_round": 3,
+    "kernel_path": "/data/apps/project/cu2tri/cu2til/llm_trans/runs/cu2tri/xpiler/gpt_oss_120b/20251122_054219/add_1_15_64/attempt_01/triton_/kernel.py",
+    "task_id": "e2692420-d950-4186-a7c0-0664a080d997",
+    "gpu_id": 7,
+    "status": "completed",
+    "error": null,
+    "performance_metrics": null
+  }
+]

@@ -1,0 +1,16 @@
+[
+  {
+    "model": "gpt_5_mini",
+    "timestamp": "20251023_014909",
+    "case_type": "add",
+    "case_name": "add_3_3_256",
+    "attempt_number": 1,
+    "successful_round": 1,
+    "kernel_path": "/data/apps/project/cu2tri/cu2til/llm_trans/runs/cu2tri/xpiler/gpt_5_mini/20251023_014909/add_3_3_256/attempt_01/triton_/kernel.py",
+    "task_id": "ad02eac3-ad60-4f27-bafc-436f57c14670",
+    "gpu_id": 7,
+    "status": "completed",
+    "error": null,
+    "performance_metrics": null
+  }
+]
