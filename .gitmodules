@@ -73,3 +73,9 @@
 [submodule "dlib/flash-attention"]
 	path = dlib/flash-attention
 	url = https://github.com/Dao-AILab/flash-attention.git
+[submodule "third_party/leetgpu-challenges"]
+	path = third_party/leetgpu-challenges
+	url = https://github.com/tiledsl/leetgpu-challenges.git
+[submodule "third_party/tritonbench"]
+	path = third_party/tritonbench
+	url = https://github.com/meta-pytorch/tritonbench.git

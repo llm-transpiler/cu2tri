@@ -107,6 +107,7 @@ async def run(context: RuntimeContext) -> Dict[str, object]:
                 rounds=rounds,
                 attempt_details=attempt_details,
                 successful_attempt=successful_attempt,
+                error=None,
             )
         detailed_results[case_type].append(case_result)
         all_case_results.append(case_result)
