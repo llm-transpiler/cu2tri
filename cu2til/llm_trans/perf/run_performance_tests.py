@@ -126,7 +126,7 @@ def discover_all_case_success_files(stats_root: Path, cu2tri_name: str = "cu2tri
     return case_success_files
 
 
-def submit_performance_test(kernel_path: Path, test_info: Dict, gpu_id: int = 7, nvgpu_server: str = "http://localhost:8080") -> Optional[str]:
+def submit_performance_test(kernel_path: Path, test_info: Dict, gpu_id: Optional[int] = None, nvgpu_server: str = "http://localhost:8080") -> Optional[str]:
     """Submit kernel to nvgpu server for performance testing using correct NVGPU client"""
 
     if not NVGPU_AVAILABLE:
@@ -236,7 +236,7 @@ def get_task_logs(task_id: str, nvgpu_server: str = "http://localhost:8080") -> 
         }
 
 
-def save_performance_logs(results: List[Dict], gpu_id: int):
+def save_performance_logs(results: List[Dict], gpu_id: Optional[int] = None):
     """Save performance test logs to logs/perf directories with proper format"""
 
     for result in results:
@@ -312,13 +312,14 @@ def get_task_result(task_id: str, nvgpu_server: str = "http://localhost:8080"):
         return None
 
 
-def save_performance_results(results: List[Dict], output_dir: Path, gpu_id: int):
+def save_performance_results(results: List[Dict], output_dir: Path, gpu_id: Optional[int] = None):
     """Save performance test results"""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate results filename with timestamp
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    results_file = output_dir / f"performance_results_gpu{gpu_id}_{timestamp}.json"
+    gpu_suffix = f"_gpu{gpu_id}" if gpu_id is not None else "_auto"
+    results_file = output_dir / f"performance_results{gpu_suffix}_{timestamp}.json"
 
     # Sort results by model, timestamp, case_type, case_name
     results.sort(key=lambda x: (x["model"], x["timestamp"], x["case_type"], x["case_name"]))
@@ -342,7 +343,7 @@ def main():
     parser.add_argument("--timestamp", help="Process only specific timestamp")
     parser.add_argument("--case-type", help="Process only specific case type (e.g., 'add' for all add cases)")
     parser.add_argument("--case-name", help="Process only specific case name (e.g., 'add_1_15_64' for specific case)")
-    parser.add_argument("--gpu", type=int, default=7, help="GPU ID for exclusive mode (default: 7)")
+    parser.add_argument("--gpu", type=int, help="GPU ID for exclusive mode (optional - let NVGPU server auto-assign if not specified)")
     parser.add_argument("--output-dir", default="/data/apps/project/cu2tri/cu2til/llm_trans/perf/results",
                        help="Output directory for performance results")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be tested without running tests")
@@ -356,9 +357,10 @@ def main():
             print(f"Error: case_name '{args.case_name}' doesn't start with case_type '{args.case_type}'")
             return 1
 
+    gpu_info = f"GPU ID: {args.gpu} (exclusive mode)" if args.gpu else "GPU: auto-assigned (exclusive mode)"
     print(f"Performance Testing for Successful Triton Kernels")
     print(f"===============================================")
-    print(f"GPU ID: {args.gpu} (exclusive mode)")
+    print(f"{gpu_info}")
     print(f"Stats root: {args.stats_root}")
     print(f"Runs root: {args.runs_root}")
 
