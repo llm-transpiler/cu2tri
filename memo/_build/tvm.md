@@ -117,13 +117,14 @@ apt install clang-tidy-18 clang-format-18
 
 
 python3 -c "import torch; print(torch.utils.cmake_prefix_path)"
-export CUDA_ARCH_LIST=8.9
+export CUDA_ARCH_LIST=9.0
 cmake ..
 cmake --build . --parallel $(nproc) -v
-cd ../3rdparty/tvm-ffi; pip install .; cd ..
+cd ../3rdparty/tvm-ffi; pip install .; cd ../..
+/path-to-tvm=`pwd`
 export TVM_HOME=/path-to-tvm
 export PYTHONPATH=$TVM_HOME/python:$TVM_HOME/ffi/python:$PYTHONPATH
-export TVM_LIBRARY_PATH=/path-to-tvm/build
+export TVM_LIBRARY_PATH=$TVM_HOME/build
 pip install -e /path-to-tvm/python
 python -c "import tvm; print(tvm.base._LIB)"
 python -c "import tvm; print('\n'.join(f'{k}: {v}' for k, v in tvm.support.libinfo().items()))"
