@@ -79,3 +79,6 @@
 [submodule "third_party/tritonbench"]
 	path = third_party/tritonbench
 	url = https://github.com/meta-pytorch/tritonbench.git
+[submodule "third_party/ld_triton"]
+	path = third_party/ld_triton
+	url = https://github.com/l1351868270/ld_triton.git
