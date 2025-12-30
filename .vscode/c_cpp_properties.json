@@ -8,7 +8,6 @@
                 "/usr/include/python3.12",
                 "/usr/local/lib/python3.12/dist-packages/torch/include/torch/csrc/api/include",
                 "/usr/local/lib/python3.12/dist-packages/torch/include",
-                // "/workspace/third_party/xlite-dev/LeetCUDA/kernels/hgemm/test_cu2til/til",
                 "/workspace/test_cu2til/til",
                 "/workspace/third_party/xlite-dev/LeetCUDA/kernels/hgemm/utils"
             ],
@@ -16,10 +15,7 @@
             "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",
             "cppStandard": "c++20",
-            "intelliSenseMode": "linux-gcc-x64"//,
-            // "compileCommands": [
-            //     "${workspaceFolder}/third_party/NVIDIA/cutlass/build/compile_commands.json"
-            // ]
+            "intelliSenseMode": "linux-gcc-x64"
         }
     ],
     "version": 4
