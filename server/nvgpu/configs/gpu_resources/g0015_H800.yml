@@ -34,7 +34,7 @@ gpus:
     name: "NVIDIA H800"
     uuid: "GPU-ca212802-c8d5-4103-a6ed-48c68c914a99"
     memory_gb: 80
-    enabled: false
+    enabled: true
     default_mode: "shared"
     memory_threshold: 0.75
     max_concurrent_tasks: 10
@@ -46,7 +46,7 @@ gpus:
     name: "NVIDIA H800"
     uuid: "GPU-34ee70e2-876d-5ca9-5613-21119579319a"
     memory_gb: 80
-    enabled: false
+    enabled: true
     default_mode: "shared"
     memory_threshold: 0.75
     max_concurrent_tasks: 10
@@ -58,7 +58,7 @@ gpus:
     name: "NVIDIA H800"
     uuid: "GPU-4d663bea-13a8-4956-6c63-08988510e5a0"
     memory_gb: 80
-    enabled: false
+    enabled: true
     default_mode: "shared"
     memory_threshold: 0.75
     max_concurrent_tasks: 10
