@@ -16,7 +16,7 @@ def _project_root() -> Path:
 
 
 def _load_case_config_yaml() -> dict:
-    config_path = _project_root() / Path("cu2til/llm_trans/config/case_config.yaml")
+    config_path = _project_root() / "cu2til" / "llm_trans" / "config" / "case_config.yaml"
     if not config_path.exists():
         return {}
     try:

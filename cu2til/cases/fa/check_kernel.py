@@ -25,7 +25,7 @@ import os
 # current_dir = os.getcwd()
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-from cu2til.cases.fa.torch.ref import naive_attn
+from cu2til.cases.dev.fa.torch.ref import naive_attn
 # 添加eval_路径
 sys.path.insert(0, '/workspace')  # 添加workspace根目录
 
@@ -186,7 +186,7 @@ print(os.listdir(f"{current_dir}/cuda"))
 cu_files = [
     # "ref",
     # "kernel",
-    "kernel_expanded",
+    # "kernel_expanded",
     # "kernel_cleaned",
     "kernel_prim",
     # "kernel_expanded_converted",

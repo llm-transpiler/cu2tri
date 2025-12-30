@@ -1,0 +1,8 @@
+directions:
+  - cu2tri
+  - tri2cute
+  - cu2cute
+  - hel2tri
+  - tri2hel
+  - tri2cu
+  

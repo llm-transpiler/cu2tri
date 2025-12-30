@@ -161,7 +161,7 @@ async def run_single_case_attempt(
     elif direction == "tri2cute":
         system_prompt = (
             "You are a professional GPU computing optimization expert, proficient in Triton and CUTE/CUTLASS programming. "
-            "You help convert Triton kernels to CUTE (CUTLASS 3.x) C++ kernels while maintaining correctness and performance."
+            "You help convert Triton kernels to CUTE (CUTLASS 3.x/4.x) C++ kernels while maintaining correctness and performance."
         )
         initial_user_prompt = get_triton2cute_prompt(
             triton_code=source_code,

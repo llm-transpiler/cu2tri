@@ -234,7 +234,10 @@ def test_non_causal_attention(BATCH_SIZE, HEAD_NUM, SEQ_LEN, HEAD_DIM, dtype=tor
     
     # triton实现
     tri_out = flash_attn_triton(q, k, v)
-    # print("max diff:", (ref_out - tri_out).abs().max().item())
+    print("max diff:", (ref_out - tri_out).abs().max().item())
+    print("mean diff:", (ref_out - tri_out).abs().mean().item())
+    print("ref value range:", ref_out.min().item(), ref_out.max().item())
+    print("tri value range:", tri_out.min().item(), tri_out.max().item())
     
     # 比较
     assert torch.allclose(ref_out, tri_out, atol=1e-2, rtol=0)

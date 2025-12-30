@@ -163,9 +163,9 @@ head_dim_list = [64, 128]
 
 def get_qkv(B, H, N, D):
     """获取Flash Attention的QKV矩阵"""
-    q = torch.ones((B, H, N, D), dtype=torch.half, device="cuda")
-    k = torch.ones((B, H, N, D), dtype=torch.half, device="cuda")
-    v = torch.ones((B, H, N, D), dtype=torch.half, device="cuda")
+    q = torch.randn((B, H, N, D), dtype=torch.half, device="cuda")
+    k = torch.randn((B, H, N, D), dtype=torch.half, device="cuda")
+    v = torch.randn((B, H, N, D), dtype=torch.half, device="cuda")
     return q, k, v
 
 def get_test_shapes():
@@ -175,6 +175,13 @@ def get_test_shapes():
             for N in seq_len_list:
                 for D in head_dim_list:
                     test_shapes.append((B, H, N, D))
+    dim = 2048
+    bs_seqlen_vals = [(32, 512), (16, 1024), (8, 2048), (4, 4096), (2, 8192), (1, 16384)]
+
+    for headdim in [64, 128, 256]:
+        nheads = dim // headdim
+        for batch_size, seqlen in bs_seqlen_vals:
+            test_shapes.append((batch_size, nheads, seqlen, headdim))
     return test_shapes
 
 # %%
@@ -188,12 +195,12 @@ def test_correctness():
             q, k, v = get_qkv(batch_size, head_num, seq_len, head_dim)
             o = torch.zeros_like(q)
             ref = naive_attn(q, k, v)
-            triton_out = attention_non_causal(q, k, v, math.sqrt(k.size(-1)))
+            triton_out = attention_non_causal(q, k, v, 1. / math.sqrt(k.size(-1)))
             print(f"\tref_output: {ref.shape}, triton_output: {triton_out.shape}")
             # check_all_close(ref, o, tag=f"B={batch_size}, H={head_num}, N={seq_len}, D={head_dim}")
             check_all_close(ref, triton_out, tag="triton")
             try:
-                o_fa = flash_attn_func(q, k, v)
+                o_fa = flash_attn_func(q.transpose(1, 2).contiguous(), k.transpose(1, 2).contiguous(), v.transpose(1, 2).contiguous())
                 check_all_close(ref, o_fa, tag="flash_attn")
             except Exception as e:
                 print(f"❌ flash_attn_func failed for B={batch_size}, H={head_num}, N={seq_len}, D={head_dim}: {e}")
@@ -205,39 +212,13 @@ def test_correctness():
             except NameError:
                 pass
 
-# def test_correctness_fa_layout():
-#     for batch_size, head_num, seq_len, head_dim in get_test_shapes():
-#     # for batch_size, head_num, seq_len, head_dim in [(1, 1, 1024, 64)]:
-#         pretty_print_line(f"Testing triton: B={batch_size}, H={head_num}, N={seq_len}, D={head_dim}")
-#         try:
-#             q, k, v = get_qkv(batch_size, seq_len, head_num, head_dim)
-#             # fa layout
-#             o = torch.zeros_like(q)
-#             ref = naive_attn(q.transpose(1, 2).contiguous(), k.transpose(1, 2).contiguous(), v.transpose(1, 2).contiguous())
-#             try:
-#                 o_fa = flash_attn_func(q.transpose(1, 2).contiguous(), k.transpose(1, 2).contiguous(), v.transpose(1, 2).contiguous())
-#                 check_all_close(ref, o_fa, tag="flash_attn")
-#             except Exception as e:
-#                 print(f"❌ flash_attn_func failed for B={batch_size}, H={head_num}, N={seq_len}, D={head_dim}: {e}")
-#             triton_out = attention_non_causal(q.transpose(1, 2).contiguous(), k.transpose(1, 2).contiguous(), v.transpose(1, 2).contiguous(), math.sqrt(k.size(-1)))
-#             # print(f"\tref_output: {ref.shape}, triton_output: {triton_out.shape}")
-#             check_all_close(ref, triton_out, tag="triton")
-#             # check_all_close(ref, o, tag=f"B={batch_size}, H={head_num}, N={seq_len}, D={head_dim}")
-#         except Exception as e:
-#             print(f"❌ triton failed: {e}")
-#         finally:
-#             try:
-#                 del q, k, v, o, triton_out, o_fa
-#             except NameError:
-#                 pass
-
 def test_performance():
     for batch_size, head_num, seq_len, head_dim in get_test_shapes():
         pretty_print_line(f"Performance test: triton, B={batch_size}, H={head_num}, N={seq_len}, D={head_dim}")
         try:
             q, k, v = get_qkv(batch_size, head_num, seq_len, head_dim)
             o = torch.zeros_like(q)
-            kernel_ms = benchmark_kernel(attention_non_causal, (q, k, v, math.sqrt(k.size(-1))))
+            kernel_ms = benchmark_kernel(attention_non_causal, (q, k, v, 1. / math.sqrt(k.size(-1))))
             kernel_tflops = tflops(batch_size, head_num, seq_len, head_dim, kernel_ms / 1000)
             print(f"triton:\t{kernel_ms:.4f}, tflops: {kernel_tflops:.2f}")
             # naive_ms = benchmark_kernel(naive_attn, (q, k, v))
@@ -255,29 +236,6 @@ def test_performance():
                 del q, k, v, o, fq, fk, fv
             except NameError:
                 pass
-
-# def test_performance_fa_layout():
-#     for batch_size, head_num, seq_len, head_dim in get_test_shapes():
-#         pretty_print_line(f"Performance test: triton, B={batch_size}, H={head_num}, N={seq_len}, D={head_dim}")
-#         try:
-#             q, k, v = get_qkv(batch_size, seq_len, head_num, head_dim)
-#             # fa layout
-#             fa_ms = benchmark_kernel(flash_attn_func, (q.transpose(1, 2).contiguous(), k.transpose(1, 2).contiguous(), v.transpose(1, 2).contiguous()))
-#             fa_tflops = tflops(batch_size, head_num, seq_len, head_dim, fa_ms / 1000)
-#             print(f"fa2:\t{fa_ms:.4f}, tflops: {fa_tflops:.2f}")
-#             kernel_ms = benchmark_kernel(attention_non_causal, (q.transpose(1, 2).contiguous(), k.transpose(1, 2).contiguous(), v.transpose(1, 2).contiguous(), math.sqrt(k.size(-1))))
-#             kernel_tflops = tflops(batch_size, head_num, seq_len, head_dim, kernel_ms / 1000)
-#             print(f"triton:\t{kernel_ms:.4f}, tflops: {kernel_tflops:.2f}")
-#             print(f"triton vs fa2: {fa_ms / kernel_ms:.2f}, {fa_tflops / kernel_tflops:.2f}")
-#         except Exception as e:
-#             print(f"❌ triton failed: {e}")
-#         finally:
-#             try:
-#                 del q, k, v, o
-#             except NameError:
-#                 pass
-
-    
 
 # %%
 

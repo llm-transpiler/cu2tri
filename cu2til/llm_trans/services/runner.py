@@ -37,7 +37,7 @@ async def run(context: RuntimeContext) -> Dict[str, object]:
     logger.info(f"   - Max rounds: {settings.max_rounds}")
     logger.info(f"   - Console output: {settings.console_output}")
     logger.info(f"   - First only: {args.first_only}")
-    logger.info(f"   - Skip performance: {args.no_perf}")
+    logger.info(f"   - Skip performance: {not args.enable_perf}")
     logger.info(f"   - Retry wait time: {args.retry_wait}s")
     logger.info(f"   - Max retries: {args.max_retries}")
     logger.info(f"   - Multi-attempt: {args.max_attempts} ({args.attempt_policy})")
@@ -169,7 +169,7 @@ def _initialize_jsonl_metadata(context: RuntimeContext) -> None:
         "concurrency": context.args.concurrency,
         "use_nvgpu": context.settings.use_nvgpu,
         "nvgpu_server": context.args.nvgpu_server if context.settings.use_nvgpu else None,
-        "no_perf": context.args.no_perf,
+        "enable_perf": context.args.enable_perf,
         "perf_warmup": getattr(context.args, "perf_warmup", None),
         "perf_iters": getattr(context.args, "perf_iters", None),
         "nvgpu_perf_gpu": getattr(context.args, "nvgpu_perf_gpu", None),

@@ -96,7 +96,8 @@ async def run_test_round_nvgpu(
         logger.debug(f"Connected to NVGPU server at {args.nvgpu_server}")
 
         script_path = str((test_work_dir / f"check_triton{context.settings.check_suffix}.py").absolute())
-        task_args = ["--no-perf"] if args.no_perf else []
+        # For internal check scripts: by default禁用内部perf，只有在显式开启enable_perf时才不传--no-perf
+        task_args = ["--no-perf"] if not getattr(args, "enable_perf", False) else []
 
         logger.info(f"Submitting task to NVGPU server (GPU: {args.nvgpu_gpu or 'auto'})")
         task_id = nvgpu_client.submit_task_in_script_dir(
@@ -662,42 +663,52 @@ async def run_testing_loop(
 
     direction = context.settings.direction
 
+    task_label = case_name
+    if attempt_number:
+        task_label += f"|at@{attempt_number}"
     for round_num in range(1, max_rounds + 1):
         success, stdout, stderr, log_file = await run_test_round(
             context,
             round_num,
             test_work_dir,
             timing_stats,
-            task_label=f"{case_name}|at@{attempt_number}|r@{round_num}",
+            task_label=f"{task_label}|r@{round_num}",
         )
 
         if success:
-            kernel_label = "CUTE" if direction == "tri2cute" else "Triton"
+            # Infer target kernel label from direction string, e.g. "tri2cute" or "cu2tri"
+            if "2" in direction:
+                target_suffix = direction.split("2", 1)[1].lower()
+            else:
+                target_suffix = direction.lower()
+
+            kernel_label_map = {
+                "tri": "Triton",
+                "triton": "Triton",
+                "cute": "CuTe",
+                "cu": "CUDA",
+            }
+            kernel_label = kernel_label_map.get(target_suffix, target_suffix.capitalize())
             logger.info(f"✅ Test round {round_num} PASSED! {kernel_label} kernel is working correctly.")
             logger.info(f"Final results saved in {log_file}")
-            # Optionally run performance testing after correctness
+            # Optionally run performance testing after correctness (NVGPU only, gated by enable_perf)
             try:
-                if not context.args.no_perf:
-                    from .perf import run_perf_nvgpu, run_perf_local, record_perf_result
-                    gpu_id = context.args.nvgpu_gpu if getattr(context.args, 'use_nvgpu', True) else None
-                    case_tag = f"{case_type}/{case_name}"
+                if not (context.settings.use_nvgpu and context.nvgpu_available):
+                    logger.warning("Perf step skipped: NVGPU is not available")
+                    return True, round_num
+                elif getattr(context.args, "enable_perf", False):
+                    from .perf import run_perf_nvgpu, record_perf_result
+
+                    gpu_id = context.args.nvgpu_gpu
                     shape_tag = None  # optional: could be inferred from get_data if available
-                    if context.settings.use_nvgpu and context.nvgpu_available:
-                        perf_data, server_times = await run_perf_nvgpu(
-                            context,
-                            test_work_dir,
-                            gpu_id=gpu_id,
-                            case_tag=case_tag,
-                            shape_tag=shape_tag,
-                        )
-                    else:
-                        perf_data = await run_perf_local(
-                            context,
-                            test_work_dir,
-                            case_tag=case_tag,
-                            shape_tag=shape_tag,
-                        )
-                        server_times = {}
+
+                    perf_data, server_times = await run_perf_nvgpu(
+                        context,
+                        test_work_dir,
+                        gpu_id=gpu_id,
+                        case_tag=case_name,
+                        shape_tag=shape_tag,
+                    )
                     await record_perf_result(context, test_work_dir, perf_data, server_times)
             except Exception as perf_exc:
                 logger.warning(f"Perf step failed: {perf_exc}")
@@ -716,7 +727,7 @@ async def run_testing_loop(
                 stdout,
                 stderr,
                 test_work_dir,
-                case_type=case_type or "unknown",
+                case_type=case_type or "undefined",
                 case_name=case_name or test_work_dir.name,
                 timing_stats=timing_stats,
                 attempt_number=attempt_number,
@@ -736,6 +747,7 @@ async def run_testing_loop(
                 with open(kernel_path, "w") as fp:
                     fp.write(fixed_code)
                 logger.debug(f"Updated {kernel_path.name} with LLM feedback")
+                # kernel_path.name : os.path.basename(str(kernel_path)) (kernel.cu or kernel.py)
 
                 save_conversation_history(
                     context,

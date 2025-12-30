@@ -44,10 +44,10 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Test only the first case from each case type",
     )
     parser.add_argument(
-        "--no-perf",
+        "--enable-perf",
         action="store_true",
-        default=True,
-        help="Skip performance testing (default: True)",
+        default=False,
+        help="Enable performance testing (default: False)",
     )
     parser.add_argument(
         "--perf-warmup",
@@ -153,6 +153,12 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=10,
         help="Maximum number of concurrent tasks",
+    )
+    parser.add_argument(
+        "--perf-concurrency",
+        type=int,
+        default=4,
+        help="Maximum number of concurrent NVGPU perf tasks (default: 4)",
     )
     parser.add_argument(
         "--max-attempts",

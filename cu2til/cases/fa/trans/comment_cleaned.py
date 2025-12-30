@@ -311,8 +311,10 @@ def main():
     output = args.output
     if input_path is None:
         current_dir = Path(__file__).parent
-        input_path = current_dir / '..' / 'cuda' / 'flash_attn_mma_stages_split_q_shared_kv' / 'ref.cu'
-        output = current_dir / '..' / 'cuda' / 'flash_attn_mma_stages_split_q_shared_kv' / 'kernel.cu'
+        # input_path = current_dir / '..' / 'cuda' / 'flash_attn_mma_stages_split_q_shared_kv' / 'ref.cu'
+        # output = current_dir / '..' / 'cuda' / 'flash_attn_mma_stages_split_q_shared_kv' / 'kernel.cu'
+        input_path = current_dir / '..' / 'cuda' / 'flash_attn_mma_stages_split_q_shared_kv' / 'kernel_prim.cu'
+        output = current_dir / '..' / 'cuda' / 'flash_attn_mma_stages_split_q_shared_kv' / 'kernel_prim_cleaned.cu'
         # input_path = current_dir / "hgemm_mma_m16n8k16_mma2x4_warp4x4_stages"
     input_path = Path(input_path)
     # 判断输入是文件夹还是文件

@@ -184,10 +184,10 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
       *   gmem_coord: (load_gmem_V_Bc, load_gmem_V_d)=(load_smem_V_Bc, load_smem_V_d):(kHeadDim, 1):(tile_K_seqlen * Bc, 0):(QKV_seqlen, kHeadDim):&V[V_gmem_offset]
       * (crd_dim1, crd_dim2):(crd_stride_dim1, crd_stride_dim2):(start_offset_dim1, start_offset_dim2):(crd_space_dim1, crd_space_dim2)
       */
-      int load_gmem_V_Bc = tile_K_seqlen * Bc + load_smem_V_Bc;
-      int load_gmem_V_d = load_smem_V_d;
-      int load_gmem_V_addr = V_gmem_offset + load_gmem_V_Bc * kHeadDim + load_gmem_V_d;
-      uint32_t load_smem_V_ptr = smem_V_base_ptr + (V_tile_size + load_smem_V_Bc * kHeadDim + load_smem_V_d) * sizeof(half);
+      int load_gmem_V_Bc = tile_K_seqlen * Bc + load_smem_V_Bc; // gmem_coord_dim1
+      int load_gmem_V_d = load_smem_V_d; // gmem_coord_dim2
+      int load_gmem_V_addr = V_gmem_offset + load_gmem_V_Bc * kHeadDim + load_gmem_V_d; // gmem_addr
+      uint32_t load_smem_V_ptr = smem_V_base_ptr + (V_tile_size + load_smem_V_Bc * kHeadDim + load_smem_V_d) * sizeof(half); // smem_addr
 #pragma unroll
       for (int i = 0; i < (kHeadDim / (kNumThreads / Bc)); i += 8) {
         asm volatile( 
@@ -212,13 +212,9 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
     for (int tile_K_d = 0; tile_K_d < (kHeadDim / kMmaAtomK); ++tile_K_d) { // d / 16
 #pragma unroll
       for (int i = 0; i < kWarpTileSeqLenQ; ++i) { // 1
-        /**
-         * 
-         */
-        int warp_smem_Q_Br =
-            warp_QP * (kMmaAtomM * kWarpTileSeqLenQ) + i * kMmaAtomM;
-        int lane_smem_Q_Br = warp_smem_Q_Br + lane_id % 16;
-        int lane_smem_Q_d = tile_K_d * kMmaAtomK + (lane_id / 16) * 8;
+        int warp_smem_Q_Br = warp_id * (kMmaAtomM * kWarpTileSeqLenQ) + i * kMmaAtomM; // warp在smem上的行坐标起始
+        int lane_smem_Q_Br = warp_smem_Q_Br + lane_id % 16; // lane在warp中的smem行坐标, lane本身排布列优先, 所以%16, 符合ldmatrix标准
+        int lane_smem_Q_d = tile_K_d * kMmaAtomK + (lane_id / 16) * 8; // lane在warp中的smem列坐标
         uint32_t lane_smem_Q_ptr =
             (smem_Q_base_ptr +
              (lane_smem_Q_Br * kHeadDim + lane_smem_Q_d) *
@@ -232,9 +228,9 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
 #pragma unroll
       for (int j = 0; j < kWarpTileSeqLenK; ++j) { // 4
         int warp_smem_K_Bc =
-            warp_KV * (kMmaAtomN * kWarpTileSeqLenK) + j * kMmaAtomN;
+            warp_KV * (kMmaAtomN * kWarpTileSeqLenK) + j * kMmaAtomN; // warp_KV == 0
         int lane_smem_K_Bc = warp_smem_K_Bc + lane_id % 8;
-        int lane_smem_K_d = tile_K_d * kMmaAtomK + ((lane_id / 8) % 2) * 8;
+        int lane_smem_K_d = tile_K_d * kMmaAtomK + ((lane_id / 8) % 2) * 8; // 0...7 -> 0; 8...15 -> 8
         uint32_t lane_smem_K_ptr =
             (smem_K_base_ptr + (lane_smem_K_Bc * kHeadDim + lane_smem_K_d) * sizeof(half));
         asm volatile("ldmatrix.sync.aligned.x2.m8n8.shared.b16 {%0, %1}, [%2];\n" 
@@ -297,7 +293,7 @@ __global__ void __launch_bounds__(WARP_SIZE *kMmaTileSeqLenQ *kMmaTileSeqLenK)
     static_assert(kWarpTileSeqLenQ == 1);
     {
 #pragma unroll
-      for (int j = 0; j < kWarpTileSeqLenK; ++j) {
+      for (int j = 0; j < kWarpTileSeqLenK; ++j) { // 4
         half *t_hptr_S_0_1 = reinterpret_cast<half *>(&(R_S[0][j][0]));
         float tmp_max_0 =
             __half2float(__hmax(t_hptr_S_0_1[0], t_hptr_S_0_1[1])) * scale;

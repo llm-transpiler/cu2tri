@@ -792,7 +792,6 @@ void launch_flash_attn_mma_stages_split_q_shared_kv(torch::Tensor Q,
   constexpr int kMmaAtomM = 16;
   constexpr int kMmaAtomN = 8;
   constexpr int kMmaAtomK = 16;
-#ifdef BUILD_FLASH_ATTN_MMA_L20
   constexpr int kMmaTileSeqLenQ = 4;
   constexpr int kMmaTileSeqLenK = 1;
   constexpr int kMmaTileSeqLenP = 4;
@@ -800,15 +799,6 @@ void launch_flash_attn_mma_stages_split_q_shared_kv(torch::Tensor Q,
   constexpr int kWarpTileSeqLenQ = 1;
   constexpr int kWarpTileSeqLenK = (kStage > 1) ? 4 : 8;
   constexpr int kWarpTileSeqLenP = 1;
-#else
-  constexpr int kMmaTileSeqLenQ = (kHeadDim < 128) ? 8 : 8;
-  constexpr int kMmaTileSeqLenK = 1;
-  constexpr int kMmaTileSeqLenP = (kHeadDim < 128) ? 8 : 8;
-  constexpr int kMmaTileHeadDimV = 1;
-  constexpr int kWarpTileSeqLenQ = 1;
-  constexpr int kWarpTileSeqLenK = (kHeadDim < 128) ? 8 : 4;
-  constexpr int kWarpTileSeqLenP = 1;
-#endif
   constexpr int kWarpTileHeadDimV = (kHeadDim / (kMmaAtomN * kMmaTileHeadDimV));
   constexpr int Br = kMmaAtomM * kMmaTileSeqLenQ * kWarpTileSeqLenQ;
   constexpr int Bc = kMmaAtomN * kMmaTileSeqLenK * kWarpTileSeqLenK;

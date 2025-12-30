@@ -253,3 +253,19 @@ if __name__ == "__main__":
     print("开始基准测试...")
     bench_non_causal_attention.run(save_path=".", print_data=True)
     print("基准测试完成！")
+
+'''
+root@ubuntu-ThinkStation-P520:/workspace# /usr/bin/python /workspace/cu2til/cases/fa/triton/ref.py
+开始测试...
+Non-casual attention pass.
+测试完成！
+开始基准测试...
+non-causal-attention-batch4-head32-d64-fwd:
+   SEQ_LEN  Triton [FP16]     Flash-2
+0   1024.0     181.878104  139.169825
+1   2048.0     152.178123  108.124555
+2   4096.0     154.018221  113.996502
+3   8192.0     157.295179  114.684150
+4  16384.0     150.623970  121.041247
+基准测试完成！
+'''

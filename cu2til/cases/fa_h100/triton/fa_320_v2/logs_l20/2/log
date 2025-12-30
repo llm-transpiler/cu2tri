@@ -1,0 +1,21 @@
+root@sigma106:/workspace/cases# /usr/bin/python /workspace/cases/fa/triton/fa_320_v2/fa_320_v2.py
+开始测试...
+Casual attention pass.
+Non-casual attention pass.
+测试完成！
+开始基准测试...
+causal-attention-batch4-head32-d64-fwd:
+   SEQ_LEN  Triton [FP16]  Triton [FP8]     Flash-2
+0   1024.0      85.103148    131.554813   68.471766
+1   2048.0      98.814271    164.883620   90.184275
+2   4096.0     105.689370    177.221945   99.667364
+3   8192.0     108.729678    179.731815  104.207434
+4  16384.0     110.338139    184.543247  107.222729
+non-causal-attention-batch4-head32-d64-fwd:
+   SEQ_LEN  Triton [FP16]  Triton [FP8]     Flash-2
+0   1024.0     102.633803    174.487127   92.908408
+1   2048.0     109.207477    193.962098  103.009332
+2   4096.0     112.202430    192.837094  106.706673
+3   8192.0     112.732351    194.993125  107.401032
+4  16384.0     113.560389    196.940056  108.048129
+基准测试完成！
