@@ -44,3 +44,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+'''
+[timer] warmup: 10.058 ms (OK)
+[timer] batch_inference: 5.056 ms (OK)
+batch result: batch-1
+[timer] export: 20.058 ms (OK)
+model exported: model.onnx
+'''
