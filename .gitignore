@@ -62,3 +62,4 @@ logs
 **/log/*
 cc
 cu2tri/cu2til/llm_trans/perf/results
+cu2tri/cu2til/llm_trans/perf/results/*
