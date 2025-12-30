@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+import torch
 from get_data import get_all_cuda_torch_inputs, Params, cuda_output_tensor_transform  # type: ignore
 from torch_.ref import torch_kernel  # type: ignore
 from triton_.kernel import triton_kernel  # type: ignore
@@ -16,11 +17,15 @@ def parse_args():
                        help='Disable performance testing (default: False, performance testing enabled)')
     parser.add_argument('--shapes', nargs='+', type=int, 
                         help='Custom shapes to test (e.g., --shapes 512 1024 2048). If not provided, uses default test shapes.')
+    parser.add_argument('--gpu-index', type=int, default=None,
+                       help='Force torch.cuda device index before running kernels')
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = parse_args()
     enable_perf = not args.no_perf  # Default is True, disable with --no-perf
+    if args.gpu_index is not None:
+        torch.cuda.set_device(args.gpu_index)
     
     params = Params()
     
