@@ -72,13 +72,13 @@ def parse_args():
                        help='NVGPU server URL (default: http://localhost:8080)')
     parser.add_argument('--nvgpu-gpu', type=int, default=None,
                        help='Specific GPU ID to use (default: auto-assign)')
-    parser.add_argument('--nvgpu-task-type', choices=['functional', 'performance'],
-                       default='functional', help='Task type for NVGPU (default: functional)')
     # Async concurrency options
     parser.add_argument('--concurrency', type=int, default=10,
                        help='Maximum number of concurrent tasks (default: 1)')
     parser.add_argument('--max-attempts', type=int, default=10,
                        help='Maximum number of independent attempts (pass@k) to run per case (default: 1)')
+    parser.add_argument('--max-rounds', type=int, default=5,
+                       help='Maximum number of fix-and-test rounds per attempt (default: 5)')
     parser.add_argument('--attempt-policy', choices=['first_success', 'exhaustive'], default='exhaustive',
                        help='Attempt execution policy: stop after first success or exhaust all attempts')
     parser.add_argument('--ms-format', choices=['comma', 'plain'], default='comma',
@@ -89,6 +89,8 @@ def parse_args():
 args = parse_args()
 if args.max_attempts < 1:
     raise ValueError("--max-attempts must be at least 1")
+if args.max_rounds < 1:
+    raise ValueError("--max-rounds must be at least 1")
 
 # Ensure process-level timezone matches project default
 apply_default_timezone_to_os()
@@ -347,7 +349,7 @@ else:
     TESTSET_ROOT_DIR = PROJECT_ROOT / Path(f"cu2til/cases/{args.testset}")
 TEMPERATURE = 0.35
 TIMESTAMP = format_timestamp()
-MAX_ROUNDS = 5
+MAX_ROUNDS = args.max_rounds
 CONSOLE_OUTPUT = args.console and not args.no_console  # Whether to output to console
 CHECK_SUFFIX = "_dynamic"
 if "xpiler" in args.testset:
@@ -1474,7 +1476,7 @@ async def run_test_round_nvgpu(round_num, test_work_dir, log_file, timing_stats=
         logger.info(f"Submitting task to NVGPU server (GPU: {args.nvgpu_gpu or 'auto'})")
         task_id = nvgpu_client.submit_task_in_script_dir(
             script_path=script_path,
-            task_type=args.nvgpu_task_type,
+            task_type="functional",
             # work_dir=str(test_work_dir.absolute()),
             args=task_args,
             gpu_id=args.nvgpu_gpu
@@ -2213,7 +2215,7 @@ async def test_cases():
     if args.use_nvgpu:
         logger.info(f"   - NVGPU server: {args.nvgpu_server}")
         logger.info(f"   - NVGPU GPU: {args.nvgpu_gpu or 'auto-assign'}")
-        logger.info(f"   - NVGPU task type: {args.nvgpu_task_type}")
+        logger.info("   - NVGPU task type: functional")
 
     # 使用详细的结果存储结构
     detailed_results = {}  # case_type -> list of case results
@@ -2451,8 +2453,8 @@ if __name__ == "__main__":
     # Use NVGPU with specific GPU
     python llm_trans.py --nvgpu-gpu 0
     
-    # Use NVGPU for performance testing
-    python llm_trans.py --nvgpu-task-type performance
+    # Increase the number of fix-and-test rounds
+    python llm_trans.py --max-rounds 8
     
     # Combined: NVGPU + first case + specific GPU + custom concurrency
     python llm_trans.py --first-only --nvgpu-gpu 1 --case-types add --concurrency 5

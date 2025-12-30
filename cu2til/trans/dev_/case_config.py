@@ -157,6 +157,17 @@ XPILER_ALL_CASES = {
         "mha_64_4096_12_256"
     ],
     
+    "gqa": [
+        "gqa_1_2_16_16_512",
+        "gqa_1_4_16_16_512",
+        "gqa_2_2_16_16_512",
+        "gqa_2_4_16_16_512",
+        "gqa_4_2_16_16_512",
+        "gqa_4_4_16_16_512",
+        "gqa_8_2_16_16_512",
+        "gqa_8_4_16_16_512",
+    ],
+    
     "minpool": [
         "minpool_1_5_5_64_5_5_1_1",
         "minpool_4_8_8_64_5_5_3_3",
@@ -521,6 +532,10 @@ def _build_xpiler_extended_cases() -> dict[str, list[str]]:
 
 
 XPILER_EXTENDED_CASES = _build_xpiler_extended_cases()
+
+# Backward-compat: prefer scanning directory for XPILER_ALL_CASES as well,
+# so newly added cases are picked up without editing this file.
+XPILER_ALL_CASES = _build_xpiler_extended_cases()
 
 
 LEETCUDA_DYNAMIC_CASES_1 = {
