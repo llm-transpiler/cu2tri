@@ -3,7 +3,15 @@ import sys
 import argparse
 from get_data import get_cuda_torch_inputs, Params, cuda_output_tensor_transform  # type: ignore
 from torch_.ref import torch_kernel  # type: ignore
-from triton_.kernel import triton_kernel  # type: ignore
+# Try to import triton_kernel (for backward compatibility), otherwise use forward
+try:
+    from triton_.kernel import triton_kernel  # type: ignore
+except ImportError:
+    try:
+        from triton_.kernel import forward as triton_kernel  # type: ignore
+    except ImportError:
+        raise ImportError("Cannot import triton_kernel or forward from triton_.kernel")
+
 from llm_trans.tools.checker import check_triton_vs_torch
 
 TESTCASE_ROOT_DIR = os.path.dirname(__file__)
