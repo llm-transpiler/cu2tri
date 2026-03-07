@@ -1,7 +1,7 @@
 import torch
 import ctypes
 from dataclasses import dataclass
-from cu2til.tools.checker import SEED
+from llm_trans.tools.checker import SEED
 
 @dataclass
 class Params:

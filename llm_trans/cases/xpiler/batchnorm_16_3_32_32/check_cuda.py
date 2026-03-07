@@ -3,7 +3,7 @@ import sys
 import argparse
 from get_data import get_cuda_torch_inputs, Params, get_cuda_argtypes, cuda_output_tensor_transform
 from torch_.ref import torch_kernel
-from cu2til.tools.checker import check_cuda_vs_torch
+from llm_trans.tools.checker import check_cuda_vs_torch
 
 TESTCASE_ROOT_DIR = os.path.dirname(__file__)
 sys.path.insert(0, TESTCASE_ROOT_DIR)

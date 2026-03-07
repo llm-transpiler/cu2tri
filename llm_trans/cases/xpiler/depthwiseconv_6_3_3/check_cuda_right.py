@@ -7,7 +7,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from torch.nn import functional as F
-from cu2til.tools.builder import compile_cuda_kernel, CUDA_FOLDER_NAME, SEED, load_cuda_kernel
+from llm_trans.tools.builder import compile_cuda_kernel, CUDA_FOLDER_NAME, SEED, load_cuda_kernel
 
 TESTCASE_ROOT_DIR = os.path.dirname(__file__)
 
@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, TESTCASE_ROOT_DIR)
 
 from torch_.ref import torch_kernel
-from cu2til.tools.checker import compare_results
+from llm_trans.tools.checker import compare_results
 
 @dataclass
 class DepthwiseConvParams:

@@ -1,8 +1,8 @@
 import torch
 import ctypes
 from dataclasses import dataclass
-from cu2til.tools.builder import SEED
-from cu2til.tools.layout import convert_nhwc_to_nchw
+from llm_trans.tools.builder import SEED
+from llm_trans.tools.layout import convert_nhwc_to_nchw
 
 @dataclass
 class Params:

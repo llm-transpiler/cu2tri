@@ -32,7 +32,7 @@ def check_cuda_template(title: str) -> str:
         import argparse
         from get_data import get_cuda_torch_inputs, Params, get_cuda_argtypes, cuda_output_tensor_transform
         from torch_.ref import torch_kernel
-        from cu2til.tools.checker import check_cuda_vs_torch
+        from llm_trans.tools.checker import check_cuda_vs_torch
 
         TESTCASE_ROOT_DIR = os.path.dirname(__file__)
         sys.path.insert(0, TESTCASE_ROOT_DIR)
@@ -69,7 +69,7 @@ def check_triton_template(title: str) -> str:
         from get_data import get_cuda_torch_inputs, Params, cuda_output_tensor_transform
         from torch_.ref import torch_kernel
         from triton_.kernel import triton_kernel
-        from cu2til.tools.checker import compare_results
+        from llm_trans.tools.checker import compare_results
 
         TESTCASE_ROOT_DIR = os.path.dirname(__file__)
         sys.path.insert(0, TESTCASE_ROOT_DIR)
@@ -133,7 +133,7 @@ def generate_batchnorm(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -240,7 +240,7 @@ def generate_concat(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -348,7 +348,7 @@ def generate_dense(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -447,7 +447,7 @@ def generate_gatemlp(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -555,7 +555,7 @@ def generate_gather(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -661,7 +661,7 @@ def generate_instancenorm(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -782,7 +782,7 @@ def generate_reduction(name, dims, op):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -898,7 +898,7 @@ def generate_scatter(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -1005,7 +1005,7 @@ def generate_sin(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -1079,7 +1079,7 @@ def generate_sub(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:
@@ -1176,7 +1176,7 @@ def generate_transpose(name, dims):
         import torch
         import ctypes
         from dataclasses import dataclass
-        from cu2til.tools.checker import SEED
+        from llm_trans.tools.checker import SEED
 
         @dataclass
         class Params:

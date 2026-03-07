@@ -8,7 +8,7 @@ except ImportError:
     cuda_output_tensor_transform = lambda x: x
 
 from torch_.ref import torch_kernel # type: ignore
-from cu2til.tools.checker import check_cuda_vs_torch
+from llm_trans.tools.checker import check_cuda_vs_torch
 
 TESTCASE_ROOT_DIR = os.path.dirname(__file__)
 

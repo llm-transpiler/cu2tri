@@ -4,7 +4,7 @@ import argparse
 from get_data import get_all_cuda_torch_inputs, Params, cuda_output_tensor_transform  # type: ignore
 from torch_.ref import torch_kernel  # type: ignore
 from triton_.kernel import triton_kernel  # type: ignore
-from cu2til.tools.checker import check_triton_vs_torch_dynamic
+from llm_trans.tools.checker import check_triton_vs_torch_dynamic
 
 TESTCASE_ROOT_DIR = os.path.dirname(__file__)
 

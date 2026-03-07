@@ -4,9 +4,9 @@ import os
 import sys
 from dataclasses import dataclass
 from torch.nn import functional as F
-from cu2til.tools.builder import SEED, load_cuda_kernel
+from llm_trans.tools.builder import SEED, load_cuda_kernel
 from copy import deepcopy
-from cu2til.tools.layout import convert_nhwc_to_nchw, convert_nchw_to_nhwc
+from llm_trans.tools.layout import convert_nhwc_to_nchw, convert_nchw_to_nhwc
 @dataclass
 class Params:
     """Conv2D 参数配置"""

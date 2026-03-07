@@ -6,7 +6,7 @@ import time
 import subprocess
 import sys
 from torch.nn import functional as F
-from cu2til.tools.builder import compile_cuda_kernel, CUDA_FOLDER_NAME, SEED, load_cuda_kernel
+from llm_trans.tools.builder import compile_cuda_kernel, CUDA_FOLDER_NAME, SEED, load_cuda_kernel
 
 TESTCASE_ROOT_DIR = os.path.dirname(__file__)
 

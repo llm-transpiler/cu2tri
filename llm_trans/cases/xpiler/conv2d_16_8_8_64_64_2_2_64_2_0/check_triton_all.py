@@ -2,10 +2,10 @@ import torch
 import os
 import sys
 import argparse
-from cu2til.tools.builder import load_cuda_kernel
+from llm_trans.tools.builder import load_cuda_kernel
 from get_data import get_cuda_triton_inputs, get_cuda_torch_inputs, get_cuda_triton_torch_inputs, Params
 from torch_.ref import torch_kernel
-from cu2til.tools.checker import compare_results, run_performance_all, run_performance_test
+from llm_trans.tools.checker import compare_results, run_performance_all, run_performance_test
 from triton_.kernel import triton_kernel
 
 def check_triton_all(test_root_dir=None, enable_perf=False, enable_cuda=False, enable_pytorch=False):

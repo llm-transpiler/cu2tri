@@ -3,7 +3,7 @@ import ctypes
 import os
 import sys
 from dataclasses import dataclass
-from cu2til.tools.builder import SEED, load_cuda_kernel
+from llm_trans.tools.builder import SEED, load_cuda_kernel
 
 @dataclass
 class Params:
