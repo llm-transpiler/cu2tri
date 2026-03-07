@@ -13,8 +13,8 @@ import re
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent
 TUTORIALS_DIR = PROJECT_ROOT / "triton_tutorials" / "v340"
-TARGET_DIR = PROJECT_ROOT / "cu2til" / "cases" / "triton_tutorial"
-TOOLS_DIR = PROJECT_ROOT / "cu2til" / "tools"
+TARGET_DIR = PROJECT_ROOT / "llm_trans" / "cases" / "triton_tutorial"
+TOOLS_DIR = PROJECT_ROOT / "llm_trans" / "tools"
 
 # Tutorial 到测试用例的映射
 TUTORIAL_MAPPINGS = [
@@ -225,7 +225,7 @@ def main():
     print("\n📝 Next steps:")
     print("1. Customize get_data.py for each case (input generation logic)")
     print("2. Verify each Triton kernel runs correctly")
-    print("3. Update cu2til/llm_trans/config/case_config.yaml")
+    print("3. Update llm_trans/config/case_config.yaml")
     print("4. Run LLM translation tests")
     
     return 0

@@ -1,6 +1,0 @@
-avgpool转出来的triton需要nchw的shape, 但是channel连续, 也就是说tensor不连续，这样都行
-但是conv2d的triton转出来天然就是nhwc的shape, 所以不能用简单的.to(memory_format=torch.channels_last)处理输入输出
-bmm傻逼根本看不出来b这个维度啊...
-maxpool也跟avgpool一样了,...maxpool的triton kernel就是纯错的
-这俩好像cuda的参数暗示了nchw
-两个pool实际上到底用什么方式进行nchw和nhwc的转换对于cuda和torch都无所谓，主要是triton

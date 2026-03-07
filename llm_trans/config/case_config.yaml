@@ -1,0 +1,60 @@
+version: 1
+testsets:
+  xpiler:
+    mode: scan
+    # 相对项目根目录的路径，Settings 会基于 PROJECT_ROOT 解析
+    path: llm_trans/cases/xpiler
+    include_ops: []   # 空=全部
+    exclude_ops: []   # 可选：排除特定算子
+  xpiler_mini:
+    mode: scan
+    path: llm_trans/cases/xpiler
+    include_ops:
+      - add
+      - avgpool
+      - bmm
+      - conv1d
+      - conv2d
+      - conv2dnchw
+      - deformable
+      - depthwiseconv
+      - gelu
+      - gemm
+      - gemv
+      - layernorm
+      - maxpool
+      - mha
+      - minpool
+      - relu
+      - rmsnorm
+      - sigmoid
+      - sign
+      - softmax
+      - sumpool
+    exclude_ops: []
+  triton_tutorial:
+    mode: scan
+    path: llm_trans/cases/triton_tutorial
+    include_ops: []
+    exclude_ops: []
+  flaggems_ops:
+    mode: scan
+    path: llm_trans/cases/flaggems_ops
+    include_ops: []
+    exclude_ops: []
+  unsloth_kernels:
+    mode: scan
+    path: llm_trans/cases/unsloth_kernels
+    include_ops: []
+    exclude_ops: []
+  ligerkernel_ops:
+    mode: scan
+    path: llm_trans/cases/ligerkernel_ops
+    include_ops: []
+    exclude_ops: []
+  triton_tutorials:
+    mode: scan
+    path: llm_trans/cases/triton_tutorials
+    include_ops: []
+    exclude_ops: []
+
