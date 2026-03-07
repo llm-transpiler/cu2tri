@@ -2,10 +2,10 @@
 import threading
 from collections import deque
 
-from models import Task, TaskStatus
-from logger import setup_logger
-from utils.timezone import now_timestamp
-from utils.task_refs import format_task_ref
+from server.nvgpu.models import Task, TaskStatus
+from server.nvgpu.logger import setup_logger
+from server.common.timezone import now_timestamp
+from server.common.task_refs import format_task_ref
 
 logger = setup_logger("task_queue")
 

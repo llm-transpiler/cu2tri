@@ -1,44 +1,76 @@
+# Python 编译产物
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.dist/
+*.whl
+
+# 构建目录
 */build
 **/build
 */build_*/
 **/build_*/
 build/*
 build_*/
-**__pycache__**
-dev_debug/
-dev/
-*/dev/*
-*logs/*
+
+# 日志
+logs/
 **/logs/*
+**/log/*
+*.log*
+
+# 环境配置
 .env
+
+# 废弃文件
 *deprecated*
 **deprecated**
 **/deprecated/**
-*.log*
-**.log**
-# */outputs/*
-cu2tri/outputs/kernelbench_c/*
-cu2tri/outputs/tests/*
-cu2tri/outputs/cu2tri/kernelbench_c_concu_wrong
-# models/
-# cu2til/paper
-*.so
-*.backup
-extensions/*
-bin/*
-node_modules/*
+
+# 输出目录
+cu2tri/outputs/*
+
+# 模型文件
 models/Qwen3-0.6B/*
 **/checkpoints/*
-out/*
-out
+
+# Node.js
+node_modules/
+package.json
+
+# 其他临时文件
+*.so
+*.backup
 *.tar.gz
 *.tar
 *.tar.bz2
+*result.html
+out/
+out
+
+# 运行结果目录
+llm_trans/runs/
+cu2til/llm_trans/runs
+cu2tri/cu2til/llm_trans/runs
+llm_trans/perf/results/
+cu2tri/cu2til/llm_trans/perf/results/
+
+# 服务器日志
+server/nvgpu/logs/
+
+# 开发目录
+dev_debug/
+dev/
+tests/
+test_cu2til
+triton_kernel/
+
+# cu2til 相关
 cu2til/trans/**check_triton.py
 cu2til/trans/**check_cuda.py
 cu2til/trans/**check*.py
 cu2til/refs
-# cu2til/refs/*
 cu2til/trans/dev_/*
 !cu2til/trans/dev_/llm.py
 !cu2til/trans/dev_/llm_trans.py
@@ -47,19 +79,3 @@ cu2til/trans/dev_/*
 !cu2til/trans/dev_/check_pass_at_n_config.py
 !cu2til/trans/dev_/statistics_results/
 !cu2til/trans/dev_/statistics_results/**
-node_modules
-tests
-node
-test_cu2til
-triton_kernel
-package.json
-*.hatchet
-*result.html
-tests
-cu2til/llm_trans/runs
-logs
-**/logs/*
-**/log/*
-cc
-cu2tri/cu2til/llm_trans/perf/results
-cu2tri/cu2til/llm_trans/perf/results/*

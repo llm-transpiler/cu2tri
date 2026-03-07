@@ -4,7 +4,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from utils.timezone import get_timezone
+from server.common.timezone import get_timezone
 
 
 class TimezoneFormatter(logging.Formatter):

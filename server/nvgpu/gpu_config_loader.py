@@ -3,7 +3,7 @@ import yaml
 from pathlib import Path
 from dataclasses import dataclass
 
-from logger import setup_logger
+from server.nvgpu.logger import setup_logger
 
 logger = setup_logger("gpu_config")
 

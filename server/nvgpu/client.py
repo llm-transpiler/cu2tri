@@ -4,7 +4,7 @@ import time
 from typing import Any
 from dataclasses import dataclass
 
-from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
+from server.common.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
 
 
 @dataclass

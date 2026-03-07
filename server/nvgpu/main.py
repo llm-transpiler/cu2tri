@@ -5,16 +5,16 @@ import signal
 import sys
 from pathlib import Path
 
-from config import config, GPUMode, LoadBalancingStrategy
-from logger import setup_logger
-from gpu_manager import GPUManager
-from task_queue import TaskQueue
-from task_runner import TaskRunner
-from scheduler import Scheduler
-from api_server import init_app, app
-from gpu_config_loader import GPUConfigLoader
-from utils.timezone import format_timestamp, set_default_timezone
-from profiler.timer import (
+from server.nvgpu.config import config, GPUMode, LoadBalancingStrategy
+from server.nvgpu.logger import setup_logger
+from server.nvgpu.gpu_manager import GPUManager
+from server.nvgpu.task_queue import TaskQueue
+from server.nvgpu.task_runner import TaskRunner
+from server.nvgpu.scheduler import Scheduler
+from server.nvgpu.api_server import init_app, app
+from server.nvgpu.gpu_config_loader import GPUConfigLoader
+from server.common.timezone import format_timestamp, set_default_timezone
+from server.common.timer import (
     monotonic_timestamp_ns,
     perf_counter_timestamp_ns,
 )
@@ -70,12 +70,12 @@ class NVGPUServer:
         log_level = getattr(logging, config.log_level.upper(), logging.DEBUG)
         
         # Re-configure loggers for all components with dual logging
-        import gpu_manager
-        import task_queue
-        import task_runner
-        import scheduler
-        import api_server
-        import gpu_config_loader as gcl
+        import server.nvgpu.gpu_manager as gpu_manager
+        import server.nvgpu.task_queue as task_queue
+        import server.nvgpu.task_runner as task_runner
+        import server.nvgpu.scheduler as scheduler
+        import server.nvgpu.api_server as api_server
+        import server.nvgpu.gpu_config_loader as gcl
         
         gpu_manager.logger = setup_logger("gpu_manager", log_file=self.log_file, 
                                           history_log_file=self.history_log_file, level=log_level)
@@ -97,8 +97,8 @@ class NVGPUServer:
             self.gpu_config_loader = GPUConfigLoader(gpu_config_file)
             if self.gpu_config_loader.load():
                 # Set global config loader for other modules
-                import gpu_manager
-                import task_runner
+                import server.nvgpu.gpu_manager as gpu_manager
+                import server.nvgpu.task_runner as task_runner
                 gpu_manager.gpu_config_loader = self.gpu_config_loader
                 task_runner.gpu_config_loader = self.gpu_config_loader
         
@@ -121,7 +121,7 @@ class NVGPUServer:
         if self.gpu_config_loader and self.gpu_config_loader.should_auto_register():
             logger.info("Auto-registering GPUs from configuration...")
             for gpu_config in self.gpu_config_loader.get_enabled_gpus():
-                from config import GPUMode
+                from server.nvgpu.config import GPUMode
                 mode = GPUMode.EXCLUSIVE if gpu_config.default_mode == "exclusive" else GPUMode.SHARED
                 self.gpu_manager.register_gpu(
                     gpu_id=gpu_config.logical_id,

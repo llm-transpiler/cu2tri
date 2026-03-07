@@ -4,12 +4,12 @@ from fastapi.responses import JSONResponse
 from typing import Any
 from pydantic import BaseModel
 
-from gpu_manager import GPUManager
-from task_queue import TaskQueue
-from scheduler import Scheduler
-from models import Task, TaskType, GPUMode, GPUStatus
-from config import config, TaskMode
-from logger import setup_logger
+from server.nvgpu.gpu_manager import GPUManager
+from server.nvgpu.task_queue import TaskQueue
+from server.nvgpu.scheduler import Scheduler
+from server.nvgpu.models import Task, TaskType, GPUMode, GPUStatus
+from server.nvgpu.config import config, TaskMode
+from server.nvgpu.logger import setup_logger
 
 logger = setup_logger("api_server")
 

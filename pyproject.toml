@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cu2tri"
+version = "0.1.0"
+description = "CUDA 到 Triton 转译器与 GPU 任务调度系统"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "aiohttp>=3.9.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+nvgpu = ["pynvml>=12.0.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+]
+all = ["cu2tri[nvgpu,dev]"]
+
+[project.scripts]
+nvgpu-server = "server.nvgpu.cli:cli_main"
+llm-trans = "llm_trans.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["server*", "llm_trans*", "llm*"]
+
+[tool.setuptools.package-data]
+"server.nvgpu.configs" = ["**/*.yml", "**/*.yaml"]
+"llm_trans.config" = ["*.yaml"]
+
+[project.urls]
+Homepage = "https://github.com/cu2tri/cu2tri"
+Repository = "https://github.com/cu2tri/cu2tri"
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

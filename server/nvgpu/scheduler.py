@@ -2,12 +2,12 @@
 import threading
 import time
 
-from gpu_manager import GPUManager
-from task_queue import TaskQueue
-from task_runner import TaskRunner
-from config import config
-from logger import setup_logger
-from utils.task_refs import format_task_ref
+from server.nvgpu.gpu_manager import GPUManager
+from server.nvgpu.task_queue import TaskQueue
+from server.nvgpu.task_runner import TaskRunner
+from server.nvgpu.config import config
+from server.nvgpu.logger import setup_logger
+from server.common.task_refs import format_task_ref
 
 logger = setup_logger("scheduler")
 

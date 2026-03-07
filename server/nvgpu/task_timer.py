@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 
-from profiler.timer import HostTimer, TimerSample, create_host_timer
-from utils.context import ManagedContext
+from server.common.timer import HostTimer, TimerSample, create_host_timer
+from server.common.context import ManagedContext
 
 
 class TaskTimer:

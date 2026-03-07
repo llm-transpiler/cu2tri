@@ -1,12 +1,21 @@
 from enum import Enum
 from logging import Logger
 from openai import OpenAI, AsyncOpenAI
-from utils.util import obj_to_dict as _completion_usage_to_dict
 import os
 import httpx
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Tuple, Any, Callable
-from profiler.timer import perf_counter_timestamp_ns, ns_to_ms, TimerSample
+from server.common.timer import perf_counter_timestamp_ns, ns_to_ms, TimerSample
+
+
+def _completion_usage_to_dict(obj):
+    """Convert object to dict, handling both dataclasses and objects with __dict__."""
+    try:
+        return asdict(obj)
+    except Exception:
+        if hasattr(obj, '__dict__'):
+            return obj.__dict__
+        return obj
 
 
 class TTFTTracker:

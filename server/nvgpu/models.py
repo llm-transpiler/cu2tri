@@ -4,9 +4,9 @@ from datetime import datetime
 from typing import Any
 import uuid
 
-from config import GPUMode, GPUStatus, TaskType, TaskMode, TaskStatus
-from utils.timezone import now_timestamp, ensure_timezone
-from task_timer import TaskTimer
+from server.nvgpu.config import GPUMode, GPUStatus, TaskType, TaskMode, TaskStatus
+from server.common.timezone import now_timestamp, ensure_timezone
+from server.nvgpu.task_timer import TaskTimer
 
 
 @dataclass

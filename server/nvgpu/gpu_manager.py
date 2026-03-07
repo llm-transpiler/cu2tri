@@ -8,17 +8,17 @@ try:
 except ImportError:
     NVML_AVAILABLE = False
 
-from models import GPU, GPUStatus, GPUMode, Task
-from config import config, TaskStatus, TaskMode, LoadBalancingStrategy
-from logger import setup_logger
-from utils.timezone import now_timestamp
-from utils.task_refs import format_task_ref
-from profiler.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
+from server.nvgpu.models import GPU, GPUStatus, GPUMode, Task
+from server.nvgpu.config import config, TaskStatus, TaskMode, LoadBalancingStrategy
+from server.nvgpu.logger import setup_logger
+from server.common.timezone import now_timestamp
+from server.common.task_refs import format_task_ref
+from server.common.timer import monotonic_elapsed_ms, monotonic_timestamp_ns
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from task_queue import TaskQueue
-    from task_runner import TaskRunner
+    from server.nvgpu.task_queue import TaskQueue
+    from server.nvgpu.task_runner import TaskRunner
 
 logger = setup_logger("gpu_manager")
 
