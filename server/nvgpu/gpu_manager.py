@@ -197,7 +197,8 @@ class GPUManager:
         Returns:
             True if successful, False otherwise
         """
-        from config import TaskMode, GPUMode
+        # TaskMode already imported at module level
+        # GPUMode already imported from server.nvgpu.models
 
         with self.lock:
             if gpu_id not in self.gpus:

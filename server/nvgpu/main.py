@@ -295,13 +295,16 @@ def main():
     gpu_config_file = None
     if args.gpu_config:
         config_path = Path(args.gpu_config)
-        logger.info(f"GPU config arg: {args.gpu_config}, resolved to: {config_path.resolve()}")
 
         # Try multiple path resolution strategies
         candidates = []
 
         # 1. Try as-is (absolute or relative to cwd)
-        candidates.append(config_path.resolve())
+        # Use resolve(strict=False) to avoid error if file doesn't exist yet
+        try:
+            candidates.append(config_path.resolve(strict=False))
+        except Exception:
+            candidates.append(config_path.absolute())
 
         # 2. Try relative to project root (/cu2tri)
         project_root = NVGPU_ROOT.parent.parent  # /cu2tri
