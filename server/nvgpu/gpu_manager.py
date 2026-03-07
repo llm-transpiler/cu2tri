@@ -51,6 +51,24 @@ class GPUManager:
 
         self._initialize_nvml()
 
+    def clear_stale_running_tasks(self):
+        """Clear stale running tasks from all GPUs.
+
+        This should be called on startup to clean up any tasks that were
+        marked as running but didn't complete cleanly (e.g., server crash).
+        """
+        with self.lock:
+            cleared_count = 0
+            for gpu_id, gpu in self.gpus.items():
+                if gpu.running_tasks:
+                    logger.warning(
+                        f"Clearing {len(gpu.running_tasks)} stale running tasks from GPU {gpu_id}: {gpu.running_tasks}"
+                    )
+                    gpu.running_tasks.clear()
+                    cleared_count += len(gpu.running_tasks)
+            if cleared_count > 0:
+                logger.info(f"Cleared {cleared_count} stale running tasks from all GPUs")
+
     def set_dependencies(self, task_queue, task_runner):
         """Set dependencies for advanced error handling.
 
@@ -470,12 +488,19 @@ class GPUManager:
         """Mark a task as completed on a GPU."""
         with self.lock:
             if gpu_id not in self.gpus:
+                logger.warning(f"Cannot mark task completed: GPU {gpu_id} not found")
                 return False
 
             gpu = self.gpus[gpu_id]
             if task.task_id in gpu.running_tasks:
                 gpu.running_tasks.remove(task.task_id)
-                logger.debug(f"TASK {format_task_ref(task)} completed on GPU {gpu_id}")
+                logger.info(f"TASK {format_task_ref(task)} completed on GPU {gpu_id}, "
+                           f"remaining running tasks: {len(gpu.running_tasks)}")
+            else:
+                logger.warning(
+                    f"TASK {format_task_ref(task)} not found in GPU {gpu_id} running_tasks. "
+                    f"Current running_tasks: {gpu.running_tasks}"
+                )
             return True
 
     def trigger_severe_error(self, gpu_id: int, error_msg: str, offending_task_id: str | None = None):

@@ -141,7 +141,10 @@ class NVGPUServer:
         
         # Start GPU monitoring
         self.gpu_manager.start_monitoring()
-        
+
+        # Clear any stale running tasks from previous server sessions
+        self.gpu_manager.clear_stale_running_tasks()
+
         # Start scheduler
         self.scheduler.start()
         strategy_name = (
