@@ -5,16 +5,16 @@ NVGPU Server 完整使用指南。
 ## 快速开始
 
 ```bash
-# 启动服务器
-cd /cu2tri/server/nvgpu
-python main.py --gpu-config configs/gpu_resources/P250_A6000.yml
+# 从项目根目录启动服务器
+cd /cu2tri
+nvgpu-server --gpu-config server/nvgpu/configs/gpu_resources/P250_A6000.yml
 ```
 
 ## Python 客户端
 
 ```python
 import sys
-sys.path.insert(0, '/cu2tri/server/nvgpu')
+sys.path.insert(0, '/cu2tri')
 from server.nvgpu.client import NVGPUClient
 
 client = NVGPUClient("http://localhost:8080")
@@ -51,7 +51,7 @@ client.submit_task(
 ### 配置文件格式
 
 ```yaml
-# configs/gpu_resources/your_config.yml
+# server/nvgpu/configs/gpu_resources/your_config.yml
 gpus:
   - logical_id: 0            # 系统逻辑 ID
     nvidia_smi_id: 0         # nvidia-smi 显示的 ID
@@ -116,20 +116,24 @@ nvidia-smi -L
 检查 GPU 是否注册：
 ```bash
 # 方法 1: 使用配置文件
-python main.py --gpu-config configs/gpu_resources/P250_A6000.yml
+nvgpu-server --gpu-config server/nvgpu/configs/gpu_resources/P250_A6000.yml
 
-# 方法 2: 直接指定 GPU
-python main.py --gpus 0 1
+# 方法 2: 直接指定 GPU ID (从项目根目录)
+nvgpu-server --gpu-config server/nvgpu/configs/gpu_resources/P250_A6000.yml
 ```
 
-### 脚本找不到文件
+### 路径问题
 
-设置 `work_dir`：
-```python
-client.submit_task(
-    script_path="/workspace/test/script.py",
-    work_dir="/workspace/test"
-)
+**重要**: 始终从项目根目录 `/cu2tri` 启动服务器，配置文件路径是相对于根目录的。
+
+```bash
+# 正确 ✅
+cd /cu2tri
+nvgpu-server --gpu-config server/nvgpu/configs/gpu_resources/P250_A6000.yml
+
+# 错误 ❌
+cd /cu2tri/server/nvgpu
+python main.py --gpu-config configs/gpu_resources/P250_A6000.yml  # 路径解析会出错
 ```
 
 ### GPU 处于 ERROR 状态

@@ -43,8 +43,8 @@ llm-trans --model gpt_oss_120b_local_5880x4 --testset xpiler \
 ### 本地 GPU 服务器
 
 ```bash
-# 先启动 NVGPU 服务器
-nvgpu-server --gpus 0 1
+# 先启动 NVGPU 服务器 (从项目根目录)
+nvgpu-server --gpu-config server/nvgpu/configs/gpu_resources/P250_A6000.yml
 
 # 在另一个终端运行转译器
 llm-trans --model gpt_oss_120b_local_5880x4 --testset xpiler \
