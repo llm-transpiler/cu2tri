@@ -94,6 +94,7 @@ class NVGPUServer:
         # Load GPU configuration if provided
         self.gpu_config_loader = None
         if gpu_config_file:
+            self.logger.info(f"Loading GPU config from: {gpu_config_file}")
             self.gpu_config_loader = GPUConfigLoader(gpu_config_file)
             if self.gpu_config_loader.load():
                 # Set global config loader for other modules
@@ -101,6 +102,12 @@ class NVGPUServer:
                 import server.nvgpu.task_runner as task_runner
                 gpu_manager.gpu_config_loader = self.gpu_config_loader
                 task_runner.gpu_config_loader = self.gpu_config_loader
+                enabled_gpus = self.gpu_config_loader.get_enabled_gpus()
+                self.logger.info(f"GPU config loaded successfully: {len(enabled_gpus)} GPUs enabled")
+            else:
+                self.logger.error(f"Failed to load GPU config from: {gpu_config_file}")
+        else:
+            self.logger.info("No GPU config file provided, use --gpu-config or --gpus")
         
         self.gpu_manager = GPUManager()
         self.task_queue = TaskQueue()
@@ -272,25 +279,59 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
+    # Re-setup main logger with dual logging (timestamped + history)
+    import logging
+    log_level = getattr(logging, args.log_level.upper(), logging.INFO)
+    logger = setup_logger("main", log_file=log_file, history_log_file=history_log_file, level=log_level)
+    logger.info(f"Session log: {log_file}")
+    logger.info(f"History log: {history_log_file}")
+
+    # Setup signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     # Create server with GPU config and dual logging
     # Handle GPU config file path (convert to absolute if needed)
     gpu_config_file = None
     if args.gpu_config:
         config_path = Path(args.gpu_config)
-        if not config_path.is_absolute():
-            # Try relative to NVGPU_ROOT first, then current working directory
-            nvgpu_relative = NVGPU_ROOT / config_path
-            if nvgpu_relative.exists():
-                gpu_config_file = str(nvgpu_relative)
-            elif config_path.exists():
-                gpu_config_file = str(config_path.resolve())
-        elif config_path.exists():
-            gpu_config_file = str(config_path)
-    
-    server = NVGPUServer(gpu_config_file=gpu_config_file, 
-                        log_file_path=log_file, 
+        logger.info(f"GPU config arg: {args.gpu_config}, resolved to: {config_path.resolve()}")
+
+        # Try multiple path resolution strategies
+        candidates = []
+
+        # 1. Try as-is (absolute or relative to cwd)
+        candidates.append(config_path.resolve())
+
+        # 2. Try relative to project root (/cu2tri)
+        project_root = NVGPU_ROOT.parent.parent  # /cu2tri
+        candidates.append(project_root / args.gpu_config)
+
+        # 3. Try just the config name under configs/gpu_resources
+        candidates.append(NVGPU_ROOT / "configs" / "gpu_resources" / Path(args.gpu_config).name)
+
+        # 4. Try relative to NVGPU_ROOT's parent (/cu2tri/server) with configs/
+        candidates.append(NVGPU_ROOT.parent / "configs" / "gpu_resources" / Path(args.gpu_config).name)
+
+        found = False
+        for candidate in candidates:
+            if candidate.exists():
+                gpu_config_file = str(candidate)
+                logger.info(f"Found GPU config: {gpu_config_file}")
+                found = True
+                break
+
+        if not found:
+            logger.error(f"GPU config file not found: {args.gpu_config}")
+            logger.error(f"Searched paths:")
+            for c in candidates:
+                logger.error(f"  - {c}")
+            logger.error("Hint: Use absolute path or run from project root")
+
+    server = NVGPUServer(gpu_config_file=gpu_config_file,
+                        log_file_path=log_file,
                         history_log_file_path=history_log_file)
-    
+
     # Register GPUs if specified via command line (overrides config file)
     if args.gpus:
         for gpu_id in args.gpus:
@@ -299,7 +340,7 @@ def main():
                 mode=config.default_gpu_mode,
                 memory_threshold=config.default_memory_threshold
             )
-    
+
     try:
         server.start()
     except KeyboardInterrupt:
