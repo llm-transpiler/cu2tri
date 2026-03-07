@@ -179,6 +179,8 @@ def _initialize_jsonl_metadata(context: RuntimeContext) -> None:
         "created_at": ensure_timezone(now_timestamp()).isoformat(),
     }
     try:
+        # Ensure parent directory exists
+        context.settings.jsonl_file.parent.mkdir(parents=True, exist_ok=True)
         with open(context.settings.jsonl_file, "w", encoding="utf-8") as fp:
             fp.write(json.dumps(metadata, ensure_ascii=False) + "\n")
         context.logger.debug(f"Initialized JSONL log file: {context.settings.jsonl_file}")

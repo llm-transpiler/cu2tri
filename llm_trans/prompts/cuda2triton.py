@@ -58,7 +58,7 @@ The Triton kernel should:
 
 ### 4. Code Structure
 - Use clear kernel function naming (e.g., `_kernel_name`)
-- Provide only the Triton kernel implementation and a complete `forward` function as the entry point
+- Provide only the Triton kernel implementation and a `triton_kernel` function as the entry point
 - Remove all input validation and shape checking from the generated code
 - Include comprehensive docstrings explaining functionality and parameters
 
@@ -78,7 +78,7 @@ Please return only the complete Python code
 
 ## Important Notes
 - Ensure the generated code can run directly without additional modifications
-- The code should call the triton kernel through the `forward` function
+- The code entry point must be the `triton_kernel` function
 - Prioritize performance optimization, then consider code readability
 - If multiple implementation approaches are possible, choose the most performant one
 """
@@ -90,7 +90,7 @@ Current Triton version is 3.2.0. Target GPU: RTX 6000 Ada.
 
 ## Key Requirements
 - Pay careful attention to data types and maintain consistency
-- Ensure the code entry point is the `forward` function with functionality identical to the CUDA code's forward function
+- Ensure the code entry point is the `triton_kernel` function with functionality identical to the CUDA code
 - Provide directly executable code without additional modifications needed
 
 ## Original CUDA Code:
