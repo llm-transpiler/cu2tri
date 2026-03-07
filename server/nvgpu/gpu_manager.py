@@ -61,11 +61,12 @@ class GPUManager:
             cleared_count = 0
             for gpu_id, gpu in self.gpus.items():
                 if gpu.running_tasks:
+                    stale_count = len(gpu.running_tasks)
                     logger.warning(
                         f"Clearing {len(gpu.running_tasks)} stale running tasks from GPU {gpu_id}: {gpu.running_tasks}"
                     )
                     gpu.running_tasks.clear()
-                    cleared_count += len(gpu.running_tasks)
+                    cleared_count += stale_count
             if cleared_count > 0:
                 logger.info(f"Cleared {cleared_count} stale running tasks from all GPUs")
 
@@ -268,8 +269,6 @@ class GPUManager:
         Returns:
             True if successful, False otherwise
         """
-        from config import GPUMode
-
         with self.lock:
             if gpu_id not in self.gpus:
                 return False

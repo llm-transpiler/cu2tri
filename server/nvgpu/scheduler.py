@@ -107,11 +107,29 @@ class Scheduler:
                     except Exception as e:
                         logger.debug(f"Could not check stderr for GPU errors: {e}", exc_info=True)
         finally:
-            # Restore GPU mode after task completes
-            self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task)
-            
-            # Mark task as completed on GPU
-            self.gpu_manager.mark_task_completed(gpu_id, task)
+            # Always try to restore mode, but never let restore failure block task cleanup.
+            try:
+                self.gpu_manager.restore_gpu_mode_after_task(gpu_id, task)
+            except Exception as e:
+                logger.error(
+                    "Failed to restore GPU mode after TASK %s on GPU %s: %s",
+                    format_task_ref(task),
+                    gpu_id,
+                    e,
+                    exc_info=True,
+                )
+            finally:
+                try:
+                    # Mark task as completed on GPU even if restore failed.
+                    self.gpu_manager.mark_task_completed(gpu_id, task)
+                except Exception as e:
+                    logger.error(
+                        "Failed to mark TASK %s completed on GPU %s: %s",
+                        format_task_ref(task),
+                        gpu_id,
+                        e,
+                        exc_info=True,
+                    )
     
     def _scheduler_loop(self):
         """Main scheduler loop."""
