@@ -3,19 +3,43 @@ from logging import Logger
 from openai import OpenAI, AsyncOpenAI
 import os
 import httpx
+import json
 from dataclasses import dataclass, asdict
 from typing import Tuple, Any, Callable
 from server.common.timer import perf_counter_timestamp_ns, ns_to_ms, TimerSample
 
 
+def _to_jsonable(obj):
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_jsonable(v) for v in obj]
+    try:
+        return _to_jsonable(asdict(obj))
+    except Exception:
+        pass
+    if hasattr(obj, "model_dump"):
+        try:
+            return _to_jsonable(obj.model_dump())
+        except Exception:
+            pass
+    if hasattr(obj, "__dict__"):
+        try:
+            return _to_jsonable(obj.__dict__)
+        except Exception:
+            pass
+    return str(obj)
+
+
 def _completion_usage_to_dict(obj):
     """Convert object to dict, handling both dataclasses and objects with __dict__."""
+    normalized = _to_jsonable(obj)
     try:
-        return asdict(obj)
+        return json.loads(json.dumps(normalized, ensure_ascii=False))
     except Exception:
-        if hasattr(obj, '__dict__'):
-            return obj.__dict__
-        return obj
+        return {"raw": str(normalized)}
 
 
 class TTFTTracker:

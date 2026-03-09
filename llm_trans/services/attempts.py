@@ -9,6 +9,7 @@ from ..utils.trans_timer import TransTimer
 from server.common.timezone import ensure_timezone, now_timestamp
 
 from llm_trans.prompts.cuda2triton import simple_initial_prompt as cuda2triton_prompt
+from llm_trans.prompts.cuda2ascendc import simple_initial_prompt as cuda2ascendc_prompt
 
 from ..clients import async_openai_llm_call
 from ..core.runtime import RuntimeContext
@@ -82,6 +83,12 @@ async def run_single_case_attempt(
             f"check_cuda{settings.check_suffix}.py",
             f"check_triton{settings.check_suffix}.py",
         ])
+    elif direction == "cu2asc":
+        # CUDA to Ascend C
+        files_to_copy.extend([
+            settings.dir_cuda / "kernel.cu",
+            "check_ascendc.py",
+        ])
     elif direction == "tri2cute":
         # Triton to CUTE
         files_to_copy.extend([
@@ -110,6 +117,7 @@ async def run_single_case_attempt(
         "check_triton.py",
         "check_triton_gpu_all.py",
         "check_triton_vs_torch.py",
+        "check_ascendc.py",
     ]
     tools_dir = context.settings.project_root / "llm_trans" / "tools"
     for script_name in tools_scripts:
@@ -123,6 +131,13 @@ async def run_single_case_attempt(
 
     # Read source code based on direction
     if direction == "cu2tri":
+        source_file_path = attempt_work_dir / settings.dir_cuda / "kernel.cu"
+        if not source_file_path.exists():
+            logger.error(f"CUDA file not found: {source_file_path}")
+            timing_stats.error = f"CUDA file missing: {source_file_path}"
+            return False, None, timing_stats
+        source_code = source_file_path.read_text()
+    elif direction == "cu2asc":
         source_file_path = attempt_work_dir / settings.dir_cuda / "kernel.cu"
         if not source_file_path.exists():
             logger.error(f"CUDA file not found: {source_file_path}")
@@ -157,6 +172,12 @@ async def run_single_case_attempt(
             "You help convert CUDA kernels to Triton kernels while maintaining correctness and performance."
         )
         initial_user_prompt = cuda2triton_prompt.format(cuda_code=source_code)
+    elif direction == "cu2asc":
+        system_prompt = (
+            "You are a professional NPU kernel engineer proficient in CUDA and Ascend C. "
+            "Convert CUDA kernels into Ascend C kernels for NPU execution while preserving functional correctness."
+        )
+        initial_user_prompt = cuda2ascendc_prompt.format(cuda_code=source_code)
     elif direction == "tri2cute":
         system_prompt = (
             "You are a professional GPU computing optimization expert, proficient in Triton and CUTE/CUTLASS programming. "
@@ -493,6 +514,12 @@ async def run_single_case_attempt(
         target_file = target_dir / "kernel.py"
         target_file.write_text(generated_code)
         logger.info("Triton code generated successfully")
+    elif direction == "cu2asc":
+        target_dir = attempt_work_dir / settings.dir_ascendc
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file = target_dir / "kernel.cpp"
+        target_file.write_text(generated_code)
+        logger.info("Ascend C code generated successfully")
     elif direction == "tri2cute":
         target_dir = attempt_work_dir / settings.dir_cute
         target_dir.mkdir(parents=True, exist_ok=True)

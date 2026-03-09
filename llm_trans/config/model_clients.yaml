@@ -7,8 +7,8 @@ aliases:
     provider: openrouter
   gpt5:
     vendor: openai
-    model: openai/gpt-5
-    provider: openrouter
+    model: gpt-5
+    provider: infini-ai
   gpt4o:
     vendor: openai
     model: openai/gpt-4o
@@ -204,6 +204,10 @@ aliases:
 vendors:
   openai:
     providers:
+      infini-ai:
+        base_url: $INFINI_BASE_URL
+        api_key: $INFINI_API_KEY
+        calling: OPENAI_OFFICIAL
       openai:
         base_url: https://api.openai.com/v1
         api_key: $OPENAI_API_KEY
@@ -259,10 +263,11 @@ vendors:
           - local
           - local-172-8000
           - local-127-8001
-      openai/gpt-5:
+      gpt-5:
         display_name: GPT-5
-        default_provider: openai
+        default_provider: infini-ai
         providers:
+          - infini-ai
           - openai
           - openrouter
           # - local

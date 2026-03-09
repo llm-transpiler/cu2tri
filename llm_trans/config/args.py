@@ -63,9 +63,13 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--direction",
-        choices=["cu2tri", "tri2cute"],
+        choices=["cu2tri", "tri2cute", "cu2asc", "cu2ascendc"],
         default="cu2tri",
-        help="Translation direction: cu2tri (CUDA→Triton) or tri2cute (Triton→CUTE)",
+        help=(
+            "Translation direction: "
+            "cu2tri (CUDA→Triton), tri2cute (Triton→CUTE), "
+            "or cu2asc/cu2ascendc (CUDA→Ascend C)"
+        ),
     )
     parser.add_argument(
         "--testset",

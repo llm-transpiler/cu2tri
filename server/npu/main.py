@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Main entry point for NPU server."""
 import argparse
+import os
+import socket
 import signal
 import sys
 from pathlib import Path
@@ -31,6 +33,21 @@ logger.info(
     perf_counter_timestamp_ns(),
     monotonic_timestamp_ns(),
 )
+
+
+def _apply_host_default_visible_devices() -> None:
+    host_short = socket.gethostname().split(".", 1)[0].lower()
+    if host_short != "aicc-02":
+        return
+    if os.getenv("ASCEND_RT_VISIBLE_DEVICES"):
+        return
+    # Host default policy: on aicc-02 keep last two NPUs unavailable.
+    os.environ["ASCEND_RT_VISIBLE_DEVICES"] = "0,1,2,3,4,5"
+    logger.info(
+        "Applied host default ASCEND_RT_VISIBLE_DEVICES=%s for %s",
+        os.environ["ASCEND_RT_VISIBLE_DEVICES"],
+        host_short,
+    )
 
 
 class NPUServer:
@@ -170,6 +187,8 @@ def signal_handler(signum, frame):
 
 
 def main():
+    _apply_host_default_visible_devices()
+
     parser = argparse.ArgumentParser(description="NPU Server - NPU task scheduling service")
     parser.add_argument("--host", default=config.host, help="Server host")
     parser.add_argument("--port", type=int, default=config.port, help="Server port")

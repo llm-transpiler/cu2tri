@@ -1,5 +1,7 @@
 directions:
   - cu2tri
+  - cu2asc
+  - cu2ascendc
   - tri2cute
   - cu2cute
   - hel2tri

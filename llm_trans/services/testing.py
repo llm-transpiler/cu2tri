@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ from server.common.timezone import (
 from server.common.task_refs import format_task_ref
 
 from llm_trans.prompts.cuda2triton import feedback_prompt as cuda2triton_feedback
+from llm_trans.prompts.cuda2ascendc import feedback_prompt as cuda2ascendc_feedback
 
 from ..clients import (
     NVGPU_AVAILABLE,
@@ -51,15 +53,25 @@ async def run_test_round(
         from .testing_cute import run_test_round_cute
         return await run_test_round_cute(context, round_num, test_work_dir, timing_stats)
     else:
-        # cu2tri: test Triton code
-        kernel_path = test_work_dir / settings.dir_triton / "kernel.py"
-        backup_path = test_work_dir / settings.dir_triton / f"kernel_v{round_num}.py"
+        if direction == "cu2tri":
+            kernel_dir = settings.dir_triton
+            kernel_name = "kernel.py"
+            log_prefix = "triton"
+        elif direction == "cu2asc":
+            kernel_dir = settings.dir_ascendc
+            kernel_name = "kernel.cpp"
+            log_prefix = "ascendc"
+        else:
+            raise ValueError(f"Unsupported direction: {direction}")
+
+        kernel_path = test_work_dir / kernel_dir / kernel_name
+        backup_path = test_work_dir / kernel_dir / f"kernel_v{round_num}{Path(kernel_name).suffix}"
         shutil.copy(kernel_path, backup_path)
-        logger.debug(f"Backed up kernel to kernel_v{round_num}.py")
+        logger.debug(f"Backed up kernel to {backup_path.name}")
 
         logs_dir = test_work_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
-        log_file = logs_dir / f"triton_test_round_{round_num}.log"
+        log_file = logs_dir / f"{log_prefix}_test_round_{round_num}.log"
 
         if not (settings.use_nvgpu and context.nvgpu_available):
             raise ValueError("NVGPU is not available")
@@ -94,17 +106,33 @@ async def run_test_round_nvgpu(
 
         logger.debug(f"Connected to NVGPU server at {args.nvgpu_server}")
 
-        script_path = str((test_work_dir / f"check_triton{context.settings.check_suffix}.py").absolute())
+        direction = context.settings.direction
+        if direction == "cu2asc":
+            script_name = "check_ascendc.py"
+        else:
+            script_name = f"check_triton{context.settings.check_suffix}.py"
+        script_path = str((test_work_dir / script_name).absolute())
         # For internal check scripts: by default禁用内部perf，只有在显式开启enable_perf时才不传--no-perf
         task_args = ["--no-perf"] if not getattr(args, "enable_perf", False) else []
 
-        logger.info(f"Submitting task to NVGPU server (GPU: {args.nvgpu_gpu or 'auto'})")
+        logger.info(f"Submitting task to NPU server (NPU: {args.nvgpu_gpu or 'auto'})")
+        project_root = str(context.settings.project_root)
+        merged_pythonpath = project_root
+        if os.getenv("PYTHONPATH"):
+            merged_pythonpath = f"{project_root}:{os.getenv('PYTHONPATH')}"
+
+        task_env = {
+            "PROJECT_ROOT": project_root,
+            "PYTHONPATH": merged_pythonpath,
+        }
+
         task_id = nvgpu_client.submit_task_in_script_dir(
             script_path=script_path,
             task_type="functional",
             task_label=task_label,
             args=task_args,
             gpu_id=args.nvgpu_gpu,
+            env=task_env,
         )
         logger.info("Task submitted: %s", format_task_ref(task_id, include_label=False))
         last_status = None
@@ -333,6 +361,8 @@ async def get_feedback_from_llm(
         cute_file = test_work_dir / settings.dir_cute / "kernel.cu"
         current_code = cute_file.read_text() if cute_file.exists() else "Code not found"
         prompt = get_triton2cute_feedback(error_output=error_output, current_code=current_code)
+    elif direction == "cu2asc":
+        prompt = cuda2ascendc_feedback.format(error_info=error_info, traceback_info=traceback_info)
     elif direction == "cu2tri":
         # cu2tri
         prompt = cuda2triton_feedback.format(error_info=error_info, traceback_info=traceback_info)
@@ -686,6 +716,7 @@ async def run_testing_loop(
                 "triton": "Triton",
                 "cute": "CuTe",
                 "cu": "CUDA",
+                "ascendc": "Ascend C",
             }
             kernel_label = kernel_label_map.get(target_suffix, target_suffix.capitalize())
             logger.info(f"✅ Test round {round_num} PASSED! {kernel_label} kernel is working correctly.")
@@ -737,6 +768,8 @@ async def run_testing_loop(
                 direction = context.settings.direction
                 if direction == "cu2tri":
                     kernel_path = test_work_dir / context.settings.dir_triton / "kernel.py"
+                elif direction == "cu2asc":
+                    kernel_path = test_work_dir / context.settings.dir_ascendc / "kernel.cpp"
                 elif direction == "tri2cute":
                     kernel_path = test_work_dir / context.settings.dir_cute / "kernel.cu"
                 else:

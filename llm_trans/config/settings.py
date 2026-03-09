@@ -27,6 +27,7 @@ class Settings:
     dir_torch: Path = Path("torch_")
     dir_triton: Path = Path("triton_")
     dir_cute: Path = Path("cute_")
+    dir_ascendc: Path = Path("ascendc_")
     direction: str = field(init=False)
     testset_root_dir: Path = field(init=False)
     all_cases: Dict[str, list[str]] = field(init=False)
@@ -73,6 +74,8 @@ class Settings:
         self.direction = getattr(self.args, "direction", None)
         if self.direction is None:
             raise ValueError("Transpile direction is not set. Please use --direction to set the translation direction.")
+        if self.direction == "cu2ascendc":
+            self.direction = "cu2asc"
 
         project_root_env = os.getenv("PROJECT_ROOT")
         if project_root_env:
