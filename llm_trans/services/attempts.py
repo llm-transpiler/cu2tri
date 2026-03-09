@@ -87,7 +87,6 @@ async def run_single_case_attempt(
         # CUDA to Ascend C
         files_to_copy.extend([
             settings.dir_cuda / "kernel.cu",
-            "check_ascendc.py",
         ])
     elif direction == "tri2cute":
         # Triton to CUTE

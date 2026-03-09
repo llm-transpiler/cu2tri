@@ -6,7 +6,7 @@ npus:
     name: "Ascend 910B1"
     enabled: true
     default_mode: "shared"
-    memory_threshold: 1.0
+    memory_threshold: 0.85
     max_concurrent_tasks: 2
 
   - logical_id: 1
@@ -15,7 +15,43 @@ npus:
     name: "Ascend 910B1"
     enabled: true
     default_mode: "shared"
-    memory_threshold: 1.0
+    memory_threshold: 0.85
+    max_concurrent_tasks: 2
+
+  - logical_id: 2
+    npu_smi_id: 2
+    visible_id: 2
+    name: "Ascend 910B1"
+    enabled: true
+    default_mode: "shared"
+    memory_threshold: 0.85
+    max_concurrent_tasks: 2
+
+  - logical_id: 3
+    npu_smi_id: 3
+    visible_id: 3
+    name: "Ascend 910B1"
+    enabled: true
+    default_mode: "shared"
+    memory_threshold: 0.85
+    max_concurrent_tasks: 2
+
+  - logical_id: 4
+    npu_smi_id: 4
+    visible_id: 4
+    name: "Ascend 910B1"
+    enabled: true
+    default_mode: "shared"
+    memory_threshold: 0.85
+    max_concurrent_tasks: 2
+
+  - logical_id: 5
+    npu_smi_id: 5
+    visible_id: 5
+    name: "Ascend 910B1"
+    enabled: true
+    default_mode: "shared"
+    memory_threshold: 0.85
     max_concurrent_tasks: 2
 
 server:
