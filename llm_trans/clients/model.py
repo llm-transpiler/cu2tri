@@ -133,18 +133,29 @@ def create_model_clients(settings: Settings) -> ModelClients:
     provider_sequence = selection.provider_sequence(forced_provider=forced_provider)
 
     endpoints: list[EndpointEntry] = []
+    endpoint_errors: list[tuple[str, str]] = []
     for provider_name in provider_sequence:
         provider_cfg = selection.vendor.providers[provider_name]
-        endpoints.append(
-            _instantiate_endpoint_openai(
-                provider_name=provider_name,
-                provider=provider_cfg,
-                vendor_name=selection.vendor_name,
-                model_name=selection.model_name,
+        try:
+            endpoints.append(
+                _instantiate_endpoint_openai(
+                    provider_name=provider_name,
+                    provider=provider_cfg,
+                    vendor_name=selection.vendor_name,
+                    model_name=selection.model_name,
+                )
             )
-        )
+        except ModelRegistryError as exc:
+            endpoint_errors.append((provider_name, str(exc)))
+            continue
 
     if not endpoints:
+        if endpoint_errors:
+            details = "; ".join(f"{name}: {msg}" for name, msg in endpoint_errors)
+            raise ModelRegistryError(
+                f"No usable providers available for model '{selection.model_name}' "
+                f"(vendor '{selection.vendor_name}'). Details: {details}"
+            )
         raise ModelRegistryError(
             f"No providers available for model '{selection.model_name}' (vendor '{selection.vendor_name}')"
         )
