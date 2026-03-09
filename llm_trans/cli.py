@@ -27,7 +27,7 @@ def prepare_context(argv: Sequence[str] | None = None) -> RuntimeContext:
     )
     
     if settings.use_nvgpu and not NVGPU_AVAILABLE:
-        logger.warning("NVGPU client not available, falling back to local execution")
+        logger.warning("NPU/NVGPU client not available, falling back to local execution")
         settings.use_nvgpu = False
 
     context = RuntimeContext(

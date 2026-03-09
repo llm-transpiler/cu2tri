@@ -1,0 +1,22 @@
+# Sample NPU resource configuration for Ascend/CANN.
+npus:
+  - logical_id: 0
+    npu_smi_id: 0
+    visible_id: 0
+    name: "Ascend 910B1"
+    enabled: true
+    default_mode: "shared"
+    memory_threshold: 1.0
+    max_concurrent_tasks: 2
+
+  - logical_id: 1
+    npu_smi_id: 1
+    visible_id: 1
+    name: "Ascend 910B1"
+    enabled: true
+    default_mode: "shared"
+    memory_threshold: 1.0
+    max_concurrent_tasks: 2
+
+server:
+  auto_register_npus: true

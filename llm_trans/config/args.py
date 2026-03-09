@@ -143,6 +143,35 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Preferred GPU ID for performance tasks (fallback to --nvgpu-gpu)",
     )
     parser.add_argument(
+        "--use-npu",
+        action="store_true",
+        default=True,
+        help="Use NPU server for task execution",
+    )
+    parser.add_argument(
+        "--no-npu",
+        action="store_true",
+        default=False,
+        help="Disable NPU server and use local execution",
+    )
+    parser.add_argument(
+        "--npu-server",
+        default="http://localhost:8080",
+        help="NPU server URL",
+    )
+    parser.add_argument(
+        "--npu-id",
+        type=int,
+        default=None,
+        help="Specific NPU ID to use",
+    )
+    parser.add_argument(
+        "--npu-perf-id",
+        type=int,
+        default=None,
+        help="Preferred NPU ID for performance tasks (fallback to --npu-id)",
+    )
+    parser.add_argument(
         "--max-rounds",
         type=int,
         default=5,

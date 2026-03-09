@@ -45,12 +45,12 @@ async def run(context: RuntimeContext) -> Dict[str, object]:
     logger.info(
         f"   - Specific case types: {args.case_types if args.case_types else 'All'}"
     )
-    logger.info(f"   - Use NVGPU: {settings.use_nvgpu}")
+    logger.info(f"   - Use NPU server: {settings.use_nvgpu}")
     logger.info(f"   - Concurrency: {args.concurrency}")
     if settings.use_nvgpu:
-        logger.info(f"   - NVGPU server: {args.nvgpu_server}")
-        logger.info(f"   - NVGPU GPU: {args.nvgpu_gpu or 'auto-assign'}")
-        logger.info("   - NVGPU task type: functional")
+        logger.info(f"   - NPU server: {args.nvgpu_server}")
+        logger.info(f"   - NPU ID: {args.nvgpu_gpu or 'auto-assign'}")
+        logger.info("   - NPU task type: functional")
 
     detailed_results: Dict[str, List[CaseResult]] = {}
     all_case_results: List[CaseResult] = []

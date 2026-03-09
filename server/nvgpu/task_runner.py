@@ -103,8 +103,17 @@ class TaskRunner:
                 if cuda_visible_id is not None:
                     cuda_id = cuda_visible_id
                     logger.debug(f"GPU {gpu_id} mapped to CUDA_VISIBLE_DEVICES={cuda_id}")
-            
-            env["CUDA_VISIBLE_DEVICES"] = str(cuda_id)
+
+            # Optional task-level override:
+            # - visible_device_env_key: set device selector via custom env key
+            # - disable_cuda_visible_devices: skip exporting CUDA_VISIBLE_DEVICES
+            visible_device_env_key = getattr(task, "visible_device_env_key", None)
+            disable_cuda_visible_devices = bool(getattr(task, "disable_cuda_visible_devices", False))
+
+            if visible_device_env_key:
+                env[str(visible_device_env_key)] = str(cuda_id)
+            elif not disable_cuda_visible_devices:
+                env["CUDA_VISIBLE_DEVICES"] = str(cuda_id)
             
             # Merge custom environment variables
             if task.env:
@@ -124,7 +133,10 @@ class TaskRunner:
             logger.debug(f"TASK {task_ref_str} command: {' '.join(cmd)}")
             task_work_dir = os.path.abspath(task.work_dir)
             logger.debug(f"TASK {task_ref_str} work_dir: {task_work_dir}")
-            logger.debug(f"TASK {task_ref_str} CUDA_VISIBLE_DEVICES: {cuda_id}")
+            if visible_device_env_key:
+                logger.debug(f"TASK {task_ref_str} {visible_device_env_key}: {cuda_id}")
+            elif not disable_cuda_visible_devices:
+                logger.debug(f"TASK {task_ref_str} CUDA_VISIBLE_DEVICES: {cuda_id}")
             
             # Open files for stdout and stderr
             stdout_file = open(stdout_path, 'w', buffering=1)  # Line buffered

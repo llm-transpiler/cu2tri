@@ -33,6 +33,7 @@ class Settings:
     check_suffix: str = field(init=False)
     console_output: bool = field(init=False)
     use_nvgpu: bool = field(init=False)
+    use_npu: bool = field(init=False)
     resume_conversation: bool = field(init=False)
     model_name: str | None = None
     model_name_clean: str | None = None
@@ -55,7 +56,17 @@ class Settings:
         self.max_rounds = max_rounds
 
         self.console_output = bool(self.args.console and not self.args.no_console)
+        self.use_npu = bool(getattr(self.args, "use_npu", True) and not getattr(self.args, "no_npu", False))
         self.use_nvgpu = bool(self.args.use_nvgpu and not self.args.no_nvgpu)
+        # Prefer explicit NPU flags; keep NVGPU args as compatibility aliases.
+        if self.use_npu:
+            self.use_nvgpu = True
+        if getattr(self.args, "npu_server", None):
+            self.args.nvgpu_server = self.args.npu_server
+        if getattr(self.args, "npu_id", None) is not None:
+            self.args.nvgpu_gpu = self.args.npu_id
+        if getattr(self.args, "npu_perf_id", None) is not None:
+            self.args.nvgpu_perf_gpu = self.args.npu_perf_id
         self.resume_conversation = bool(getattr(self.args, "resume_conversation", False))
         
         # Translation direction

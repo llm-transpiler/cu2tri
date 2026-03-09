@@ -22,16 +22,18 @@ dependencies = [
 
 [project.optional-dependencies]
 nvgpu = ["pynvml>=12.0.0"]
+npu = []
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
     "mypy>=1.0.0",
 ]
-all = ["cu2tri[nvgpu,dev]"]
+all = ["cu2tri[nvgpu,npu,dev]"]
 
 [project.scripts]
 nvgpu-server = "server.nvgpu.cli:cli_main"
+npu-server = "server.npu.cli:cli_main"
 llm-trans = "llm_trans.cli:main"
 
 [tool.setuptools.packages.find]
@@ -40,6 +42,7 @@ include = ["server*", "llm_trans*", "llm*"]
 
 [tool.setuptools.package-data]
 "server.nvgpu.configs" = ["**/*.yml", "**/*.yaml"]
+"server.npu.configs" = ["**/*.yml", "**/*.yaml"]
 "llm_trans.config" = ["*.yaml"]
 
 [project.urls]

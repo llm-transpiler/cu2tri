@@ -8,6 +8,7 @@ from .model import (
     # openai_llm_call,
 )
 from .nvgpu import NVGPUClient, NVGPU_AVAILABLE
+from .npu import NPUClient, NPU_AVAILABLE
 
 __all__ = [
     "ModelClients",
@@ -19,4 +20,6 @@ __all__ = [
     "make_openai_message_assistant",
     "NVGPUClient",
     "NVGPU_AVAILABLE",
+    "NPUClient",
+    "NPU_AVAILABLE",
 ]
