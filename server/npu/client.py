@@ -12,7 +12,7 @@ from server.nvgpu.client import TaskResult
 class NPUClient:
     """Client for interacting with NPU Server."""
 
-    def __init__(self, base_url: str = "http://localhost:8080"):
+    def __init__(self, base_url: str = "http://localhost:38080"):
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
 

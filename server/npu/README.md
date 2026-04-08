@@ -24,7 +24,7 @@ npu-server --npu-config server/npu/configs/npu_resources/ascend_910b_sample.yml
 ## 常用参数
 
 - `--host`：监听地址（默认 `0.0.0.0`）
-- `--port`：监听端口（默认 `8080`）
+- `--port`：监听端口（默认 `38080`）
 - `--npu-config`：NPU YAML 配置路径
 - `--npus`：直接指定启动注册的 NPU ID
 - `--npu-mode`：默认模式（`exclusive`/`shared`）
